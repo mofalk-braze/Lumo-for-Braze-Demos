@@ -1,0 +1,32 @@
+{
+  "name": "braze-ios-demo-web-template",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Brand-agnostic web UI template for the Braze iOS demo platform. Renders inside the native iOS shell (WKWebView) and talks to the Braze Swift SDK over a bridge. Runs standalone in a browser via the dev layout harness.",
+  "scripts": {
+    "predev": "node ../tools/ensure-active-demo-config.mjs",
+    "dev": "vite",
+    "prebuild": "node ../tools/ensure-active-demo-config.mjs",
+    "build": "tsc -b && vite build",
+    "prepreview": "node ../tools/ensure-active-demo-config.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.1.0",
+    "lucide-react": "^0.456.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,30 @@
+# Copy to android-shell/local.properties for manual setup, or let the demo
+# launcher generate it from demo-packs/<pack-id>/secrets.properties.
+# This file is safe to commit; real local.properties files are ignored.
+
+# Android SDK location. Android Studio normally writes this automatically.
+sdk.dir=/Users/you/Library/Android/sdk
+
+# Braze Android SDK app identifier API key, not a REST key.
+braze.apiKey=
+
+# Braze SDK endpoint with no scheme, for example sdk.iad-03.braze.com.
+braze.endpoint=
+
+# Firebase Cloud Messaging sender ID / project number.
+firebase.senderId=
+
+# Optional initial external ID seeded into the first in-app workspace profile.
+# If omitted, the app uses lumo-demo-user.
+demo.externalId=lumo-demo-user
+
+# Optional label for the seeded in-app workspace profile.
+demo.profileName=Seed (local.properties)
+
+# Optional absolute path to prebuilt web assets. The demo launcher writes this
+# from the active demo pack; leave blank for ../web-template/dist.
+demo.webDist=
+
+# Optional host launcher callback. The demo launcher writes this automatically
+# during build/install so Android telemetry can appear in the live ledger.
+launcher.callbackUrl=

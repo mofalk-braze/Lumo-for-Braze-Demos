@@ -1,0 +1,16 @@
+curl -X POST \
+  -H 'Content-Type:application/json' \
+  -H 'Authorization: Bearer a valid rest api key' \
+  -d '{
+    "campaign_id": "ec57d4e0-2711-414c-8afe-7526e4b11e50",
+    "recipients": [
+      {
+        "external_user_id": targeted user id,
+        "trigger_properties": {
+          "string_property": your example string,
+          "example_integer_property": your example integer           
+        }
+      }
+    ]
+  }' \
+  https://rest.iad-03.braze.com/campaigns/trigger/send

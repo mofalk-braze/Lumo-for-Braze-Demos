@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumo</string>
+    <string name="default_notification_channel_id">braze_demo_default</string>
+    <string name="default_notification_channel_name">Braze Demo</string>
+    <string name="default_notification_channel_description">Braze demo push notifications</string>
+</resources>

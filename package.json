@@ -1,0 +1,14 @@
+{
+  "name": "braze-android-demo-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "demo:launcher": "node tools/demo-launcher.mjs",
+    "demo:apply:wolt": "node tools/demo-launcher.mjs --pack wolt-food-delivery --apply-only",
+    "demo:apply:lidl": "node tools/demo-launcher.mjs --pack lidl-plus --apply-only",
+    "validate:demo-runtime": "node tools/validate-demo-runtime.mjs",
+    "security:scan": "node tools/secret-scan.mjs",
+    "check:precommit": "npm run validate:demo-runtime && npm run security:scan"
+  }
+}

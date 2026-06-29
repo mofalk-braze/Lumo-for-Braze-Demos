@@ -1,0 +1,50 @@
+name: BrazeDemoShell
+options:
+  bundleIdPrefix: com.braze
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  BrazeSwiftSDK:
+    url: https://github.com/braze-inc/braze-swift-sdk
+    # 15.1.0 fails to compile under Xcode 26.5 / Swift 6.3 (internal BrazeUI↔BrazeKit
+    # mismatch in Braze's SDK). 11.9.0 is known-good and fully featured. Revisit
+    # currency with a newer toolchain-compatible release or the prebuilt distribution.
+    from: "11.9.0"
+targets:
+  BrazeDemoShell:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        # Reuses the org's registered Masquerade App ID so the team's APNs .p8
+        # is valid for this app's push topic (no new App ID registration needed).
+        PRODUCT_BUNDLE_IDENTIFIER: com.braze.masquerade
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        # Swift 5 language mode: avoids Swift 6 strict-concurrency churn for a demo.
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/BrazeDemoShell.entitlements
+        # Push requires signing under the ORG team that owns com.braze.masquerade
+        # + the APNs .p8. Open in Xcode, sign into that Apple account, pick the
+        # team, and Run (Simulator or device). Automatic signing creates a dev
+        # profile with the aps-environment entitlement. (CLI ad-hoc builds with
+        # CODE_SIGNING_ALLOWED=NO run fine for everything EXCEPT push.)
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: BrazeSwiftSDK
+        product: BrazeKit
+      - package: BrazeSwiftSDK
+        product: BrazeUI
+schemes:
+  BrazeDemoShell:
+    build:
+      targets:
+        BrazeDemoShell: all
+    run:
+      config: Debug

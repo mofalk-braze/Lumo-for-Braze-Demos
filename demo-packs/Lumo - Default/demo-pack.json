@@ -1,0 +1,139 @@
+{
+  "id": "lumo-default",
+  "name": "Lumo – Default",
+  "description": "Default fictional shopping and loyalty app used as the baseline Android demo.",
+  "android": {
+    "defaultExternalId": "lumo-demo-user",
+    "defaultProfileName": "Lumo – Default"
+  },
+  "launcher": {
+    "presets": [
+      {
+        "id": "lumo_sdk_reward_unlocked",
+        "label": "Reward unlocked",
+        "description": "Logs reward_unlocked through the Android SDK.",
+        "type": "sdk_event",
+        "payload": {
+          "name": "reward_unlocked",
+          "properties": { "action": "earn", "amount": 50, "balance": 500, "source": "launcher" }
+        }
+      },
+      {
+        "id": "lumo_sdk_set_gold",
+        "label": "Set gold tier",
+        "description": "Sets loyalty_tier=gold on the active SDK user.",
+        "type": "sdk_attribute",
+        "payload": { "key": "loyalty_tier", "value": "gold" }
+      },
+      {
+        "id": "lumo_sdk_purchase",
+        "label": "Log backpack purchase",
+        "description": "Logs a demo purchase through the Android SDK.",
+        "type": "sdk_purchase",
+        "payload": {
+          "productId": "sku_2210",
+          "price": 59,
+          "currency": "EUR",
+          "quantity": 1,
+          "properties": { "category": "travel", "source": "launcher" }
+        }
+      },
+      {
+        "id": "lumo_rest_cart_abandoned",
+        "label": "REST cart abandoned",
+        "description": "Sends cart_abandoned through Braze /users/track.",
+        "type": "rest_event",
+        "payload": {
+          "name": "cart_abandoned",
+          "properties": { "cart_value": 118, "items": 2, "source": "launcher" }
+        }
+      }
+    ]
+  },
+  "brand": {
+    "appName": "Lumo",
+    "displayName": "Lumo Rewards",
+    "tagline": "Shop. Earn. Save.",
+    "logoText": "L",
+    "colors": {
+      "brand": "#4F46E5",
+      "brandDark": "#4338CA",
+      "brandLight": "#EEF2FF",
+      "accent": "#F59E0B",
+      "ink": "#111827",
+      "muted": "#6B7280",
+      "line": "#E5E7EB",
+      "surface": "#F9FAFB"
+    },
+    "tabs": [
+      { "id": "home", "label": "Home", "icon": "Home" },
+      { "id": "inbox", "label": "Inbox", "icon": "Inbox" },
+      { "id": "account", "label": "Account", "icon": "User" }
+    ],
+    "flavorEvents": [
+      {
+        "name": "search_performed",
+        "label": "Search performed",
+        "anchor": "content_viewed",
+        "sample": { "query": "earbuds", "results_count": 12 }
+      },
+      {
+        "name": "wishlist_added",
+        "label": "Wishlist added",
+        "anchor": "content_engaged",
+        "emitAnchor": true,
+        "sample": { "id": "sku_2210", "name": "Travel Backpack", "action": "wishlist" }
+      },
+      {
+        "name": "reward_unlocked",
+        "label": "Reward unlocked",
+        "anchor": "loyalty_event",
+        "emitAnchor": true,
+        "sample": { "action": "earn", "amount": 50, "balance": 500, "reward": "Free shipping" }
+      }
+    ],
+    "demoUser": {
+      "externalId": "lumo-demo-user",
+      "firstName": "Mo",
+      "attributes": {
+        "loyalty_tier": "gold",
+        "loyalty_points": 450,
+        "home_location": "Berlin",
+        "favorite_categories": ["electronics", "travel"],
+        "lifecycle_stage": "active",
+        "last_conversion_value": 79
+      }
+    }
+  },
+  "content": {
+    "hero": {
+      "title": "Summer Sale - up to 40% off",
+      "subtitle": "Members get an extra 10% at checkout",
+      "cta": "Shop the sale"
+    },
+    "categories": ["Electronics", "Travel", "Home", "Fashion", "Grocery", "Beauty"],
+    "contentCardRail": { "title": "Recommended for you", "placement": "home_feed" },
+    "rails": [
+      {
+        "id": "trending",
+        "title": "Trending now",
+        "items": [
+          { "id": "sku_1042", "title": "Wireless Earbuds", "subtitle": "Electronics", "meta": "EUR 79", "badge": "Popular", "category": "electronics" },
+          { "id": "sku_1109", "title": "Smart Watch Series 6", "subtitle": "Electronics", "meta": "EUR 149", "category": "electronics" },
+          { "id": "sku_1203", "title": "Bluetooth Speaker", "subtitle": "Electronics", "meta": "EUR 59", "category": "electronics" },
+          { "id": "sku_1330", "title": "Laptop Stand", "subtitle": "Home office", "meta": "EUR 35", "category": "home" }
+        ]
+      },
+      {
+        "id": "new",
+        "title": "New arrivals",
+        "items": [
+          { "id": "sku_2210", "title": "Travel Backpack 30L", "subtitle": "Travel", "meta": "EUR 59", "badge": "New", "category": "travel" },
+          { "id": "sku_2255", "title": "Insulated Water Bottle", "subtitle": "Outdoor", "meta": "EUR 19", "category": "travel" },
+          { "id": "sku_2301", "title": "LED Desk Lamp", "subtitle": "Home", "meta": "EUR 42", "category": "home" },
+          { "id": "sku_2390", "title": "Everyday Sneakers", "subtitle": "Fashion", "meta": "EUR 89", "badge": "-15%", "category": "fashion" }
+        ]
+      }
+    ]
+  }
+}

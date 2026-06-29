@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360">
+  <rect width="720" height="360" fill="#00940d"/>
+  <circle cx="360" cy="145" r="86" fill="#16b321"/>
+  <text x="360" y="152" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="800" fill="#fff">NHI</text>
+  <text x="360" y="226" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="700" fill="#56e85e">Lebensmittel aus der ganzen Welt</text>
+</svg>

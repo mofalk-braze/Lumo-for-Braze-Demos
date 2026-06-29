@@ -1,0 +1,250 @@
+{
+  "id": "lidl-plus",
+  "name": "Lidl Plus",
+  "description": "Lidl Plus demo shell that packages the existing sibling Lidl web build without changing the Lidl app source.",
+  "web": {
+    "sourceDir": "../Lidl",
+    "distDir": "../Lidl/dist",
+    "build": false
+  },
+  "android": {
+    "defaultExternalId": "lidl-demo-user",
+    "defaultProfileName": "Lidl Plus"
+  },
+  "launcher": {
+    "presets": [
+      {
+        "id": "lidl_coupon_activated",
+        "label": "Activate coupon",
+        "description": "Logs coupon_activated through the Android SDK.",
+        "type": "sdk_event",
+        "payload": {
+          "name": "coupon_activated",
+          "properties": {
+            "coupon": "2x Obst und Gemuese Punkte",
+            "surface": "lidl_plus",
+            "source": "control_room"
+          }
+        }
+      },
+      {
+        "id": "lidl_scan_and_go_started",
+        "label": "Start Scan & Go",
+        "description": "Logs scan_and_go_started through the Android SDK.",
+        "type": "sdk_event",
+        "payload": {
+          "name": "scan_and_go_started",
+          "properties": {
+            "store": "Berlin-Pankow-Choriner",
+            "source": "control_room"
+          }
+        }
+      },
+      {
+        "id": "lidl_offer_viewed",
+        "label": "View PARKSIDE offer",
+        "description": "Logs offer_viewed for the PARKSIDE offer through the Android SDK.",
+        "type": "sdk_event",
+        "payload": {
+          "name": "offer_viewed",
+          "properties": {
+            "offer": "PARKSIDE Unterstellbock",
+            "category": "onlineshop",
+            "source": "control_room"
+          }
+        }
+      },
+      {
+        "id": "lidl_redeem_points",
+        "label": "Redeem points",
+        "description": "Sets lidl_points and logs points_redeemed through the Android SDK.",
+        "type": "android_sequence",
+        "payload": {
+          "commands": [
+            {
+              "action": "setCustomAttribute",
+              "payload": {
+                "attributes": {
+                  "lidl_points": 30,
+                  "loyalty_tier": "Lidl Plus"
+                }
+              }
+            },
+            {
+              "action": "logCustomEvent",
+              "payload": {
+                "name": "points_redeemed",
+                "properties": {
+                  "cost": 20,
+                  "reward": "5 EUR coupon",
+                  "source": "control_room"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "lidl_push_banner",
+        "label": "Show Lidl push preview",
+        "description": "Shows a foreground push-style banner in the Android shell.",
+        "type": "foreground_push",
+        "payload": {
+          "title": "Dein Lidl Plus Coupon wartet",
+          "body": "Aktiviere jetzt 2x Punkte auf Obst und Gemuese.",
+          "uri": "/lidl-plus"
+        }
+      }
+    ]
+  },
+  "brand": {
+    "appName": "Lidl Plus",
+    "displayName": "Lidl Plus",
+    "tagline": "Coupons, Punkte und Angebote fuer deinen Einkauf.",
+    "logoText": "L",
+    "colors": {
+      "brand": "#0050AA",
+      "brandDark": "#003B7E",
+      "brandLight": "#E7EFF8",
+      "accent": "#FFF000",
+      "ink": "#1A1A1A",
+      "muted": "#6B7280",
+      "line": "#E5E7EB",
+      "surface": "#F5F6F8"
+    },
+    "tabs": [
+      {
+        "id": "home",
+        "label": "Home",
+        "icon": "Home"
+      },
+      {
+        "id": "prospekte",
+        "label": "Prospekte",
+        "icon": "Inbox"
+      },
+      {
+        "id": "lidl-plus",
+        "label": "Lidl Plus",
+        "icon": "Zap"
+      },
+      {
+        "id": "onlineshop",
+        "label": "Onlineshop",
+        "icon": "ShoppingBag"
+      },
+      {
+        "id": "konto",
+        "label": "Konto",
+        "icon": "User"
+      }
+    ],
+    "flavorEvents": [
+      {
+        "name": "coupon_activated",
+        "label": "Coupon activated",
+        "anchor": "offer_interaction",
+        "emitAnchor": true,
+        "sample": {
+          "coupon": "2x Obst und Gemuese Punkte",
+          "surface": "lidl_plus",
+          "action": "activated"
+        }
+      },
+      {
+        "name": "scan_and_go_started",
+        "label": "Scan & Go started",
+        "anchor": "content_engaged",
+        "sample": {
+          "store": "Berlin-Pankow-Choriner",
+          "action": "scan_and_go_started"
+        }
+      },
+      {
+        "name": "offer_viewed",
+        "label": "Offer viewed",
+        "anchor": "content_viewed",
+        "sample": {
+          "offer": "PARKSIDE Unterstellbock",
+          "category": "onlineshop"
+        }
+      },
+      {
+        "name": "points_redeemed",
+        "label": "Points redeemed",
+        "anchor": "loyalty_event",
+        "emitAnchor": true,
+        "sample": {
+          "cost": 20,
+          "reward": "5 EUR coupon",
+          "balance": 30
+        }
+      },
+      {
+        "name": "flyer_opened",
+        "label": "Flyer opened",
+        "anchor": "content_viewed",
+        "sample": {
+          "flyer": "Aktionsprospekt",
+          "surface": "prospekte"
+        }
+      }
+    ],
+    "demoUser": {
+      "externalId": "lidl-demo-user",
+      "firstName": "Mo",
+      "attributes": {
+        "lidl_points": 50,
+        "loyalty_tier": "Lidl Plus",
+        "home_store": "Berlin-Pankow-Choriner",
+        "favorite_categories": [
+          "coupons",
+          "obst_gemuese",
+          "onlineshop"
+        ],
+        "lifecycle_stage": "active"
+      }
+    }
+  },
+  "content": {
+    "hero": {
+      "title": "2x Punkte auf Obst und Gemuese",
+      "subtitle": "Aktiviere deinen Lidl Plus Coupon vor dem Einkauf.",
+      "cta": "Coupon aktivieren"
+    },
+    "categories": [
+      "Coupons",
+      "Prospekte",
+      "Scan & Go",
+      "Onlineshop",
+      "Lidl Punkte"
+    ],
+    "contentCardRail": {
+      "title": "Lidl Plus Angebote",
+      "placement": "lidl_plus_offer"
+    },
+    "rails": [
+      {
+        "id": "coupons",
+        "title": "Meine Coupons",
+        "items": [
+          {
+            "id": "coupon_points",
+            "title": "2x Punkte",
+            "subtitle": "Obst und Gemuese",
+            "meta": "Diese Woche",
+            "badge": "Aktivieren",
+            "category": "coupons"
+          },
+          {
+            "id": "coupon_parkside",
+            "title": "PARKSIDE Angebot",
+            "subtitle": "Unterstellbock",
+            "meta": "9,99 EUR",
+            "category": "onlineshop"
+          }
+        ]
+      }
+    ]
+  }
+}

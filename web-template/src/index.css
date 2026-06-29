@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Brand theme defaults. Overridden at runtime by BrandTheme from the active
+   brandConfig, so cloning a brand never needs a Tailwind/CSS rebuild. */
+:root {
+  color-scheme: light;
+  --brand: #4f46e5;
+  --brand-dark: #4338ca;
+  --brand-light: #eef2ff;
+  --brand-accent: #f59e0b;
+  --ink: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --surface: #f9fafb;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: #d8dde3;
+}
+
+/* In the native iOS shell the WKWebView is full-bleed; this class is applied to
+   <html> by the bridge when running inside the shell so the browser-only phone
+   frame / fake status bar are hidden and the Simulator supplies the chrome. */
+html.in-shell body {
+  background: #fff;
+}
+
+/* Hide scrollbars inside the phone viewport while keeping scroll behavior. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Horizontal snap rails (category chips, carousels). */
+.snap-x-rail {
+  scroll-snap-type: x mandatory;
+}
+.snap-x-rail > * {
+  scroll-snap-align: start;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade {
+  animation: fade-in 0.25s ease-out;
+}
+
+.font-wolt {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.wolt-display {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.text-wolt-ink {
+  color: #20233e;
+}
+
+.bg-wolt-ink {
+  background: #20233e;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

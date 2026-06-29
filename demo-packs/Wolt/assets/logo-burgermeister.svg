@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="150" viewBox="0 0 220 150">
+  <rect width="220" height="150" rx="24" fill="#fff"/>
+  <text x="110" y="82" text-anchor="middle" font-family="Georgia, serif" font-size="30" font-weight="700" fill="#21402b" transform="rotate(-8 110 82)">Burgermeister</text>
+  <text x="110" y="104" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#21402b">Berlin since 2006</text>
+</svg>
