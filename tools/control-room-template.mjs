@@ -37,6 +37,7 @@ export function launcherHtml() {
       --font-ui-safe: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { min-height: 100%; }
     body {
       margin: 0;
@@ -197,7 +198,8 @@ export function launcherHtml() {
       font: 800 11px/1 var(--font-ui, var(--font-ui-safe));
       white-space: nowrap;
     }
-    .chip.warn, .tag.warn { background: #fff1df; color: var(--warn); }
+    .chip.warn, .tag.warn,
+    .chip.warning, .tag.warning { background: #fff1df; color: var(--warn); }
     .chip.error, .tag.error { background: #ffe6df; color: var(--danger); }
     .chip.success, .tag.success { background: #ddf7f2; color: var(--success); }
     .identity-status { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
@@ -266,23 +268,69 @@ export function launcherHtml() {
     }
     .activity { display: grid; gap: 10px; max-height: 640px; overflow: auto; padding-right: 4px; }
     .event {
+      position: relative;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 8px;
       background: #fff;
-      padding: 13px;
+      padding: 12px 13px 12px 17px;
       min-width: 0;
     }
-    .event-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-    .event strong { font-size: 14px; }
-    .event time { color: var(--muted); font: 11px/1 var(--font-ui, var(--font-ui-safe)); white-space: nowrap; }
-    .event-summary { color: var(--text); font-size: 13px; line-height: 1.42; margin-top: 8px; }
+    .event::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: #8b7aa8;
+    }
+    .event.success::before { background: var(--success); }
+    .event.error::before { background: var(--danger); }
+    .event.warning::before { background: var(--warn); }
+    .event.info::before { background: #6f5bd7; }
+    .event-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .event-heading { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+    .event-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      background: var(--surface-subtle);
+      color: var(--brand-dark);
+    }
+    .event-icon svg { width: 15px; height: 15px; stroke-width: 2; }
+    .event.success .event-icon { background: #ddf7f2; color: var(--success); }
+    .event.error .event-icon { background: #ffe6df; color: var(--danger); }
+    .event.warning .event-icon { background: #fff1df; color: var(--warn); }
+    .event-title { min-width: 0; display: grid; gap: 5px; }
+    .event-title strong { font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
+    .event-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+    .event time { color: var(--muted); font: 11px/1 var(--font-ui, var(--font-ui-safe)); white-space: nowrap; padding-top: 3px; }
+    .event-summary { color: var(--text); font-size: 13px; line-height: 1.42; margin: 9px 0 0 38px; }
     .event-meta {
-      margin-top: 9px;
+      margin: 9px 0 0 38px;
       color: var(--muted);
       font: 800 11px/1.35 var(--font-ui, var(--font-ui-safe));
       overflow-wrap: anywhere;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
     }
-    .event-meta .tag { margin: 0 6px 6px 0; }
+    .event-meta .tag {
+      margin: 0;
+      max-width: 100%;
+      white-space: normal;
+      line-height: 1.25;
+      text-align: left;
+    }
+    .event-meta-key { color: var(--muted); margin-right: 4px; }
+    .event details { margin: 9px 0 0 38px; }
     details { margin-top: 9px; }
     summary { color: var(--brand-dark); font: 800 12px/1 var(--font-ui, var(--font-ui-safe)); cursor: pointer; }
     .json, .logs {
@@ -328,6 +376,27 @@ export function launcherHtml() {
     .rest-advanced summary { margin-bottom: 10px; }
     .empty { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 18px; color: var(--muted); background: var(--surface-subtle); }
     .split { display: grid; grid-template-columns: minmax(310px, 470px) minmax(0, 1fr); gap: 18px; align-items: start; }
+    .template-workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr); gap: 18px; align-items: start; }
+    .template-filterbar { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 14px; }
+    .template-filterbar .button.active { background: var(--brand-dark); color: #fff; border-color: var(--brand-dark); }
+    .template-editor { position: sticky; top: 24px; }
+    .template-editor .panel-head { display: grid; grid-template-columns: minmax(0, 1fr); }
+    .template-editor #builderValidation { justify-self: start; white-space: normal; line-height: 1.25; max-width: 100%; }
+    .template-editor-form { display: grid; gap: 12px; }
+    .editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .control-card.selected-control { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(128,30,215,0.12); }
     .presentation-hide { display: initial; }
     .presentation .presentation-hide { display: none !important; }
     .presentation .control-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
@@ -348,6 +417,8 @@ export function launcherHtml() {
       .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
       .row-span-2 { grid-row: auto; }
       .split { grid-template-columns: 1fr; }
+      .template-workspace { grid-template-columns: 1fr; }
+      .template-editor { position: static; }
     }
     @media (max-width: 860px) {
       .shell { grid-template-columns: 1fr; }
@@ -362,6 +433,8 @@ export function launcherHtml() {
       .control-card.row-card { grid-template-columns: 1fr; }
       .control-actions { justify-content: flex-start; }
       .button-group { width: 100%; }
+      .event-top { grid-template-columns: 1fr; }
+      .event time { padding-left: 38px; padding-top: 0; }
       .presentation #view-cockpit .grid { grid-template-columns: 1fr; }
       .presentation #view-cockpit .span-4,
       .presentation #view-cockpit .span-12 { grid-column: 1; grid-row: auto; }
@@ -379,10 +452,9 @@ export function launcherHtml() {
         </div>
         <nav class="nav" aria-label="Control Room sections">
           <button class="active" data-view="cockpit"><span class="mark">01</span><span>Demo Cockpit</span></button>
-          <button data-view="builder"><span class="mark">02</span><span>Controls & Payloads</span></button>
-          <button data-view="feed"><span class="mark">03</span><span>Activity Feed</span></button>
-          <button data-view="templates"><span class="mark">04</span><span>Control Templates</span></button>
-          <button data-view="diagnostics"><span class="mark">05</span><span>Diagnostics</span></button>
+          <button data-view="feed"><span class="mark">02</span><span>Activity Feed</span></button>
+          <button data-view="templates"><span class="mark">03</span><span>Control Templates</span></button>
+          <button data-view="diagnostics"><span class="mark">04</span><span>Diagnostics</span></button>
         </nav>
       </div>
       <div class="callback" id="callback">Callback pending</div>
@@ -492,7 +564,7 @@ export function launcherHtml() {
                 <h2>Story Controls</h2>
                 <p>Pinned or ready controls for the current live story.</p>
               </div>
-              ${buttonHtml({ kind: 'ghost compact presentation-hide', icon: 'settings', label: 'Manage', attrs: 'data-view-jump="templates"' })}
+              ${buttonHtml({ kind: 'ghost compact presentation-hide', icon: 'settings', label: 'Manage', attrs: 'data-view-jump="templates" data-template-filter-jump="story"' })}
             </div>
             <div class="control-grid" id="storyControls"></div>
           </section>
@@ -559,71 +631,6 @@ export function launcherHtml() {
         </div>
       </section>
 
-      <section class="view" id="view-builder">
-        <div class="split">
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Control Builder</h2>
-                <p>Tailor a standard control, run it, or stage it for this demo.</p>
-              </div>
-              <span class="chip" id="builderValidation">Ready</span>
-            </div>
-            <label for="controlSelect">Start from control</label>
-            <select id="controlSelect"></select>
-            <div class="form-grid" style="margin-top:12px">
-              <div>
-                <label for="builderLabel">Label</label>
-                <input id="builderLabel" />
-              </div>
-              <div>
-                <label for="builderType">Action type</label>
-                <select id="builderType"></select>
-              </div>
-            </div>
-            <div class="form-grid" style="margin-top:12px">
-              <div>
-                <label for="builderTransport">Transport</label>
-                <select id="builderTransport">
-                  <option value="app_sdk">Selected app SDK</option>
-                  <option value="android_sdk">Android SDK</option>
-                  <option value="ios_sdk">iOS SDK</option>
-                  <option value="braze_rest">Braze REST</option>
-                </select>
-              </div>
-              <div>
-                <label for="builderPlatform">Platform</label>
-                <select id="builderPlatform">
-                  <option value="android">Android</option>
-                  <option value="ios">iOS</option>
-                  <option value="host">Host / REST</option>
-                  <option value="browser">Browser render</option>
-                </select>
-              </div>
-            </div>
-            <div style="margin-top:12px">
-              <label for="builderPayload">Payload JSON</label>
-              <textarea id="builderPayload"></textarea>
-            </div>
-            <div class="button-group" style="margin-top:14px">
-              ${buttonHtml({ id: 'builderExecute', kind: 'primary', icon: 'play', label: 'Run' })}
-              ${buttonHtml({ id: 'builderStage', kind: 'secondary', icon: 'bookmark-plus', label: 'Stage' })}
-              ${buttonHtml({ id: 'builderUpdate', kind: 'ghost', icon: 'refresh-cw', label: 'Update' })}
-            </div>
-          </section>
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Payload Preview</h2>
-                <p>What will be sent to the executor. JSON details stay expandable in the feed.</p>
-              </div>
-            </div>
-            <pre class="json light" id="builderPreview"></pre>
-            <div class="activity" id="builderActivity" style="margin-top:14px"></div>
-          </section>
-        </div>
-      </section>
-
       <section class="view" id="view-feed">
         <section class="panel">
           <div class="panel-head">
@@ -644,7 +651,23 @@ export function launcherHtml() {
                 <option value="">All statuses</option>
                 <option value="success">Success</option>
                 <option value="error">Error</option>
+                <option value="warning">Warning</option>
                 <option value="info">Info</option>
+              </select>
+            </div>
+            <div>
+              <label for="feedCategory">Category</label>
+              <select id="feedCategory">
+                <option value="">All categories</option>
+                <option value="launcher">Launcher</option>
+                <option value="sdk">SDK</option>
+                <option value="rest">REST</option>
+                <option value="message">Message</option>
+                <option value="profile">Profile</option>
+                <option value="content_cards">Content Cards</option>
+                <option value="push">Push</option>
+                <option value="diagnostics">Diagnostics</option>
+                <option value="error">Error</option>
               </select>
             </div>
           </div>
@@ -653,8 +676,8 @@ export function launcherHtml() {
       </section>
 
       <section class="view" id="view-templates">
-        <div class="grid">
-          <section class="panel span-8">
+        <div class="template-workspace">
+          <section class="panel">
             <div class="panel-head">
               <div>
                 <h2>Control Templates</h2>
@@ -662,50 +685,83 @@ export function launcherHtml() {
               </div>
               <span class="chip" id="templateCount">0 controls</span>
             </div>
+            <div class="template-filterbar" id="templateFilters" aria-label="Control template filters"></div>
             <div class="control-grid" id="templateControls"></div>
           </section>
-          <section class="panel span-4">
+          <section class="panel template-editor" id="templateEditor">
             <div class="panel-head">
               <div>
-                <h2>Custom REST Control</h2>
-                <p>Stage a safe Braze REST request for API-triggered events, campaigns, Canvases, or checks.</p>
+                <h2 id="templateEditorTitle">Tailor Control</h2>
+                <p id="templateEditorSubtitle">Choose a template to create an editable staged control.</p>
               </div>
+              <span class="chip" id="builderValidation">Ready</span>
             </div>
-            <label for="customRestLabel">Label</label>
-            <input id="customRestLabel" placeholder="Trigger abandoned cart Canvas" />
-            <div class="form-grid" style="margin-top:12px">
+            <div id="templateEditorEmpty" class="empty">Select Tailor on any control to create or open a staged copy without leaving this overview.</div>
+            <div id="templateEditorForm" class="template-editor-form" hidden>
+              <div class="editor-toolbar">
+                <span class="chip" id="templateEditorContext">No control selected</span>
+                <div class="editor-actions">
+                  ${buttonHtml({ id: 'templateUnlock', kind: 'secondary', icon: 'unlock', label: 'Unlock' })}
+                  ${buttonHtml({ id: 'templatePromote', kind: 'ghost', icon: 'arrow-up-circle', label: 'Promote' })}
+                </div>
+              </div>
+              <div class="form-grid">
+                <div>
+                  <label for="builderLabel">Label</label>
+                  <input id="builderLabel" />
+                </div>
+                <div>
+                  <label for="builderType">Action type</label>
+                  <select id="builderType"></select>
+                </div>
+              </div>
+              <div class="form-grid">
+                <div>
+                  <label for="builderTransport">Transport</label>
+                  <select id="builderTransport">
+                    <option value="app_sdk">Selected app SDK</option>
+                    <option value="android_sdk">Android SDK</option>
+                    <option value="ios_sdk">iOS SDK</option>
+                    <option value="braze_rest">Braze REST</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="builderPlatform">Platform</label>
+                  <select id="builderPlatform">
+                    <option value="android">Android</option>
+                    <option value="ios">iOS</option>
+                    <option value="host">Host / REST</option>
+                    <option value="browser">Browser render</option>
+                  </select>
+                </div>
+              </div>
               <div>
-                <label for="customRestMethod">Method</label>
-                <select id="customRestMethod">
-                  <option value="POST">POST</option>
-                  <option value="GET">GET</option>
-                  <option value="PUT">PUT</option>
-                  <option value="PATCH">PATCH</option>
-                </select>
+                <label for="builderPayload">Payload JSON</label>
+                <textarea id="builderPayload"></textarea>
+              </div>
+              <label class="ready-row" for="builderRequiresPushToken" style="display:flex;align-items:flex-start;gap:10px">
+                <input id="builderRequiresPushToken" type="checkbox" style="margin-top:2px" />
+                <span class="ready-copy">
+                  <span class="ready-label">Push token</span>
+                  <strong>Require native push token before running</strong>
+                  <p>Use this for campaign or Canvas controls that send push. Leave off for IAM, Content Cards, or unknown message channels.</p>
+                </span>
+              </label>
+              <div class="button-group">
+                ${buttonHtml({ id: 'builderExecute', kind: 'primary', icon: 'play', label: 'Run draft' })}
+                ${buttonHtml({ id: 'builderUpdate', kind: 'secondary', icon: 'save', label: 'Save' })}
+                ${buttonHtml({ id: 'builderStage', kind: 'ghost', icon: 'bookmark-plus', label: 'Stage & pin' })}
               </div>
               <div>
-                <label for="customRestPath">Endpoint</label>
-                <input id="customRestPath" placeholder="/canvas/trigger/send" value="/users/track" />
+                <div class="panel-head" style="margin:2px 0 8px">
+                  <div>
+                    <h3>Payload Preview</h3>
+                    <p>What will be sent to the executor.</p>
+                  </div>
+                </div>
+                <pre class="json light" id="builderPreview"></pre>
               </div>
-            </div>
-            <div style="margin-top:12px">
-              <label for="customRestQuery">Query JSON</label>
-              <textarea id="customRestQuery" style="min-height:76px">{}</textarea>
-            </div>
-            <div style="margin-top:12px">
-              <label for="customRestBody">Body JSON</label>
-              <textarea id="customRestBody">{
-  "events": [
-    {
-      "name": "demo_action",
-      "properties": { "source": "control_room" }
-    }
-  ]
-}</textarea>
-            </div>
-            <div class="button-group" style="margin-top:14px">
-              ${buttonHtml({ id: 'customRestRun', kind: 'primary', icon: 'play', label: 'Run' })}
-              ${buttonHtml({ id: 'customRestStage', kind: 'secondary', icon: 'bookmark-plus', label: 'Stage' })}
+              <div class="activity" id="builderActivity"></div>
             </div>
           </section>
         </div>
@@ -769,6 +825,8 @@ export function launcherHtml() {
       view: 'cockpit',
       busy: false,
       selectedControlId: '',
+      editorLoadedControlId: '',
+      templateFilter: 'all',
       presentation: false,
       live: 'connecting',
       livePollTimer: null,
@@ -780,13 +838,24 @@ export function launcherHtml() {
     }
     const titles = {
       cockpit: ['Demo Cockpit', 'Set up the demo, pin the actions that fit your story, and keep the latest activity visible.'],
-      builder: ['Controls & Payloads', 'Tailor controls, inspect payloads, and run one action at a time.'],
       feed: ['Activity Feed', 'Audience-readable proof of actions, events, message triggers, profile checks, and responses.'],
       templates: ['Control Templates', 'Standard controls become demo-specific when you stage, pin, lock, and reuse them.'],
       diagnostics: ['Diagnostics', 'Runtime sources, raw logs, REST history, and recovery context.'],
     }
+    const templateCategories = [
+      ['all', 'All'],
+      ['story', 'Story'],
+      ['identity', 'Identity'],
+      ['events', 'Events'],
+      ['purchases', 'Purchases'],
+      ['messaging', 'Messaging'],
+      ['content_cards', 'Content Cards'],
+      ['rest_api', 'REST / API'],
+      ['navigation', 'Navigation'],
+      ['staged', 'Staged'],
+    ]
     const restActionTypes = ['rest_event', 'rest_attribute', 'rest_purchase', 'campaign_trigger', 'canvas_trigger', 'profile_export', 'braze_rest_request']
-    const actionTypes = ['change_user', 'sdk_event', 'sdk_attribute', 'sdk_purchase', 'sdk_event_sequence', 'content_cards_refresh', 'push_permission', 'foreground_push', 'navigate', 'android_sequence', ...restActionTypes]
+    const actionTypes = ['change_user', 'sdk_event', 'sdk_attribute', 'sdk_purchase', 'sdk_event_sequence', 'content_cards_refresh', 'push_permission', 'push_readiness', 'trust_diagnostics', 'foreground_push', 'navigate', 'android_sequence', ...restActionTypes]
     const audienceActivityTypes = new Set([
       'change_user',
       'sdk_event',
@@ -800,6 +869,7 @@ export function launcherHtml() {
       'profile_export',
       'foreground_push',
       'push_permission',
+      'content_cards_refresh',
       'content_card_impression',
       'content_card_click',
       'braze_rest_request',
@@ -810,6 +880,7 @@ export function launcherHtml() {
       'content_cards',
       'content_cards_refresh',
       'fcm_token',
+      'trust_diagnostics',
       'demo_command',
       'device_event',
       'control_promoted',
@@ -867,6 +938,25 @@ export function launcherHtml() {
       const device = selectedDeviceRuntime()
       return device && device.externalId ? device.externalId : ''
     }
+    const expectedSourceForPlatform = () => {
+      const runtime = state.data && state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
+      const expected = runtime.expectedSources || {}
+      return expected[selectedPlatform()] || ''
+    }
+    const activeRuntimeManifest = () => state.data && state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
+    const runtimeBlockReason = () => {
+      const device = selectedDeviceRuntime()
+      const runtime = activeRuntimeManifest()
+      const platform = selectedPlatform()
+      if (!device) return 'Launch the selected app and wait for native runtime telemetry.'
+      if (device.id && runtime.id && device.id !== runtime.id) return platform + ' reported pack ' + device.id + ', expected ' + runtime.id + '.'
+      if (device.configHash && runtime.configHash && device.configHash !== runtime.configHash) return platform + ' reported hash ' + device.configHash + ', expected ' + runtime.configHash + '.'
+      const expectedSource = expectedSourceForPlatform()
+      if (expectedSource && device.sourceUrl && device.sourceUrl !== expectedSource) return platform + ' reported source ' + device.sourceUrl + ', expected ' + expectedSource + '.'
+      const applied = appliedExternalId()
+      if (device.externalId && applied && device.externalId !== applied) return platform + ' reported user ' + device.externalId + ', expected ' + applied + '.'
+      return ''
+    }
     const identityBlockReason = () => {
       const pending = pendingExternalId()
       const applied = appliedExternalId()
@@ -874,6 +964,55 @@ export function launcherHtml() {
       if (!pending) return 'Enter an External User ID.'
       if (pending !== applied) return 'Apply this user before running demo controls.'
       if (reported && reported !== applied) return 'Waiting for the selected app to report the applied user.'
+      return ''
+    }
+    const activePushReadiness = () => state.data && state.data.active.runtime ? state.data.active.runtime.push : null
+    const activeTrustDiagnostics = () => state.data && state.data.active.runtime ? state.data.active.runtime.trust : null
+    const trustDiagnosticsReason = () => {
+      if (selectedPlatform() !== 'android') return ''
+      const trust = activeTrustDiagnostics()
+      if (!trust) return 'Waiting for Android HTTPS trust telemetry.'
+      if (trust.platform && trust.platform !== selectedPlatform()) return 'Waiting for Android HTTPS trust telemetry from the selected platform.'
+      const applied = appliedExternalId()
+      if (trust.externalId && applied && trust.externalId !== applied) return 'Android HTTPS trust was reported for ' + trust.externalId + ', expected ' + applied + '.'
+      if (!trust.ready) {
+        const target = trust.failingCheck ? ' (' + trust.failingCheck + ')' : ''
+        return trust.error || ('Android HTTPS trust is failing' + target + '.')
+      }
+      return ''
+    }
+    const pushReadinessReason = () => {
+      const push = activePushReadiness()
+      if (!push) return 'Waiting for native push-token telemetry.'
+      if (push.platform && push.platform !== selectedPlatform()) return 'Waiting for push-token telemetry from the selected platform.'
+      const applied = appliedExternalId()
+      if (push.externalId && applied && push.externalId !== applied) return 'Push token was reported for ' + push.externalId + ', expected ' + applied + '.'
+      if (!push.tokenPresent || !push.ready) {
+        if (push.retryScheduled) return 'Native push token is not ready yet; retry is scheduled.'
+        return push.registrationError || 'Native push token is not ready for this user.'
+      }
+      return ''
+    }
+    const controlRequiresPush = (control) => Boolean(control && control.requiresPushToken)
+    const controlRequiresTrust = (control) => {
+      if (selectedPlatform() !== 'android' || !control) return false
+      const payload = control.payload || {}
+      const eventName = payload.name || payload.eventName || ''
+      return controlRequiresPush(control) || eventName === 'demo_iam_trigger'
+    }
+    const controlBlockReason = (control = null) => {
+      const runtimeReason = runtimeBlockReason()
+      if (runtimeReason) return runtimeReason
+      const identityReason = identityBlockReason()
+      if (identityReason) return identityReason
+      if (controlRequiresTrust(control)) {
+        const trustReason = trustDiagnosticsReason()
+        if (trustReason) return trustReason
+      }
+      if (controlRequiresPush(control)) {
+        const pushReason = pushReadinessReason()
+        if (pushReason) return pushReason
+      }
       return ''
     }
     const identityBlocked = () => Boolean(identityBlockReason())
@@ -884,13 +1023,27 @@ export function launcherHtml() {
     }
     function updateActionAvailability() {
       renderIdentityStatus()
-      const blocked = identityBlocked()
-      ;['exportUser', 'builderExecute', 'customRestRun', 'customRestStage', 'cockpitRestRun', 'cockpitRestStage'].forEach((id) => {
+      const blocked = Boolean(controlBlockReason())
+      ;['exportUser', 'builderExecute', 'cockpitRestRun', 'cockpitRestStage'].forEach((id) => {
         if (el(id)) el(id).disabled = state.busy || blocked
       })
+      const selected = selectedControl()
+      const locked = Boolean(selected && selected.locked)
+      ;['builderLabel', 'builderType', 'builderTransport', 'builderPlatform', 'builderPayload', 'builderRequiresPushToken'].forEach((id) => {
+        if (el(id)) el(id).disabled = state.busy || locked || !selected
+      })
+      ;['builderUpdate'].forEach((id) => {
+        if (el(id)) el(id).disabled = state.busy || locked || !selected
+      })
+      ;['builderStage', 'templatePromote'].forEach((id) => {
+        if (el(id)) el(id).disabled = state.busy || !selected
+      })
+      if (el('templateUnlock')) el('templateUnlock').disabled = state.busy || !locked
       document.querySelectorAll('[data-execute]').forEach((button) => {
-        button.disabled = state.busy || blocked
-        button.title = blocked ? identityBlockReason() : ''
+        const control = allControls().find((item) => item.id === button.dataset.execute)
+        const reason = controlBlockReason(control)
+        button.disabled = state.busy || Boolean(reason)
+        button.title = reason || ''
       })
     }
     const entryKey = (scope, entry, index) => scope + ':' + (entry.id || entry.ts || index)
@@ -935,7 +1088,7 @@ export function launcherHtml() {
       renderTopStatus()
       renderReadiness()
       renderActivityInto('recentActivity', audienceRows(state.data.ledger).slice(0, state.presentation ? 8 : 5))
-      renderActivityInto('builderActivity', audienceRows(state.data.ledger).slice(0, 4))
+      if (el('builderActivity')) renderActivityInto('builderActivity', audienceRows(state.data.ledger).slice(0, 4))
       renderFeed()
       renderDiagnostics()
       renderJobLog()
@@ -983,6 +1136,7 @@ export function launcherHtml() {
     }
     function renderNav() {
       if (state.presentation) state.view = 'cockpit'
+      if (state.view === 'builder') state.view = 'templates'
       const title = titles[state.view] || titles.cockpit
       el('pageTitle').textContent = state.presentation ? 'Presentation Mode' : title[0]
       el('pageSubtitle').textContent = title[1]
@@ -1066,6 +1220,11 @@ export function launcherHtml() {
       const controls = runnableStoryControls()
       const needsRest = allControls().some((control) => control.transport === 'braze_rest' || restActionTypes.includes(control.type))
       const identityReason = identityBlockReason()
+      const runtimeReason = runtimeBlockReason()
+      const trustReason = trustDiagnosticsReason()
+      const pushReason = pushReadinessReason()
+      const push = activePushReadiness()
+      const trust = activeTrustDiagnostics()
       const accessLevel = profile.sdkConfigured && (!needsRest || profile.restConfigured)
         ? 'success'
         : profile.sdkConfigured
@@ -1077,7 +1236,9 @@ export function launcherHtml() {
       const accessDetail = profile.sdkConfigured
         ? (needsRest && !profile.restConfigured ? 'SDK story moments can run. REST-only controls stay in diagnostics until a session key is available.' : 'SDK and configured REST story moments can run for the active user.')
         : 'Add SDK API key and endpoint before running app SDK story moments.'
-      const deviceLevel = job && job.status === 'failed'
+      const deviceLevel = runtimeReason
+        ? 'error'
+        : job && job.status === 'failed'
         ? 'error'
         : job && job.status === 'running'
           ? 'warn'
@@ -1088,12 +1249,44 @@ export function launcherHtml() {
         ? job.step
         : job && job.status === 'failed'
           ? 'Launch needs attention'
-          : deviceRuntime
+          : runtimeReason
+            ? 'Runtime not aligned'
+            : deviceRuntime
             ? (platform === 'ios' ? 'iOS reported ready' : 'Android reported ready')
             : 'Device not yet reported'
       const deviceDetail = deviceRuntime
-        ? 'Latest native handshake received. Identity and source details are in Diagnostics.'
+        ? (runtimeReason || 'Latest native handshake received. Identity and source details are in Diagnostics.')
         : 'Build/install/launch the selected platform to confirm the app is ready.'
+      const pushLevel = !push
+        ? 'warn'
+        : pushReason
+          ? (push.retryScheduled ? 'warn' : 'error')
+          : 'success'
+      const pushTitle = !push
+        ? 'Push token unknown'
+        : pushReason
+          ? 'Push not ready'
+          : 'Push token ready'
+      const pushDetail = !push
+        ? 'Run push readiness after launch to verify native token binding.'
+        : pushReason || ('Token telemetry is current for ' + (push.externalId || profile.externalId || 'the active user') + '.')
+      const trustLevel = platform !== 'android'
+        ? 'success'
+        : trustReason
+          ? (deviceRuntime ? 'error' : 'warn')
+          : 'success'
+      const trustTitle = platform !== 'android'
+        ? 'Trust managed by iOS'
+        : !trust
+          ? 'Android trust unknown'
+          : trustReason
+            ? 'Android trust failing'
+            : 'Android trust ready'
+      const trustDetail = platform !== 'android'
+        ? 'APNs and media trust use the iOS simulator or device trust store.'
+        : !trust
+          ? 'Launch readiness will run native HTTPS diagnostics for Braze image media and Firebase endpoints.'
+          : trustReason || 'Native HTTPS diagnostics passed for Braze image media and Firebase endpoints.'
       return [
         {
           label: 'Demo',
@@ -1112,6 +1305,18 @@ export function launcherHtml() {
           level: deviceLevel,
           title: deviceTitle,
           detail: deviceDetail,
+        },
+        {
+          label: 'Trust',
+          level: trustLevel,
+          title: trustTitle,
+          detail: trustDetail,
+        },
+        {
+          label: 'Push',
+          level: pushLevel,
+          title: pushTitle,
+          detail: pushDetail,
         },
         {
           label: 'User',
@@ -1138,6 +1343,24 @@ export function launcherHtml() {
     function allControls() {
       return state.data && state.data.active && state.data.active.presets ? state.data.active.presets : []
     }
+    function selectedControl() {
+      return allControls().find((control) => control.id === state.selectedControlId) || null
+    }
+    function controlMatchesTemplateFilter(control) {
+      const type = control.type || ''
+      const transport = control.transport || control.source || ''
+      if (state.templateFilter === 'all') return true
+      if (state.templateFilter === 'story') return control.pinned && !control.hidden
+      if (state.templateFilter === 'staged') return Boolean(control.staged)
+      if (state.templateFilter === 'identity') return ['change_user', 'sdk_attribute', 'rest_attribute', 'profile_export'].includes(type)
+      if (state.templateFilter === 'events') return ['sdk_event', 'sdk_event_sequence', 'rest_event', 'android_sequence'].includes(type)
+      if (state.templateFilter === 'purchases') return ['sdk_purchase', 'rest_purchase'].includes(type)
+      if (state.templateFilter === 'messaging') return ['campaign_trigger', 'canvas_trigger', 'foreground_push', 'push_permission', 'push_readiness', 'trust_diagnostics'].includes(type)
+      if (state.templateFilter === 'content_cards') return type === 'content_cards_refresh'
+      if (state.templateFilter === 'rest_api') return transport === 'braze_rest' || restActionTypes.includes(type)
+      if (state.templateFilter === 'navigation') return type === 'navigate'
+      return true
+    }
     function runnableStoryControls() {
       const controls = allControls().filter((control) => control.type !== 'change_user')
       const pinned = controls.filter((control) => control.pinned && !control.hidden)
@@ -1148,20 +1371,22 @@ export function launcherHtml() {
       const meta = [
         control.staged ? 'demo staged' : (control.origin || 'template'),
         control.transport || control.source || '',
+        control.requiresPushToken ? 'push token required' : '',
+        ['campaign_trigger', 'canvas_trigger'].includes(control.type || '') && !control.requiresPushToken ? 'message channel unverified' : '',
         control.pinned ? 'pinned' : '',
         control.locked ? 'locked' : '',
       ].filter(Boolean).join(' · ')
       const actions = mode === 'story'
         ? buttonHtml({ kind: 'primary', size: 'compact', icon: 'play', label: 'Run', attrs: 'data-execute="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'ghost presentation-hide', size: 'compact', icon: 'pencil', label: 'Edit', attrs: 'data-load-control="' + esc(control.id) + '"' }) +
+          buttonHtml({ kind: 'ghost presentation-hide', size: 'compact', icon: 'pencil', label: 'Edit', attrs: 'data-tailor-control="' + esc(control.id) + '"' }) +
           buttonHtml({ kind: 'ghost presentation-hide', size: 'compact', icon: control.pinned ? 'pin-off' : 'pin', label: control.pinned ? 'Unpin' : 'Pin', attrs: 'data-pin="' + esc(control.id) + '"' })
-        : buttonHtml({ kind: 'primary', size: 'compact', icon: 'sliders-horizontal', label: 'Tailor', attrs: 'data-load-control="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'secondary', size: 'compact', icon: 'bookmark-plus', label: 'Stage', attrs: 'data-stage="' + esc(control.id) + '"' }) +
+        : buttonHtml({ kind: 'primary', size: 'compact', icon: 'sliders-horizontal', label: 'Tailor', attrs: 'data-tailor-control="' + esc(control.id) + '"' }) +
+          (!control.staged ? buttonHtml({ kind: 'secondary', size: 'compact', icon: 'bookmark-plus', label: 'Stage', attrs: 'data-stage="' + esc(control.id) + '"' }) : '') +
           buttonHtml({ kind: 'ghost', size: 'compact', icon: control.pinned ? 'pin-off' : 'pin', label: control.pinned ? 'Unpin' : 'Pin', attrs: 'data-pin="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'ghost', size: 'compact', icon: control.locked ? 'unlock' : 'lock', label: control.locked ? 'Unlock' : 'Lock', attrs: 'data-lock="' + esc(control.id) + '"' }) +
+          (control.staged ? buttonHtml({ kind: 'ghost', size: 'compact', icon: control.locked ? 'unlock' : 'lock', label: control.locked ? 'Unlock' : 'Lock', attrs: 'data-lock="' + esc(control.id) + '"' }) : '') +
           buttonHtml({ kind: 'ghost', size: 'compact', icon: control.hidden ? 'eye' : 'eye-off', label: control.hidden ? 'Show' : 'Hide', attrs: 'data-hide="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'ghost', size: 'compact', icon: 'arrow-up-circle', label: 'Promote', attrs: 'data-promote="' + esc(control.id) + '"' })
-      return '<article class="control-card row-card ' + (control.hidden ? 'hidden-control' : '') + '">' +
+          (control.staged ? buttonHtml({ kind: 'ghost', size: 'compact', icon: 'arrow-up-circle', label: 'Promote', attrs: 'data-promote="' + esc(control.id) + '"' }) : '')
+      return '<article class="control-card row-card ' + (control.hidden ? 'hidden-control ' : '') + (state.selectedControlId === control.id ? 'selected-control' : '') + '">' +
         '<div class="control-main">' +
           '<strong>' + esc(control.label || control.id) + '</strong>' +
           '<p>' + esc(control.description || control.type || 'Control') + '</p>' +
@@ -1172,7 +1397,7 @@ export function launcherHtml() {
     }
     function bindControlActions(root) {
       root.querySelectorAll('[data-execute]').forEach((button) => button.addEventListener('click', () => executeControl(button.dataset.execute)))
-      root.querySelectorAll('[data-load-control]').forEach((button) => button.addEventListener('click', () => loadControlIntoBuilder(button.dataset.loadControl)))
+      root.querySelectorAll('[data-tailor-control]').forEach((button) => button.addEventListener('click', () => tailorControl(button.dataset.tailorControl)))
       root.querySelectorAll('[data-stage]').forEach((button) => button.addEventListener('click', () => stageExistingControl(button.dataset.stage)))
       root.querySelectorAll('[data-pin]').forEach((button) => button.addEventListener('click', () => toggleVisibility(button.dataset.pin, 'pinned')))
       root.querySelectorAll('[data-lock]').forEach((button) => button.addEventListener('click', () => toggleVisibility(button.dataset.lock, 'locked')))
@@ -1187,37 +1412,69 @@ export function launcherHtml() {
       renderActivityInto('recentActivity', audienceRows(state.data.ledger).slice(0, state.presentation ? 8 : 5))
     }
     function renderBuilder() {
-      el('builderType').innerHTML = actionTypes.map((type) => '<option value="' + esc(type) + '">' + esc(type) + '</option>').join('')
-      el('controlSelect').innerHTML = allControls().map((control) => '<option value="' + esc(control.id) + '">' + esc(control.label || control.id) + '</option>').join('')
-      if (!state.selectedControlId && allControls()[0]) state.selectedControlId = allControls()[0].id
-      if (state.selectedControlId) el('controlSelect').value = state.selectedControlId
-      const selected = allControls().find((control) => control.id === state.selectedControlId) || allControls()[0]
-      if (selected && !el('builderPayload').value) fillBuilder(selected, false)
+      if (!el('templateEditorForm')) return
+      if (el('builderType').options.length !== actionTypes.length) {
+        el('builderType').innerHTML = actionTypes.map((type) => '<option value="' + esc(type) + '">' + esc(type) + '</option>').join('')
+      }
+      const selected = selectedControl()
+      el('templateEditorEmpty').hidden = Boolean(selected)
+      el('templateEditorForm').hidden = !selected
+      if (!selected) {
+        state.editorLoadedControlId = ''
+        el('builderPreview').textContent = ''
+        el('builderValidation').textContent = 'Ready'
+        el('builderValidation').className = 'chip'
+        return
+      }
+      if (state.editorLoadedControlId !== selected.id) fillBuilder(selected)
+      const locked = Boolean(selected.locked)
+      ;['builderLabel', 'builderType', 'builderTransport', 'builderPlatform', 'builderPayload', 'builderRequiresPushToken'].forEach((id) => {
+        if (el(id)) el(id).disabled = locked || state.busy
+      })
+      el('templateEditorTitle').textContent = selected.locked ? 'Locked staged control' : 'Tailor staged control'
+      el('templateEditorSubtitle').textContent = selected.staged
+        ? 'This editable copy belongs to the active demo session. Promote it only when it should become reusable pack structure.'
+        : 'Tailor creates a staged copy before editing so source templates stay unchanged.'
+      el('templateEditorContext').textContent = [
+        selected.staged ? 'Staged' : (selected.origin || 'Template'),
+        selected.transport || selected.source || '',
+        selected.platform || '',
+        selected.locked ? 'locked' : '',
+      ].filter(Boolean).join(' · ')
+      el('templateUnlock').style.display = locked ? '' : 'none'
+      el('templatePromote').style.display = selected.staged ? '' : 'none'
       updateBuilderPreview()
       renderActivityInto('builderActivity', audienceRows(state.data.ledger).slice(0, 4))
     }
-    function fillBuilder(control, navigate) {
+    function fillBuilder(control) {
       state.selectedControlId = control.id
-      el('controlSelect').value = control.id
+      state.editorLoadedControlId = control.id
       el('builderLabel').value = control.label || ''
       el('builderType').value = control.type || 'sdk_event'
       el('builderTransport').value = control.transport && control.transport !== 'android_sdk' && control.transport !== 'ios_sdk' ? control.transport : (control.source === 'braze_rest' ? 'braze_rest' : 'app_sdk')
       el('builderPlatform').value = control.platform || (el('builderTransport').value === 'braze_rest' ? 'host' : selectedPlatform())
       el('builderPayload').value = fmt(control.payload || {})
+      el('builderRequiresPushToken').checked = Boolean(control.requiresPushToken)
       updateBuilderPreview()
-      if (navigate && state.view !== 'builder') {
-        state.view = 'builder'
-        renderNav()
-      }
     }
     function currentBuilderBody() {
+      const type = el('builderType').value
+      let payload = parseJson('builderPayload')
+      if (type === 'braze_rest_request' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        payload = {
+          ...payload,
+          body: hydrateRestBody(payload.path || payload.endpoint, payload.body || {}),
+          query: payload.query || {},
+        }
+      }
       return {
         sourceControlId: state.selectedControlId,
         label: el('builderLabel').value.trim() || 'Untitled control',
-        type: el('builderType').value,
+        type,
         transport: el('builderTransport').value,
         platform: el('builderPlatform').value,
-        payload: parseJson('builderPayload'),
+        payload,
+        requiresPushToken: el('builderRequiresPushToken').checked,
       }
     }
     function updateBuilderPreview() {
@@ -1229,6 +1486,7 @@ export function launcherHtml() {
         if (body.transport === 'android_sdk' && body.platform !== 'android') warnings.push('Android SDK is pinned to Android.')
         if (body.transport === 'ios_sdk' && body.platform !== 'ios') warnings.push('iOS SDK is pinned to iOS.')
         if (body.transport === 'braze_rest' && !restActionTypes.includes(body.type)) warnings.push('REST supports focused REST actions and safe custom requests.')
+        if (['campaign_trigger', 'canvas_trigger'].includes(body.type) && !body.requiresPushToken) warnings.push('Message channel unknown; push readiness will not block this trigger unless push token is required.')
         el('builderValidation').textContent = warnings.length ? warnings.join(' ') : 'Valid'
         el('builderValidation').className = 'chip ' + (warnings.length ? 'warn' : 'success')
       } catch (error) {
@@ -1240,17 +1498,45 @@ export function launcherHtml() {
     function renderFeed() {
       const query = (el('feedSearch').value || '').toLowerCase()
       const status = el('feedStatus').value
+      const category = el('feedCategory').value
       const rows = audienceRows(state.data.ledger).filter((entry) => {
-        const haystack = [entry.label, entry.type, entry.source, entry.platform, entry.transport, entry.externalId, fmt(entry.payload), fmt(entry.result), fmt(entry.response)].join(' ').toLowerCase()
-        return (!query || haystack.includes(query)) && (!status || entry.status === status)
+        const haystack = [
+          entry.displayTitle,
+          entry.displaySummary,
+          entry.category,
+          entry.severity,
+          entry.label,
+          entry.type,
+          entry.source,
+          entry.platform,
+          entry.transport,
+          entry.externalId,
+          fmt(entry.primaryContext || []),
+          fmt(entry.payload),
+          fmt(entry.result),
+          fmt(entry.response),
+        ].join(' ').toLowerCase()
+        return (!query || haystack.includes(query)) &&
+          (!status || (entry.severity || entry.status) === status) &&
+          (!category || entry.category === category)
       })
       renderActivityInto('feedActivity', rows)
     }
     function renderTemplates() {
-      const controls = allControls()
-      el('templateCount').textContent = controls.length + ' controls'
+      const controls = allControls().filter(controlMatchesTemplateFilter)
+      el('templateCount').textContent = controls.length + ' of ' + allControls().length + ' controls'
+      el('templateFilters').innerHTML = templateCategories.map(([id, label]) => (
+        buttonHtml({ kind: state.templateFilter === id ? 'ghost active' : 'ghost', size: 'compact', label, attrs: 'data-template-filter="' + esc(id) + '"' })
+      )).join('')
+      el('templateFilters').querySelectorAll('[data-template-filter]').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.templateFilter = button.dataset.templateFilter
+          renderTemplates()
+          refreshIcons()
+        })
+      })
       el('templateControls').className = 'template-list'
-      el('templateControls').innerHTML = controls.map((control) => controlCard(control, 'template')).join('')
+      el('templateControls').innerHTML = controls.length ? controls.map((control) => controlCard(control, 'template')).join('') : '<div class="empty">No controls match this filter.</div>'
       bindControlActions(el('templateControls'))
     }
     function renderDiagnostics() {
@@ -1283,6 +1569,7 @@ export function launcherHtml() {
       }).join('') : '<div class="empty">No REST responses yet.</div>'
     }
     function summaryFor(entry) {
+      if (entry.displaySummary) return entry.displaySummary
       const request = entry.request || entry.payload || {}
       const response = entry.response || entry.result || null
       if (entry.status === 'error') return 'This action did not complete. Open details for the exact error and validation context.'
@@ -1308,6 +1595,52 @@ export function launcherHtml() {
       if (entry.type === 'job') return response && response.error ? response.error : 'The launcher updated demo runtime, build, install, or launch state.'
       return 'The control room recorded this demo activity and its response.'
     }
+    function titleFor(entry) {
+      return entry.displayTitle || entry.label || entry.type || 'Activity Recorded'
+    }
+    function severityFor(entry) {
+      const severity = entry.severity || entry.status || 'info'
+      if (severity === 'success' || severity === 'error' || severity === 'warning') return severity
+      if (severity === 'warn') return 'warning'
+      return 'info'
+    }
+    function categoryFor(entry) {
+      return entry.category || (entry.transport === 'braze_rest' ? 'rest' : entry.type === 'job' ? 'launcher' : 'diagnostics')
+    }
+    function categoryLabel(category) {
+      const labels = {
+        launcher: 'Launcher',
+        sdk: 'SDK',
+        rest: 'REST',
+        message: 'Message',
+        profile: 'Profile',
+        content_cards: 'Content Cards',
+        push: 'Push',
+        diagnostics: 'Diagnostics',
+        error: 'Failure',
+      }
+      return labels[category] || category || 'Activity'
+    }
+    function categoryIcon(category, severity) {
+      if (severity === 'error' || category === 'error') return 'triangle-alert'
+      const icons = {
+        launcher: 'rocket',
+        sdk: 'activity',
+        rest: 'send',
+        message: 'message-square',
+        profile: 'user',
+        content_cards: 'panel-top',
+        push: 'bell',
+        diagnostics: 'stethoscope',
+      }
+      return icons[category] || 'activity'
+    }
+    function severityLabel(severity) {
+      if (severity === 'success') return 'Success'
+      if (severity === 'error') return 'Error'
+      if (severity === 'warning') return 'Warning'
+      return 'Info'
+    }
     function transportLabel(entry) {
       const platform = entry.platform === 'ios' ? 'iOS' : entry.platform === 'android' ? 'Android' : entry.platform === 'host' ? 'Host' : entry.platform || ''
       const transport = entry.transport || entry.source || ''
@@ -1321,29 +1654,52 @@ export function launcherHtml() {
       if (transport === 'launcher') return 'Launcher'
       return [platform, transport].filter(Boolean).join(' ')
     }
-    function activityMeta(entry, diagnostics) {
-      const items = [
-        entry.status || 'info',
-        transportLabel(entry),
-        diagnostics ? entry.type : '',
-        entry.externalId,
-      ].filter(Boolean)
-      return items.join(' · ')
+    function contextFor(entry, diagnostics) {
+      if (Array.isArray(entry.primaryContext) && entry.primaryContext.length) return entry.primaryContext
+      return [
+        { label: 'Platform', value: entry.platform },
+        { label: 'Transport', value: transportLabel(entry) },
+        diagnostics ? { label: 'Type', value: entry.type } : null,
+        { label: 'User', value: entry.externalId },
+      ].filter((item) => item && item.value)
+    }
+    function renderContext(entry, diagnostics) {
+      const seen = new Set()
+      return contextFor(entry, diagnostics).filter((item) => {
+        const key = String(item.label || '') + ':' + String(item.value || '')
+        if (!item.value || seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).slice(0, diagnostics ? 6 : 5).map((item) => (
+        '<span class="tag"><span class="event-meta-key">' + esc(item.label || 'Meta') + ':</span>' + esc(item.value) + '</span>'
+      )).join('')
     }
     function renderActivityInto(id, rows, options = {}) {
       const root = el(id)
       rememberOpenDetails(root)
-      const signature = rows.map((entry) => entry.id || entry.ts || entry.label || entry.type).join('|')
+      const signature = rows.map((entry) => [entry.id || entry.ts || entry.label || entry.type, entry.displayTitle, entry.severity, entry.category].join(':')).join('|')
       if (state.activitySignatures[id] === signature && root.children.length) return
       state.activitySignatures[id] = signature
       root.innerHTML = rows.length ? rows.map((entry, index) => {
         const key = entryKey(id, entry, index)
         const open = state.openDetails.has(key) ? ' open' : ''
-        return '<article class="event">' +
-          '<div class="event-top"><strong>' + esc(entry.label || entry.type) + '</strong><time>' + esc(new Date(entry.ts).toLocaleTimeString()) + '</time></div>' +
+        const severity = severityFor(entry)
+        const category = categoryFor(entry)
+        const detailsLabel = options.diagnostics ? 'Raw JSON' : 'Details'
+        return '<article class="event ' + esc(severity) + '">' +
+          '<div class="event-top">' +
+            '<div class="event-heading">' +
+              '<span class="event-icon">' + iconHtml(categoryIcon(category, severity)) + '</span>' +
+              '<div class="event-title">' +
+                '<strong>' + esc(titleFor(entry)) + '</strong>' +
+                '<div class="event-badges"><span class="tag">' + esc(categoryLabel(category)) + '</span><span class="tag ' + esc(severity) + '">' + esc(severityLabel(severity)) + '</span></div>' +
+              '</div>' +
+            '</div>' +
+            '<time>' + esc(new Date(entry.ts).toLocaleTimeString()) + '</time>' +
+          '</div>' +
           '<div class="event-summary">' + esc(summaryFor(entry)) + '</div>' +
-          '<div class="event-meta">' + esc(activityMeta(entry, options.diagnostics)) + '</div>' +
-          '<details data-detail-key="' + esc(key) + '"' + open + '><summary>' + (options.diagnostics ? 'Show raw telemetry JSON' : 'Show request and response JSON') + '</summary><pre class="json light">' + esc(fmt(options.diagnostics ? entry : { request: entry.request || entry.payload, response: entry.response || entry.result, validation: entry.validation })) + '</pre></details>' +
+          '<div class="event-meta">' + renderContext(entry, options.diagnostics) + '</div>' +
+          '<details data-detail-key="' + esc(key) + '"' + open + '><summary>' + detailsLabel + '</summary><pre class="json light">' + esc(fmt(options.diagnostics ? entry : { request: entry.request || entry.payload, response: entry.response || entry.result, validation: entry.validation })) + '</pre></details>' +
         '</article>'
       }).join('') : '<div class="empty">No activity yet.</div>'
     }
@@ -1355,7 +1711,8 @@ export function launcherHtml() {
       if (job.status === 'running') setTimeout(load, 1200)
     }
     async function executeControl(controlId) {
-      const reason = identityBlockReason()
+      const control = allControls().find((item) => item.id === controlId)
+      const reason = controlBlockReason(control)
       if (reason) return alert(reason)
       try {
         setBusy(true)
@@ -1368,11 +1725,11 @@ export function launcherHtml() {
       }
     }
     async function executeBuilder() {
-      const reason = identityBlockReason()
+      const body = currentBuilderBody()
+      const reason = controlBlockReason(body)
       if (reason) return alert(reason)
       try {
         setBusy(true)
-        const body = currentBuilderBody()
         await request('/api/triggers/execute', {
           transport: body.transport,
           platform: body.platform,
@@ -1391,8 +1748,10 @@ export function launcherHtml() {
     async function stageExistingControl(controlId) {
       try {
         setBusy(true)
-        await request('/api/controls/stage', { sourceControlId: controlId, pin: true })
-        await load()
+        const response = await request('/api/controls/stage', { sourceControlId: controlId, pin: true })
+        if (response.state) state.data = response.state
+        else await load()
+        render()
       } catch (error) {
         alert(error.message || String(error))
       } finally {
@@ -1402,8 +1761,15 @@ export function launcherHtml() {
     async function stageBuilderControl() {
       try {
         setBusy(true)
-        await request('/api/controls/stage', { ...currentBuilderBody(), pin: true })
-        await load()
+        const response = await request('/api/controls/stage', { ...currentBuilderBody(), pin: true })
+        if (response.stagedControlId) state.selectedControlId = response.stagedControlId
+        state.editorLoadedControlId = ''
+        if (response.state) {
+          state.data = response.state
+          render()
+        } else {
+          await load()
+        }
       } catch (error) {
         alert(error.message || String(error))
       } finally {
@@ -1445,9 +1811,32 @@ export function launcherHtml() {
         setBusy(false)
       }
     }
-    function loadControlIntoBuilder(controlId) {
+    async function tailorControl(controlId) {
       const control = allControls().find((item) => item.id === controlId)
-      if (control) fillBuilder(control, true)
+      if (!control) return
+      state.view = 'templates'
+      if (control.staged) {
+        state.selectedControlId = control.id
+        state.editorLoadedControlId = ''
+        render()
+        return
+      }
+      try {
+        setBusy(true)
+        const response = await request('/api/controls/stage', { sourceControlId: controlId, pin: true })
+        if (response.stagedControlId) state.selectedControlId = response.stagedControlId
+        state.editorLoadedControlId = ''
+        if (response.state) {
+          state.data = response.state
+          render()
+        } else {
+          await load()
+        }
+      } catch (error) {
+        alert(error.message || String(error))
+      } finally {
+        setBusy(false)
+      }
     }
     function customRestPayload(prefix = 'customRest') {
       const path = el(prefix + 'Path').value.trim()
@@ -1484,7 +1873,7 @@ export function launcherHtml() {
       return body
     }
     async function runCustomRestControl(prefix = 'customRest') {
-      const reason = identityBlockReason()
+      const reason = controlBlockReason()
       if (reason) return alert(reason)
       try {
         setBusy(true)
@@ -1557,6 +1946,7 @@ export function launcherHtml() {
     document.querySelectorAll('[data-view-jump]').forEach((button) => {
       button.addEventListener('click', () => {
         state.view = button.dataset.viewJump
+        if (button.dataset.templateFilterJump) state.templateFilter = button.dataset.templateFilterJump
         render()
       })
     })
@@ -1596,7 +1986,7 @@ export function launcherHtml() {
     el('run').addEventListener('click', async () => {
       try {
         setBusy(true)
-        await request('/api/run', { packId: el('pack').value, platform: selectedPlatform(), applyOnly: false, avd: 'Pixel_10_Pro_v36', simulator: 'iPhone 17' })
+        await request('/api/run', { packId: el('pack').value, platform: selectedPlatform(), applyOnly: false, simulator: 'iPhone 17' })
         await load()
       } catch (error) {
         alert(error.message || String(error))
@@ -1639,7 +2029,6 @@ export function launcherHtml() {
         setBusy(false)
       }
     })
-    el('controlSelect').addEventListener('change', () => loadControlIntoBuilder(el('controlSelect').value))
     el('builderLabel').addEventListener('input', updateBuilderPreview)
     el('builderType').addEventListener('change', updateBuilderPreview)
     el('builderTransport').addEventListener('change', updateBuilderPreview)
@@ -1663,15 +2052,21 @@ export function launcherHtml() {
       loadCredentials(el('pack').value).catch(() => {})
     })
     el('builderPayload').addEventListener('input', updateBuilderPreview)
+    el('builderRequiresPushToken').addEventListener('change', updateBuilderPreview)
     el('builderExecute').addEventListener('click', executeBuilder)
     el('builderStage').addEventListener('click', stageBuilderControl)
     el('builderUpdate').addEventListener('click', updateBuilderControl)
+    el('templatePromote').addEventListener('click', () => {
+      if (state.selectedControlId) promoteControl(state.selectedControlId)
+    })
+    el('templateUnlock').addEventListener('click', () => {
+      if (state.selectedControlId) toggleVisibility(state.selectedControlId, 'locked')
+    })
     el('feedSearch').addEventListener('input', renderFeed)
     el('feedStatus').addEventListener('change', renderFeed)
+    el('feedCategory').addEventListener('change', renderFeed)
     el('refreshCockpit').addEventListener('click', load)
     el('refreshFeed').addEventListener('click', load)
-    el('customRestRun').addEventListener('click', () => runCustomRestControl('customRest'))
-    el('customRestStage').addEventListener('click', () => stageCustomRestControl('customRest'))
     el('cockpitRestRun').addEventListener('click', () => runCustomRestControl('cockpitRest'))
     el('cockpitRestStage').addEventListener('click', () => stageCustomRestControl('cockpitRest'))
     load().then(connectLiveUpdates).catch((error) => {

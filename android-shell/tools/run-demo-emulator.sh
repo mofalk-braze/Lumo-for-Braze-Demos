@@ -8,7 +8,8 @@ REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ADB="${ADB:-$ANDROID_HOME/platform-tools/adb}"
 EMULATOR="${EMULATOR:-$ANDROID_HOME/emulator/emulator}"
-AVD="${AVD:-Pixel_10_Pro}"
+DEFAULT_AVD="${BRAZE_DEMO_ANDROID_AVD:-Braze_Demo_API_36}"
+AVD="${AVD:-$DEFAULT_AVD}"
 INSTALL_APP="${INSTALL_APP:-1}"
 LAUNCH_APP="${LAUNCH_APP:-1}"
 APP_ID="${APP_ID:-com.braze.demoshell}"
@@ -64,6 +65,24 @@ wait_for_launcher_activity() {
   return 1
 }
 
+print_trust_remediation() {
+  cat >&2 <<'EOF'
+
+Android emulator system trust could not be prepared.
+
+This corporate-network demo path requires a rootable Google APIs emulator image so the
+Zscaler root CA can be installed into Android system and Conscrypt trust stores.
+Production and Google Play images do not allow `adb root`/system remount and are not
+supported for push/IAM validation when the host Zscaler CA is present.
+
+Remediation:
+  1. Create or select an AVD based on a Google APIs image, not a Google Play image.
+  2. Start it with -writable-system through this wrapper.
+  3. Rerun the Control Room launch. Do not reset app data unless you are deliberately
+     recovering a broken SDK device identity.
+EOF
+}
+
 if [[ ! -x "$ADB" ]]; then
   echo "adb not found at $ADB. Set ANDROID_HOME or ADB." >&2
   exit 1
@@ -71,6 +90,20 @@ fi
 
 if [[ ! -x "$EMULATOR" ]]; then
   echo "emulator not found at $EMULATOR. Set ANDROID_HOME or EMULATOR." >&2
+  exit 1
+fi
+
+if ! "$EMULATOR" -list-avds | grep -Fxq "$AVD"; then
+  cat >&2 <<EOF
+Android AVD '$AVD' does not exist.
+
+Create the dedicated rootable demo AVD, then rerun launch:
+  android-shell/tools/provision-demo-avd.sh
+
+Override with AVD=<name> or BRAZE_DEMO_ANDROID_AVD=<name> only when the target is
+a rootable Google APIs image. Google Play images are not supported for Zscaler
+trust-backed IAM/push validation.
+EOF
   exit 1
 fi
 
@@ -95,8 +128,8 @@ wait_for_boot
 if security find-certificate -a -c "Zscaler Root CA" /Library/Keychains/System.keychain >/dev/null 2>&1; then
   echo "Applying Zscaler system trust pattern..."
   if ! "$SCRIPT_DIR/install-zscaler-system-ca.sh"; then
-    echo "Warning: Zscaler CA install failed; continuing without emulator system trust." >&2
-    echo "Push/FCM setup may need a Google APIs image or manual CA setup, but the demo app can still install and launch." >&2
+    print_trust_remediation
+    exit 1
   fi
 else
   echo "No Zscaler Root CA found in macOS System keychain; skipping CA install."

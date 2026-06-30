@@ -25,15 +25,21 @@ setup-first and cockpit-like rather than a preset wall:
 
 - Demo Cockpit: active pack, user, actionable readiness, pinned story controls,
   latest Activity Feed, and apply/build/run actions.
-- Controls & Payloads: one-action builder for focused SDK commands, focused Braze
-  REST calls, and safe custom REST requests with editable payload preview and
-  validation feedback.
 - Activity Feed: audience-readable proof for meaningful SDK and REST actions,
   message display, user actions, profile updates, triggers, and launch outcomes.
   Bridge handshakes, runtime reports, token registration, refresh chatter, hashes,
-  and raw telemetry belong in Diagnostics.
-- Control Templates: standard brand-agnostic templates, pack controls, staged
-  demo controls, visibility controls, and promotion into reusable pack presets.
+  and raw telemetry belong in Diagnostics. The launcher normalizes feed rows into
+  `category`, `severity`, `displayTitle`, `displaySummary`, and `primaryContext`
+  from demo pack, launcher, Android, iOS, REST, and callback telemetry before the
+  Control Room renders them. Categories are `launcher`, `sdk`, `rest`, `message`,
+  `profile`, `content_cards`, `push`, `diagnostics`, and `error`; severities are
+  `success`, `error`, `warning`, and `info`. Feed rows remain strictly newest
+  first by timestamp in v1; related events are not grouped or reordered.
+- Control Templates: compact template overview for standard brand-agnostic
+  templates, pack controls, staged demo controls, visibility controls, and
+  promotion into reusable pack presets. Tailoring happens in an embedded editor
+  with payload preview and validation feedback, so operators do not leave the
+  template overview to edit a staged control.
 - Diagnostics: runtime contract, expected render sources, native SDK device ID,
   native diagnostic boundary, advanced override visibility, bridge/debug events,
   job logs, and REST response history.
@@ -79,6 +85,48 @@ preserve app data unless the simulator/app data is erased outside the launcher.
 Control Room commands use `authority=control_room` and `reason=command`. The
 Control Room remains the only presenter/operator surface; app UI stays product
 focused and only sends identity changes when they are real in-product actions.
+
+## Runtime, Trust, And Push Readiness
+
+The Control Room blocks live controls until the selected native surface reports
+the active runtime. The selected platform must echo the expected pack id, config
+hash, source URL, and applied External User ID. A stale installed app, stale
+pack hash, wrong source override, or un-applied user is a readiness blocker, not
+only a diagnostic warning.
+
+Applying identity sends `changeUser`, requests a Content Cards refresh, and
+requests native trust and push readiness. Android runs HTTPS diagnostics against
+Braze image media and Firebase-relevant endpoints on launch, web-ready, user
+changes, and explicit readiness commands. Failed Android TLS diagnostics block
+IAM media validation and push-dependent controls because the SDK may be able to
+track an event while media fetches or Firebase token services still fail.
+
+When the host has a Zscaler root CA, `android-shell/tools/run-demo-emulator.sh`
+requires the dedicated rootable Google APIs emulator by default:
+`Braze_Demo_API_36`, or `BRAZE_DEMO_ANDROID_AVD` when deliberately overridden.
+`android-shell/tools/provision-demo-avd.sh` creates this AVD from a
+Pixel 10 Pro hardware profile on a rootable Android 36.1 `google_apis` system
+image and rejects Google Play images. The wrapper starts with a writable system
+partition, runs `install-zscaler-system-ca.sh`, and fails before app
+install/launch if Android system trust, Conscrypt trust, or the Android-side
+HTTPS smoke checks fail. Google Play/production images are not supported for
+this corporate-network push/IAM validation path because they cannot run
+`adb root` or remount the system trust store. Preserving app data remains the
+default; clearing SDK storage is an explicit recovery action only.
+
+Android refreshes the current Firebase token on launch, resume, web-ready, user
+changes, and explicit readiness commands; it rebinds the current token to Braze
+and retries transient `SERVICE_NOT_AVAILABLE` failures with visible telemetry.
+iOS uses the same command surface for APNs: when notification permission allows
+it, the shell calls remote-notification registration and reports the APNs
+callback state.
+
+Push token readiness is tracked by platform, SDK device ID, and external user.
+Controls can opt into `requiresPushToken: true`; those controls are blocked
+until native token telemetry is successful for the active user. Generic campaign
+and Canvas REST triggers are still runnable because the Control Room cannot know
+their message channel from the Braze ID alone, but the editor warns that push
+readiness will not block them unless the control is marked push-dependent.
 
 ## Drift Prevention
 

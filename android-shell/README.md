@@ -42,8 +42,16 @@ diagnostics through a hidden drawer.
 8. Create an FCM service account with Firebase Cloud Messaging send permission.
 9. Upload the service account JSON to Braze under the Android app's Push
    Notification Settings, then delete or secure the local JSON.
-10. Create or start a Google Play / Google APIs emulator. The current target is
-    the existing `Pixel_10_Pro` AVD.
+10. Provision the dedicated rootable Google APIs emulator:
+
+    ```sh
+    android-shell/tools/provision-demo-avd.sh
+    ```
+
+    The default target is `Braze_Demo_API_36`, provisioned as a Pixel 10 Pro
+    hardware profile on a rootable Android 36.1 `google_apis` image. It does
+    not use a Google Play image because Zscaler trust must be installed into
+    Android system and Conscrypt trust stores for IAM media and FCM reliability.
 11. Run the app, grant the launch-time notification permission prompt, and test
     from the Control Room.
 
@@ -69,7 +77,8 @@ live event ledger. The launcher:
 - Writes a local Android telemetry callback URL so the emulator can POST
   structured events back to the launcher at `http://10.0.2.2:<port>`.
 - Runs the web build.
-- Starts the configured AVD with a writable system partition.
+- Starts the configured AVD with a writable system partition. The default is
+  `BRAZE_DEMO_ANDROID_AVD` or `Braze_Demo_API_36`.
 - Applies the Zscaler trust pattern when the Zscaler root exists in the macOS
   System keychain.
 - Installs and launches the Android shell while preserving app data and Braze
@@ -154,28 +163,25 @@ Run on `Pixel_10_Pro` and check:
   `Google Play services out of date` and token retrieval fails with
   `FCM Registration failed!`, use the pinned Firebase Messaging dependency in
   this project or update Play services through the emulator Play Store.
-- Use an emulator with Google APIs or Google Play services; plain AOSP images
-  cannot complete FCM registration.
+- Use the dedicated rootable Google APIs emulator. Plain AOSP images cannot
+  complete FCM registration, and Google Play images cannot be rooted/remounted
+  for Zscaler system trust.
 - If Logcat shows `net::ERR_CERT_AUTHORITY_INVALID` from `Finsky` or Google Play
   services and FCM fails with `SERVICE_NOT_AVAILABLE`, the emulator cannot trust
-  the HTTPS path to Google services. On a Google APIs image launched with a
-  writable system partition, run:
+  the HTTPS path to Google services. Provision and launch the dedicated AVD:
 
   ```sh
-  ~/Library/Android/sdk/platform-tools/adb emu kill
-  ~/Library/Android/sdk/emulator/emulator -avd Pixel_10_Pro -writable-system -no-snapshot-load -no-snapshot-save
-  android-shell/tools/install-zscaler-system-ca.sh
-  cd android-shell
-  ./gradlew installDebug
+  android-shell/tools/provision-demo-avd.sh
+  android-shell/tools/run-demo-emulator.sh
   ```
 
-  The helper extracts the Zscaler root from the macOS System keychain, installs
-  it into the emulator system CA store, adds the runtime Conscrypt APEX bind
-  mount required by newer Android images, and restarts Android framework so
-  Google Play services reloads trust. If you fully quit/reboot the emulator,
-  rerun the helper before testing FCM again. Alternative fallbacks are a
-  different network/hotspot, disabling VPN or TLS-inspection tools, or creating
-  a fresh stable Google Play/Google APIs AVD image.
+  The wrapper extracts the Zscaler root from the macOS System keychain, installs
+  it into the emulator system CA store, reapplies the runtime Conscrypt APEX
+  bind mount required by newer Android images, runs Android-side HTTPS smoke
+  checks for Braze image media and Firebase endpoints, then installs and
+  launches the app. If you fully quit/reboot the emulator, rerun the wrapper
+  before testing FCM again. Alternative fallbacks are a different
+  network/hotspot or disabling VPN/TLS-inspection tools.
 
 For the usual local demo loop, use the wrapper:
 
@@ -183,9 +189,21 @@ For the usual local demo loop, use the wrapper:
 android-shell/tools/run-demo-emulator.sh
 ```
 
-It starts `Pixel_10_Pro` with a writable system partition, applies the Zscaler
-trust pattern when the root CA exists in the macOS System keychain, installs the
-debug APK, and launches the app. Override the AVD with `AVD=Pixel_10_Pro_v36`.
+It starts `Braze_Demo_API_36` with a writable system partition, Pixel 10 Pro
+skin, and rootable Google APIs image; applies the Zscaler trust pattern when the
+root CA exists in the macOS System keychain; installs the debug APK; and
+launches the app. Override the AVD only with a rootable Google APIs image:
+
+```sh
+BRAZE_DEMO_ANDROID_AVD=Braze_Demo_API_36 android-shell/tools/run-demo-emulator.sh
+```
+
+If an older `Braze_Demo_API_36` was created with the wrong hardware profile,
+recreate only that AVD once:
+
+```sh
+RECREATE_AVD=1 android-shell/tools/provision-demo-avd.sh
+```
 
 ## Repo Hygiene
 

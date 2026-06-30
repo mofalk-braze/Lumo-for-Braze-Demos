@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 import WebKit
 
 /// Hosts the web template in a safe-area WKWebView and implements the bridge:
@@ -114,6 +115,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
         let sync = payload?["sync"] as? [String: Any]
         braze.changeUser(id, sync: sync)
         sendConnection(sync: sync ?? braze.syncEnvelope(authority: "web", reason: "manual"))
+        requestPushReadiness(reason: "change_user")
         postLauncherTelemetry(
           type: "change_user",
           label: "Changed iOS SDK user",
@@ -179,6 +181,8 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
       }
     case "requestPushPermission":
       requestPush()
+    case "requestPushReadiness":
+      requestPushReadiness(reason: payload?["reason"] as? String ?? "bridge")
     default:
       print("[bridge] unknown action: \(action)")
     }
@@ -190,7 +194,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     let externalId = (command["externalId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? BrazeManager.shared.activeExternalId
     let callbackUrl = command["callbackUrl"] as? String ?? ""
     let commandSync = BrazeManager.shared.syncEnvelope(authority: "control_room", reason: "command")
-    let needsBraze = ["changeUser", "logCustomEvent", "setCustomAttribute", "logPurchase", "requestContentCardsRefresh"].contains(action)
+    let needsBraze = ["changeUser", "logCustomEvent", "setCustomAttribute", "logPurchase", "requestContentCardsRefresh", "requestPushReadiness"].contains(action)
     guard !needsBraze || BrazeManager.shared.isConfigured else {
       postLauncherTelemetry(
         type: "demo_command",
@@ -212,6 +216,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     case "changeUser":
       BrazeManager.shared.changeUser(externalId, sync: commandSync)
       sendConnection(sync: commandSync)
+      requestPushReadiness(reason: "change_user")
     case "logCustomEvent":
       guard let name = payload["name"] as? String, !name.isEmpty else {
         postCommandError("Missing event name", command: command, externalId: externalId, callbackUrl: callbackUrl)
@@ -245,6 +250,8 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
       BrazeManager.shared.requestContentCardsRefresh()
     case "requestPushPermission":
       requestPush()
+    case "requestPushReadiness":
+      requestPushReadiness(reason: payload["reason"] as? String ?? "command")
     case "navigate":
       let route = (payload["route"] as? String) ?? (payload["uri"] as? String) ?? "/"
       send("navigate", rawJSON: jsonString(route))
@@ -306,6 +313,34 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
           label: "iOS notification permission \(permission)",
           status: permission == "granted" ? "success" : "info",
           payload: self?.deviceDiagnosticsPayload(permission: permission, reason: reason) ?? [:])
+      }
+    }
+  }
+
+  private func requestPushReadiness(reason: String) {
+    UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+      let permission = Self.authorizationStatusName(settings.authorizationStatus)
+      UserDefaults.standard.set(permission, forKey: PushDefaults.authorizationStatus)
+      let tokenPresent = UserDefaults.standard.bool(forKey: PushDefaults.apnsTokenRegistered)
+      DispatchQueue.main.async {
+        if permission == "granted" {
+          UIApplication.shared.registerForRemoteNotifications()
+        }
+        let status = tokenPresent ? "success" : (permission == "granted" ? "warning" : "error")
+        let label: String
+        if tokenPresent {
+          label = "APNs device token registered"
+        } else if permission == "granted" {
+          label = "APNs token registration requested"
+        } else {
+          label = "APNs token not ready"
+        }
+        self?.postLauncherTelemetry(
+          type: "apns_token",
+          label: label,
+          status: status,
+          payload: self?.deviceDiagnosticsPayload(permission: permission, reason: reason) ?? [:],
+          result: tokenPresent ? nil : ["error": permission == "granted" ? "Waiting for APNs registration callback" : "Push permission is not granted"])
       }
     }
   }

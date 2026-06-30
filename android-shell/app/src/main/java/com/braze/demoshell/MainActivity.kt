@@ -73,6 +73,8 @@ class MainActivity : android.app.Activity() {
     private val syncSessionId: String = UUID.randomUUID().toString()
     private var lastIdentitySyncSignature: String = ""
     private var hasAppliedSdkIdentity: Boolean = false
+    private var lastTrustDiagnostics: JSONObject? = null
+    private val pushRetryHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,7 +91,7 @@ class MainActivity : android.app.Activity() {
         ViewCompat.requestApplyInsets(root)
         configureWebView()
         subscribeToBrazeUpdates()
-        sendFcmTokenToBraze()
+        refreshPushReadiness("launch")
         maybeRequestNotificationsOnLaunch()
         handleDemoCommandIntent(intent)
     }
@@ -99,6 +101,7 @@ class MainActivity : android.app.Activity() {
         runCatching {
             BrazeInAppMessageManager.getInstance().registerInAppMessageManager(this)
             appendLog("IAM manager registered.")
+            refreshPushReadiness("resume")
         }.onFailure {
             appendLog("IAM manager registration failed: ${it.message}")
             postLauncherTelemetry(
@@ -151,6 +154,7 @@ class MainActivity : android.app.Activity() {
         sendToWeb("profiles", store.profilesPayload())
         sendToWeb("pushPermission", pushPermissionState())
         sendCachedContentCards()
+        refreshPushReadiness("web_ready")
         postLauncherTelemetry(
             type = "runtime_ready",
             label = "Android runtime ready",
@@ -222,7 +226,7 @@ class MainActivity : android.app.Activity() {
             externalId = id,
             payload = JSONObject().put("externalId", id).put("sync", syncPayload),
         )
-        sendFcmTokenToBraze()
+        refreshPushReadiness("change_user")
         sendConnectionToWeb(sync = syncPayload)
     }
 
@@ -573,18 +577,88 @@ class MainActivity : android.app.Activity() {
         handleContentCards(braze.getCachedContentCards() ?: emptyList())
     }
 
-    private fun sendFcmTokenToBraze() {
+    private fun refreshPushReadiness(reason: String = "manual") {
+        refreshTrustDiagnostics("push_readiness:$reason")
+        sendFcmTokenToBraze(reason = reason, attempt = 0)
+    }
+
+    private fun refreshTrustDiagnostics(reason: String = "manual") {
+        val checks = listOf(
+            "braze_images" to "https://braze-images.com/",
+            "firebase_installations" to "https://firebaseinstallations.googleapis.com/",
+        )
+        Thread {
+            val results = JSONArray()
+            var allOk = true
+            checks.forEach { (name, url) ->
+                val result = JSONObject()
+                    .put("name", name)
+                    .put("url", url)
+                runCatching {
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = HTTPS_DIAGNOSTIC_TIMEOUT_MS
+                        readTimeout = HTTPS_DIAGNOSTIC_TIMEOUT_MS
+                        instanceFollowRedirects = false
+                    }
+                    val statusCode = connection.responseCode
+                    runCatching { connection.inputStream?.close() }
+                    runCatching { connection.errorStream?.close() }
+                    connection.disconnect()
+                    result
+                        .put("ok", true)
+                        .put("statusCode", statusCode)
+                }.onFailure {
+                    allOk = false
+                    result
+                        .put("ok", false)
+                        .put("errorType", it.javaClass.simpleName)
+                        .put("error", it.message ?: "unknown")
+                }
+                results.put(result)
+            }
+            val payload = JSONObject()
+                .put("reason", reason)
+                .put("ready", allOk)
+                .put("sdkDeviceId", sdkDeviceId())
+                .put("externalId", currentSdkExternalId.ifBlank { activeExternalId() })
+                .put("checks", results)
+            Handler(Looper.getMainLooper()).post {
+                lastTrustDiagnostics = payload
+                appendLog(if (allOk) "HTTPS trust diagnostics passed." else "HTTPS trust diagnostics failed.")
+                postLauncherTelemetry(
+                    type = "trust_diagnostics",
+                    label = "Android HTTPS trust diagnostics",
+                    status = if (allOk) "success" else "error",
+                    payload = payload,
+                )
+                refreshDebugDrawer()
+            }
+        }.start()
+    }
+
+    private fun sendFcmTokenToBraze(reason: String, attempt: Int) {
         runCatching {
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                 if (!task.isSuccessful) {
-                    appendLog("FCM token failed: ${task.exception?.message ?: "unknown error"}")
+                    val error = task.exception?.message ?: "unknown error"
+                    val retry = attempt < FCM_TOKEN_MAX_RETRIES && error.contains("SERVICE_NOT_AVAILABLE", ignoreCase = true)
+                    appendLog("FCM token failed: $error${if (retry) " (retry ${attempt + 1})" else ""}")
                     postLauncherTelemetry(
                         type = "fcm_token",
-                        label = "FCM token failed",
-                        status = "error",
-                        payload = pushDiagnosticsPayload(),
-                        result = JSONObject().put("error", task.exception?.message ?: "unknown error"),
+                        label = if (retry) "FCM token retry scheduled" else "FCM token failed",
+                        status = if (retry) "warning" else "error",
+                        payload = pushDiagnosticsPayload()
+                            .put("reason", reason)
+                            .put("attempt", attempt)
+                            .put("retryScheduled", retry),
+                        result = JSONObject().put("error", error),
                     )
+                    if (retry) {
+                        pushRetryHandler.postDelayed({
+                            sendFcmTokenToBraze(reason = reason, attempt = attempt + 1)
+                        }, FCM_TOKEN_RETRY_DELAYS_MS.getOrElse(attempt) { FCM_TOKEN_RETRY_DELAYS_MS.last() })
+                    }
                     refreshDebugDrawer()
                     return@addOnCompleteListener
                 }
@@ -599,7 +673,10 @@ class MainActivity : android.app.Activity() {
                     type = "fcm_token",
                     label = "FCM token registered",
                     status = "success",
-                    payload = pushDiagnosticsPayload().put("preview", "${token.take(18)}..."),
+                    payload = pushDiagnosticsPayload()
+                        .put("preview", "${token.take(18)}...")
+                        .put("reason", reason)
+                        .put("attempt", attempt),
                 )
                 refreshDebugDrawer()
             }
@@ -609,7 +686,7 @@ class MainActivity : android.app.Activity() {
                 type = "fcm_token",
                 label = "FCM unavailable",
                 status = "error",
-                payload = pushDiagnosticsPayload(),
+                payload = pushDiagnosticsPayload().put("reason", reason).put("attempt", attempt),
                 result = JSONObject().put("error", it.message ?: "unknown"),
             )
         }
@@ -648,6 +725,7 @@ class MainActivity : android.app.Activity() {
             "setCustomAttribute",
             "logPurchase",
             "requestContentCardsRefresh",
+            "requestPushReadiness",
         )
         if (needsBraze && brazeOrNull() == null) {
             throw IllegalStateException("Braze is not configured for the active Android profile")
@@ -679,6 +757,8 @@ class MainActivity : android.app.Activity() {
             "logPurchase" -> logPurchase(payload)
             "requestContentCardsRefresh" -> refreshContentCards()
             "requestPushPermission" -> requestNotificationPermission()
+            "requestPushReadiness" -> refreshPushReadiness(payload.optString("reason").ifBlank { "command" })
+            "requestTrustDiagnostics" -> refreshTrustDiagnostics(payload.optString("reason").ifBlank { "command" })
             "navigate" -> sendNavigation(payload.optString("route").ifBlank { payload.optString("uri") })
             "foregroundPush" -> deliverForegroundPush(
                 title = payload.optString("title", BuildConfig.DEMO_PACK_NAME),
@@ -890,6 +970,7 @@ class MainActivity : android.app.Activity() {
             .put("externalId", currentSdkExternalId.ifBlank { activeExternalId() })
             .put("pushPermission", pushPermissionState())
             .put("pushTokenPresent", !currentFcmToken.isNullOrBlank())
+            .put("trustReady", lastTrustDiagnostics?.optBoolean("ready") ?: false)
             .put("contentCardCount", lastContentCardCount)
             .put("expectedSources", JSONObject()
                 .put("browser", BuildConfig.DEMO_BROWSER_URL)
@@ -994,6 +1075,7 @@ class MainActivity : android.app.Activity() {
             .put("sdkDeviceId", sdkDeviceId())
             .put("externalId", currentSdkExternalId.ifBlank { activeExternalId() })
             .put("push", pushDiagnosticsPayload())
+            .put("trust", lastTrustDiagnostics ?: JSONObject.NULL)
             .put("contentCardCount", lastContentCardCount)
 
     private fun propertiesFromJson(json: JSONObject?): BrazeProperties? {
@@ -1030,6 +1112,9 @@ class MainActivity : android.app.Activity() {
         private const val SYNC_PROTOCOL = "braze-demo-sync/v1"
         private const val DEMO_PREFS = "braze.demo.runtime"
         private const val AUTO_PUSH_PROMPT_ATTEMPTED_KEY = "autoPushPromptAttempted"
+        private const val FCM_TOKEN_MAX_RETRIES = 4
+        private const val HTTPS_DIAGNOSTIC_TIMEOUT_MS = 3_000
+        private val FCM_TOKEN_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L, 20_000L)
         private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     }
 }

@@ -34,6 +34,8 @@ const sseClients = new Set()
 const sessionRestApiKeys = new Map()
 let serverPort = Number(process.env.PORT || 4177)
 const requestBodyLimitBytes = Number(process.env.BRAZE_CONTROL_ROOM_BODY_LIMIT || 256 * 1024)
+const defaultAndroidAvd = process.env.BRAZE_DEMO_ANDROID_AVD || 'Braze_Demo_API_36'
+const trustDiagnosticsTimeoutMs = Number(process.env.BRAZE_DEMO_TRUST_DIAGNOSTICS_TIMEOUT_MS || 15_000)
 
 const builtInPresets = [
   {
@@ -63,6 +65,21 @@ const builtInPresets = [
     description: 'Opens the selected app notification permission prompt when needed.',
     type: 'push_permission',
     payload: {},
+  },
+  {
+    id: 'sdk_push_readiness',
+    label: 'Verify push readiness',
+    description: 'Refreshes native push-token registration for the active user.',
+    type: 'push_readiness',
+    payload: { reason: 'control_room' },
+  },
+  {
+    id: 'android_trust_diagnostics',
+    label: 'Verify Android HTTPS trust',
+    description: 'Runs native Android HTTPS diagnostics for Braze image media and Firebase endpoints.',
+    type: 'trust_diagnostics',
+    platform: 'android',
+    payload: { reason: 'control_room' },
   },
   {
     id: 'sdk_foreground_push',
@@ -205,6 +222,10 @@ function parseArgs(argv) {
   return args
 }
 
+function resolvedAndroidAvd(options = {}) {
+  return String(options.avd || process.env.BRAZE_DEMO_ANDROID_AVD || defaultAndroidAvd).trim() || defaultAndroidAvd
+}
+
 function ensureStateDir() {
   fs.mkdirSync(launcherStateDir, { recursive: true })
 }
@@ -219,6 +240,8 @@ function defaultState() {
     activeDisplayName: pack.brand.demoUser.firstName || '',
     customPresets: [],
     controlsByPack: {},
+    pushReadiness: {},
+    trustDiagnostics: {},
     ledger: [],
     restResponses: [],
   }
@@ -233,6 +256,7 @@ function cleanPresetForStorage(preset) {
     payload: preset.payload || {},
     transport: preset.transport,
     platform: preset.platform,
+    requiresPushToken: Boolean(preset.requiresPushToken),
     custom: Boolean(preset.custom),
   }
 }
@@ -531,6 +555,10 @@ function finishJob(job, status, step) {
   broadcastState()
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function mask(value) {
   if (!value) return ''
   if (value.length <= 8) return '••••'
@@ -736,6 +764,179 @@ function runtimeWarnings(manifest, state = readState()) {
   return warnings
 }
 
+function pushReadinessKey(platform, deviceId, externalId) {
+  return [platform || 'unknown', deviceId || 'unknown-device', externalId || 'unknown-user'].join('|')
+}
+
+function trustDiagnosticsKey(platform, deviceId, externalId) {
+  return [platform || 'unknown', deviceId || 'unknown-device', externalId || 'unknown-user'].join('|')
+}
+
+function extractPushTelemetry(platform, body = {}) {
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
+  const runtime = body.runtime || payload.runtime || null
+  const diagnostics = payload.diagnostics && typeof payload.diagnostics === 'object' ? payload.diagnostics : {}
+  const nestedPush = payload.push && typeof payload.push === 'object'
+    ? payload.push
+    : diagnostics.push && typeof diagnostics.push === 'object'
+      ? diagnostics.push
+      : null
+  const push = nestedPush || payload
+  const type = body.type || body.action || ''
+  const pushType = ['fcm_token', 'apns_token', 'push_permission', 'runtime_ready'].includes(type)
+  if (!pushType && !nestedPush && !Object.hasOwn(push, 'tokenPresent')) return null
+
+  const externalId = String(body.externalId || push.externalId || runtime?.externalId || diagnostics.externalId || '').trim()
+  const deviceId = String(push.sdkDeviceId || runtime?.deviceId || diagnostics.sdkDeviceId || body.deviceId || payload.deviceId || '').trim()
+  const status = normalizeSeverity(body.status || (push.tokenPresent ? 'success' : 'info'))
+  const tokenPresent = Boolean(push.tokenPresent)
+  const ready = status === 'success' && tokenPresent
+  const result = body.result && typeof body.result === 'object' ? body.result : {}
+  return {
+    platform,
+    deviceId,
+    externalId,
+    permission: push.permission || payload.permission || '',
+    tokenPresent,
+    ready,
+    status,
+    type,
+    label: body.label || '',
+    reason: push.reason || payload.reason || '',
+    tokenPreview: push.tokenPreview || push.preview || payload.preview || '',
+    tokenLength: push.tokenLength || payload.tokenLength || 0,
+    retryScheduled: Boolean(push.retryScheduled),
+    registrationError: push.registrationError || result.error || '',
+    ts: new Date().toISOString(),
+  }
+}
+
+function latestActivePushReadiness(state = readState()) {
+  const all = state.pushReadiness && typeof state.pushReadiness === 'object'
+    ? Object.values(state.pushReadiness)
+    : []
+  const platform = state.activePlatform || 'android'
+  const externalId = state.activeExternalId || ''
+  const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
+  return all
+    .filter((entry) => entry && entry.platform === platform)
+    .filter((entry) => !externalId || entry.externalId === externalId)
+    .filter((entry) => !deviceId || !entry.deviceId || entry.deviceId === deviceId)
+    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))[0] || null
+}
+
+function extractTrustTelemetry(platform, body = {}) {
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
+  const runtime = body.runtime || payload.runtime || null
+  const diagnostics = payload.diagnostics && typeof payload.diagnostics === 'object' ? payload.diagnostics : {}
+  const nestedTrust = payload.trust && typeof payload.trust === 'object'
+    ? payload.trust
+    : diagnostics.trust && typeof diagnostics.trust === 'object'
+      ? diagnostics.trust
+      : null
+  const type = body.type || body.action || ''
+  const trust = nestedTrust || (type === 'trust_diagnostics' ? payload : null)
+  if (!trust || !Object.hasOwn(trust, 'ready')) return null
+
+  const checks = Array.isArray(trust.checks) ? trust.checks : []
+  const failed = checks.find((check) => check && check.ok === false) || null
+  const status = normalizeSeverity(body.status || (trust.ready ? 'success' : 'error'))
+  const externalId = String(body.externalId || trust.externalId || runtime?.externalId || diagnostics.externalId || '').trim()
+  const deviceId = String(trust.sdkDeviceId || runtime?.deviceId || diagnostics.sdkDeviceId || body.deviceId || payload.deviceId || '').trim()
+  return {
+    platform,
+    deviceId,
+    externalId,
+    ready: status === 'success' && Boolean(trust.ready),
+    status,
+    type,
+    label: body.label || '',
+    reason: trust.reason || payload.reason || '',
+    checks,
+    failingCheck: failed?.name || failed?.url || '',
+    errorType: failed?.errorType || '',
+    error: failed?.error || '',
+    ts: new Date().toISOString(),
+  }
+}
+
+function latestActiveTrustDiagnostics(state = readState()) {
+  const all = state.trustDiagnostics && typeof state.trustDiagnostics === 'object'
+    ? Object.values(state.trustDiagnostics)
+    : []
+  const platform = state.activePlatform || 'android'
+  const externalId = state.activeExternalId || ''
+  const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
+  return all
+    .filter((entry) => entry && entry.platform === platform)
+    .filter((entry) => !externalId || entry.externalId === externalId)
+    .filter((entry) => !deviceId || !entry.deviceId || entry.deviceId === deviceId)
+    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))[0] || null
+}
+
+function recordAndroidTrustTimeout(externalId, reason) {
+  const state = readState()
+  const platform = 'android'
+  const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
+  const telemetry = {
+    platform,
+    deviceId,
+    externalId,
+    ready: false,
+    status: 'error',
+    type: 'trust_diagnostics',
+    label: 'Android HTTPS trust diagnostics timed out',
+    reason,
+    checks: [],
+    failingCheck: '',
+    errorType: 'Timeout',
+    error: 'Native Android trust diagnostics did not report before launch readiness timeout.',
+    ts: new Date().toISOString(),
+  }
+  updateState((next) => {
+    if (!next.trustDiagnostics || typeof next.trustDiagnostics !== 'object') next.trustDiagnostics = {}
+    next.trustDiagnostics[trustDiagnosticsKey(platform, deviceId, externalId)] = telemetry
+    const current = next.deviceRuntime || {}
+    next.deviceRuntime = {
+      ...current,
+      platform,
+      trust: telemetry,
+      ts: telemetry.ts,
+    }
+  })
+  addLedger({
+    source: 'launcher',
+    platform,
+    transport: 'launcher',
+    type: 'trust_diagnostics',
+    label: telemetry.label,
+    status: 'error',
+    externalId,
+    payload: telemetry,
+    result: { error: telemetry.error },
+  })
+  return telemetry
+}
+
+async function waitForAndroidTrustDiagnostics(job, { externalId, since }) {
+  setJobStep(job, 'Waiting for Android trust telemetry')
+  const deadline = Date.now() + trustDiagnosticsTimeoutMs
+  while (Date.now() < deadline) {
+    const trust = latestActiveTrustDiagnostics(readState())
+    const trustTs = Date.parse(trust?.ts || '')
+    if (trust && Number.isFinite(trustTs) && trustTs >= since) {
+      if (trust.ready) {
+        pushLog(job, 'Android HTTPS trust telemetry is ready.')
+        return trust
+      }
+      throw new Error(trust.error || 'Android HTTPS trust diagnostics failed')
+    }
+    await sleep(500)
+  }
+  const timeout = recordAndroidTrustTimeout(externalId, 'launch_readiness_timeout')
+  throw new Error(timeout.error)
+}
+
 function ledgerPlatformFor(entry) {
   if (entry.platform) return entry.platform
   if (entry.source === 'android' || entry.source === 'android_sdk') return 'android'
@@ -755,9 +956,150 @@ function ledgerTransportFor(entry) {
   return 'launcher'
 }
 
+function normalizeSeverity(status = '') {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'success') return 'success'
+  if (normalized === 'error' || normalized === 'failed' || normalized === 'failure') return 'error'
+  if (normalized === 'warning' || normalized === 'warn') return 'warning'
+  return 'info'
+}
+
+function titleCase(value = '') {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim()
+}
+
+function firstDeviceCommand(entry) {
+  return entry.request?.commands?.[0] || entry.payload?.commands?.[0] || null
+}
+
+function activityPayload(entry) {
+  const command = firstDeviceCommand(entry)
+  if (command?.payload && typeof command.payload === 'object') return command.payload
+  if (entry.payload && typeof entry.payload === 'object') return entry.payload
+  return {}
+}
+
+function activityEventName(entry) {
+  const payload = activityPayload(entry)
+  return payload.name || entry.request?.body?.events?.[0]?.name || entry.request?.body?.purchases?.[0]?.product_id || ''
+}
+
+function activityEndpoint(entry) {
+  const payload = activityPayload(entry)
+  return entry.request?.endpoint || payload.endpoint || payload.path || ''
+}
+
+function activityCategory(entry, severity) {
+  const type = entry.type || ''
+  if (type === 'error' || (severity === 'error' && (entry.source === 'launcher' || entry.transport === 'launcher'))) return 'error'
+  if (['job', 'control_promoted'].includes(type)) return 'launcher'
+  if (['sdk_event', 'sdk_event_sequence', 'sdk_attribute', 'sdk_purchase', 'change_user', 'demo_command'].includes(type)) return 'sdk'
+  if (['rest_event', 'rest_attribute', 'rest_purchase', 'braze_rest_request'].includes(type)) return 'rest'
+  if (['campaign_trigger', 'canvas_trigger', 'foreground_push'].includes(type)) return 'message'
+  if (type === 'profile_export') return 'profile'
+  if (['content_cards_refresh', 'content_card_impression', 'content_card_click', 'content_cards'].includes(type)) return 'content_cards'
+  if (['push_permission', 'push_readiness', 'apns_token', 'fcm_token'].includes(type)) return 'push'
+  if (['runtime_ready', 'trust_diagnostics', 'bridge_action', 'device_event'].includes(type) || entry.transport === 'device_callback' || entry.transport === 'web_bridge' || entry.transport === 'ios_bridge') return 'diagnostics'
+  return entry.transport === 'braze_rest' ? 'rest' : 'diagnostics'
+}
+
+function activityDisplayTitle(entry, category) {
+  const type = entry.type || 'info'
+  const label = entry.label || ''
+  const name = activityEventName(entry)
+  const payload = activityPayload(entry)
+  const endpoint = activityEndpoint(entry)
+  if (category === 'error') return label && !['error', 'launcher error'].includes(label.toLowerCase()) ? label : 'Launcher Failed'
+  if (type === 'job') return label || 'Launcher Job Updated'
+  if (type === 'sdk_event') return `SDK Event Logged${name ? `: ${name}` : ''}`
+  if (type === 'sdk_event_sequence' || type === 'android_sequence') return label || 'SDK Event Sequence Ran'
+  if (type === 'sdk_attribute') return 'SDK Attribute Updated'
+  if (type === 'sdk_purchase') return `SDK Purchase Logged${payload.productId ? `: ${payload.productId}` : ''}`
+  if (type === 'change_user') return `User Changed${entry.externalId ? `: ${entry.externalId}` : ''}`
+  if (type === 'demo_command') return `Native Command Executed${payload.action ? `: ${payload.action}` : ''}`
+  if (type === 'rest_event') return `REST Event Sent${name ? `: ${name}` : ''}`
+  if (type === 'rest_attribute') return 'REST Attributes Sent'
+  if (type === 'rest_purchase') return `REST Purchase Sent${name ? `: ${name}` : ''}`
+  if (type === 'braze_rest_request') return `Braze REST Request${endpoint ? `: ${endpoint}` : ''}`
+  if (type === 'campaign_trigger') return 'Campaign Trigger Sent'
+  if (type === 'canvas_trigger') return 'Canvas Trigger Sent'
+  if (type === 'profile_export') return 'User Profile Exported'
+  if (type === 'content_cards_refresh') return 'Content Cards Refreshed'
+  if (type === 'content_card_impression') return 'Content Card Impression Logged'
+  if (type === 'content_card_click') return 'Content Card Click Logged'
+  if (type === 'foreground_push') return 'Foreground Push Preview Shown'
+  if (type === 'push_permission') return 'Push Permission Updated'
+  if (type === 'push_readiness') return 'Push Readiness Checked'
+  if (type === 'trust_diagnostics') return 'Android HTTPS Trust Checked'
+  if (type === 'apns_token' || type === 'fcm_token') return 'Push Token Updated'
+  if (type === 'runtime_ready') return 'Runtime Ready'
+  if (type === 'bridge_action') return `Bridge Action${payload.action ? `: ${payload.action}` : ''}`
+  return label || titleCase(type) || 'Activity Recorded'
+}
+
+function activityDisplaySummary(entry, category) {
+  const type = entry.type || ''
+  const response = entry.response || entry.result || null
+  if (entry.severity === 'error' || normalizeSeverity(entry.status) === 'error') {
+    return response?.error || 'This action did not complete. Open details for the exact error and validation context.'
+  }
+  if (type === 'profile_export') return 'The active user profile was exported so profile, events, purchases, apps, and push token data can be checked.'
+  if (type === 'campaign_trigger') return 'A campaign trigger was sent for the active user.'
+  if (type === 'canvas_trigger') return 'A Canvas trigger was sent for the active user.'
+  if (type === 'rest_event') return 'A REST event was tracked for the active user.'
+  if (type === 'rest_attribute') return 'REST profile attributes were tracked for the active user.'
+  if (type === 'rest_purchase') return 'A REST purchase was tracked for the active user.'
+  if (type === 'braze_rest_request') return 'A safe custom Braze REST request was sent from the host launcher.'
+  if (type === 'change_user') return 'The selected app SDK user was changed for this demo.'
+  if (type === 'sdk_event') return 'The native SDK captured this custom event for the active demo user.'
+  if (type === 'sdk_attribute') return 'The native SDK updated profile attributes for this user.'
+  if (type === 'sdk_purchase') return 'The native SDK captured a purchase for this user.'
+  if (type === 'push_permission') return 'The app handled notification permission for this user.'
+  if (type === 'push_readiness') return 'The app refreshed native push-token registration for this user.'
+  if (type === 'trust_diagnostics') return 'The app verified HTTPS trust for Braze image media and Firebase endpoints.'
+  if (type === 'content_card_impression') return 'A Content Card impression was recorded for this user.'
+  if (type === 'content_card_click') return 'A Content Card click was recorded for this user.'
+  if (type === 'content_cards_refresh') return 'The app requested fresh Content Cards from the SDK.'
+  if (type === 'foreground_push') return 'The app displayed a foreground push preview for the demo user.'
+  if (type === 'job') return 'The launcher updated demo runtime, build, install, or launch state.'
+  if (category === 'diagnostics') return 'The app or bridge reported runtime telemetry for diagnostics.'
+  return 'The Control Room recorded this demo activity and its response.'
+}
+
+function contextItem(label, value) {
+  const text = value === undefined || value === null ? '' : String(value).trim()
+  return text ? { label, value: text } : null
+}
+
+function normalizeActivityEntry(entry) {
+  const severity = normalizeSeverity(entry.status)
+  const category = entry.category || activityCategory(entry, severity)
+  const payload = activityPayload(entry)
+  const context = [
+    contextItem('Platform', entry.platform),
+    contextItem('Transport', entry.transport),
+    contextItem('User', entry.externalId),
+    contextItem('Event', activityEventName(entry)),
+    contextItem('Action', payload.action),
+    contextItem('Endpoint', activityEndpoint(entry)),
+    contextItem('Type', entry.type),
+  ].filter(Boolean)
+  return {
+    ...entry,
+    category,
+    severity,
+    displayTitle: entry.displayTitle || activityDisplayTitle(entry, category),
+    displaySummary: entry.displaySummary || activityDisplaySummary({ ...entry, severity }, category),
+    primaryContext: Array.isArray(entry.primaryContext) && entry.primaryContext.length ? entry.primaryContext : context,
+  }
+}
+
 function addLedger(entry) {
   const response = entry.response ?? entry.result ?? null
-  const withDefaults = {
+  const withDefaults = normalizeActivityEntry({
     id: entry.id || randomUUID(),
     ts: new Date().toISOString(),
     status: entry.status || 'info',
@@ -772,7 +1114,7 @@ function addLedger(entry) {
     response,
     validation: entry.validation || null,
     result: entry.result ?? response,
-  }
+  })
   updateState((state) => {
     state.ledger = [withDefaults, ...(state.ledger || [])].slice(0, 120)
   })
@@ -798,12 +1140,13 @@ function iosLauncherCallbackUrl() {
 
 function createJob(packId, options = {}) {
   const platform = options.platform === 'ios' ? 'ios' : 'android'
+  const target = platform === 'ios' ? (options.simulator || 'booted') : resolvedAndroidAvd(options)
   const id = `job_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const job = {
     id,
     packId,
     platform,
-    target: platform === 'ios' ? (options.simulator || 'booted') : (options.avd || 'Pixel_10_Pro_v36'),
+    target,
     status: 'running',
     step: 'Queued',
     startedAt: new Date().toISOString(),
@@ -886,6 +1229,13 @@ async function runApplyBuildLaunch(job, options = {}) {
 
   if (platform === 'ios') {
     await runIosBuildInstallLaunch(job, options)
+    setJobStep(job, 'Applying runtime identity')
+    await applyRuntimeIdentity({
+      packId: pack.id,
+      platform: 'ios',
+      externalId: readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId,
+      displayName: readState().activeDisplayName || pack.brand.demoUser.firstName || '',
+    })
     finishJob(job, 'complete', 'Ready')
     addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on iOS`, status: 'success', platform: 'ios' })
     return
@@ -895,9 +1245,19 @@ async function runApplyBuildLaunch(job, options = {}) {
   await runCommand('./gradlew', [':app:validateDemoWebAssets', ':app:assembleDebug'], { cwd: androidShellDir }, job)
 
   setJobStep(job, 'Starting emulator and installing app')
-  const env = {}
-  if (options.avd) env.AVD = options.avd
+  const env = { AVD: resolvedAndroidAvd(options) }
   await runCommand(path.join(androidShellDir, 'tools/run-demo-emulator.sh'), [], { cwd: repoRoot, env }, job)
+
+  setJobStep(job, 'Applying runtime identity')
+  const externalId = readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId
+  const trustWaitStartedAt = Date.now()
+  await applyRuntimeIdentity({
+    packId: pack.id,
+    platform: 'android',
+    externalId,
+    displayName: readState().activeDisplayName || pack.brand.demoUser.firstName || '',
+  })
+  await waitForAndroidTrustDiagnostics(job, { externalId, since: trustWaitStartedAt })
 
   finishJob(job, 'complete', 'Ready')
   addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on Android`, status: 'success', platform: 'android' })
@@ -1104,6 +1464,10 @@ function commandForPreset(preset, externalId, payloadOverride = {}) {
       return { action: 'requestContentCardsRefresh', externalId, payload }
     case 'push_permission':
       return { action: 'requestPushPermission', externalId, payload }
+    case 'push_readiness':
+      return { action: 'requestPushReadiness', externalId, payload }
+    case 'trust_diagnostics':
+      return { action: 'requestTrustDiagnostics', externalId, payload }
     case 'navigate':
       return { action: 'navigate', externalId, payload }
     case 'foreground_push':
@@ -1149,6 +1513,8 @@ async function applyRuntimeIdentity(body = {}) {
   const commands = [
     { action: 'changeUser', externalId, payload: { externalId } },
     { action: 'requestContentCardsRefresh', externalId, payload: {} },
+    { action: 'requestTrustDiagnostics', externalId, payload: { reason: 'identity_apply' } },
+    { action: 'requestPushReadiness', externalId, payload: { reason: 'identity_apply' } },
   ]
   const result = []
   for (const command of commands) {
@@ -1294,6 +1660,7 @@ function withPresetMeta(preset, state = readState()) {
     source,
     transport: preset.transport || (source === 'app_sdk' ? `${platform}_sdk` : source),
     platform,
+    requiresPushToken: Boolean(preset.requiresPushToken),
   }
 }
 
@@ -1307,7 +1674,8 @@ function withControlUiState(preset, controlState) {
 }
 
 function stageControl(body = {}) {
-  return updateState((state) => {
+  let stagedControlId = ''
+  updateState((state) => {
     const { pack } = activePackAndSecrets(state)
     const source = body.sourceControlId ? findControlById(pack, state, body.sourceControlId) : null
     const staged = cleanPresetForStorage({
@@ -1319,16 +1687,22 @@ function stageControl(body = {}) {
       payload: body.payload || source?.payload || { name: 'demo_action', properties: { source: 'control_room' } },
       transport: body.transport || source?.transport,
       platform: body.platform || source?.platform,
+      requiresPushToken: body.requiresPushToken ?? source?.requiresPushToken ?? false,
       custom: true,
     })
     staged.originControlId = body.sourceControlId || source?.id || null
     staged.origin = 'staged'
+    stagedControlId = staged.id
 
     const controlState = controlStateForPack(state, pack.id)
     controlState.staged = [staged, ...controlState.staged.filter((control) => control.id !== staged.id)].slice(0, 80)
     if (body.pin !== false && !controlState.pinned.includes(staged.id)) controlState.pinned.unshift(staged.id)
     if (body.lock && !controlState.locked.includes(staged.id)) controlState.locked.unshift(staged.id)
   })
+  return {
+    stagedControlId,
+    state: publicState(),
+  }
 }
 
 function updateControl(body = {}) {
@@ -1348,6 +1722,7 @@ function updateControl(body = {}) {
       payload: body.payload ?? current.payload,
       transport: body.transport ?? current.transport,
       platform: body.platform ?? current.platform,
+      requiresPushToken: body.requiresPushToken ?? current.requiresPushToken ?? false,
       custom: true,
     })
     controlState.staged[index].originControlId = current.originControlId || null
@@ -1496,6 +1871,10 @@ function manualTriggerPreset(body = {}) {
     payload = {}
   } else if (actionType === 'push_permission') {
     payload = {}
+  } else if (actionType === 'push_readiness') {
+    payload = { reason: payload.reason || 'manual_trigger' }
+  } else if (actionType === 'trust_diagnostics') {
+    payload = { reason: payload.reason || 'manual_trigger' }
   } else if (actionType === 'foreground_push') {
     payload = {
       title: payload.title || 'Demo notification',
@@ -1647,12 +2026,14 @@ function publicState() {
       runtime: {
         manifest: runtime,
         device: state.deviceRuntime || null,
+        push: latestActivePushReadiness(state),
+        trust: latestActiveTrustDiagnostics(state),
         warnings: runtimeWarnings(runtime, state),
       },
       callbackUrl: launcherCallbackUrl(),
     },
     packs,
-    ledger: state.ledger || [],
+    ledger: (state.ledger || []).map(normalizeActivityEntry),
     restResponses: state.restResponses || [],
     jobs: Array.from(jobs.values()).slice(-10).reverse(),
   }
@@ -2279,8 +2660,7 @@ async function handleRequest(req, res) {
       sendJson(res, 201, preset)
     } else if (req.method === 'POST' && url.pathname === '/api/controls/stage') {
       const body = await readBody(req)
-      stageControl(body)
-      sendJson(res, 201, publicState())
+      sendJson(res, 201, stageControl(body))
     } else if (req.method === 'POST' && url.pathname === '/api/controls/update') {
       const body = await readBody(req)
       updateControl(body)
@@ -2298,6 +2678,8 @@ async function handleRequest(req, res) {
       const body = await readBody(req)
       const platform = body.platform === 'ios' ? 'ios' : 'android'
       const runtime = body.runtime || body.payload?.runtime || null
+      const pushTelemetry = extractPushTelemetry(platform, body)
+      const trustTelemetry = extractTrustTelemetry(platform, body)
       if (runtime?.id || runtime?.configHash) {
         updateState((state) => {
           state.deviceRuntime = {
@@ -2307,6 +2689,8 @@ async function handleRequest(req, res) {
             deviceId: runtime.deviceId || body.deviceId || body.payload?.deviceId || '',
             externalId: runtime.externalId || body.externalId || body.payload?.externalId || '',
             sourceUrl: body.sourceUrl || body.payload?.sourceUrl || '',
+            push: pushTelemetry || null,
+            trust: trustTelemetry || null,
             ts: new Date().toISOString(),
           }
         })
@@ -2317,8 +2701,24 @@ async function handleRequest(req, res) {
             ...current,
             platform,
             externalId: body.externalId,
+            push: pushTelemetry || current.push || null,
+            trust: trustTelemetry || current.trust || null,
             ts: new Date().toISOString(),
           }
+        })
+      }
+      if (pushTelemetry) {
+        updateState((state) => {
+          if (!state.pushReadiness || typeof state.pushReadiness !== 'object') state.pushReadiness = {}
+          const key = pushReadinessKey(platform, pushTelemetry.deviceId, pushTelemetry.externalId)
+          state.pushReadiness[key] = pushTelemetry
+        })
+      }
+      if (trustTelemetry) {
+        updateState((state) => {
+          if (!state.trustDiagnostics || typeof state.trustDiagnostics !== 'object') state.trustDiagnostics = {}
+          const key = trustDiagnosticsKey(platform, trustTelemetry.deviceId, trustTelemetry.externalId)
+          state.trustDiagnostics[key] = trustTelemetry
         })
       }
       sendJson(res, 202, addLedger({
