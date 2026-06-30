@@ -1,0 +1,35 @@
+{
+  "name": "braze-demo-builder",
+  "version": "0.1.0",
+  "description": "Guided Braze demo app build workflow for the pack-driven SolCon Android, iOS, and web demo runtime.",
+  "author": {
+    "name": "Braze"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "braze",
+    "demo",
+    "solcon",
+    "android",
+    "ios",
+    "content-cards"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Braze Demo Builder",
+    "shortDescription": "Build pack-driven Braze demo app stories with guided SolCon setup.",
+    "longDescription": "Guides Codex through credible Braze demo app builds across demo packs, the web render surface, the Control Room, and native Android/iOS SDK shells. Keeps setup repeatable by requiring intake questions, Content Card placement recommendations, platform parity checks, and final SolCon handoff notes.",
+    "developerName": "Braze",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Run /demo-build to build or update a Braze demo app story."
+    ],
+    "screenshots": [],
+    "brandColor": "#801ED7"
+  }
+}

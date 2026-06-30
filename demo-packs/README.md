@@ -1,8 +1,10 @@
 # Demo Packs
 
 Demo packs are local app concepts that the Control Room applies before browser,
-Android, or iOS rendering. They are generic by design: use fictional examples or
-local-only customer folders, not committed customer assets.
+Android, or iOS rendering. The shared SolCon distribution intentionally commits
+only `SolCon Starter`, a sanitized pack for smoke testing the shells and runtime.
+Customer, prospect, or brand-specific packs should be imported locally or kept on
+private branches, not committed to the shared distribution path.
 
 Each pack contains:
 
@@ -48,9 +50,9 @@ synced assets, Android seed metadata, and iOS runtime defaults. Validate with:
 npm run validate:demo-runtime
 ```
 
-Use `secrets.properties.example` as a template when a pack needs real Braze
-credentials. All packs share the Android Firebase app configured at
-`android-shell/app/google-services.json`.
+When a local pack needs real Braze credentials, create an ignored
+`secrets.properties` next to that pack. All packs share the dedicated SolCon
+Android Firebase app configured at `android-shell/app/google-services.json`.
 
 `secrets.properties` may include SDK values and the non-secret REST endpoint:
 
@@ -58,9 +60,9 @@ credentials. All packs share the Android Firebase app configured at
 braze.apiKey=
 braze.endpoint=sdk.iad-03.braze.com
 braze.restEndpoint=https://rest.iad-03.braze.com
-demo.externalId=lumo-demo-user
-demo.profileName=Lumo default
-demo.displayName=Mo
+demo.externalId=solcon-demo-user
+demo.profileName=SolCon Starter
+demo.displayName=SolCon
 ```
 
 REST API keys are host-only and are not saved by the Control Room. The launcher

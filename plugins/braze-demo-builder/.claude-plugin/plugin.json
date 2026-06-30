@@ -1,0 +1,19 @@
+{
+  "name": "braze-demo-builder",
+  "version": "0.1.0",
+  "description": "Guided Braze demo app build workflow for the pack-driven SolCon Android, iOS, and web demo runtime.",
+  "author": {
+    "name": "Braze"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "braze",
+    "demo",
+    "solcon",
+    "android",
+    "ios",
+    "content-cards"
+  ],
+  "commands": "./commands",
+  "skills": "./skills"
+}

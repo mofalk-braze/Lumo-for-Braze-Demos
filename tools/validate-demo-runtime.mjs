@@ -19,6 +19,9 @@ import {
 
 const failures = []
 const warnings = []
+const androidGoogleServicesPath = path.join(repoRoot, 'android-shell/app/google-services.json')
+const expectedFirebaseProjectId = 'braze-sc-demo-shell'
+const expectedAndroidPackageName = 'com.braze.demoshell'
 
 function fail(message) {
   failures.push(message)
@@ -217,6 +220,38 @@ function validatePacks() {
   }
 }
 
+function validateFirebaseConfig() {
+  if (!fs.existsSync(androidGoogleServicesPath)) {
+    fail('Missing android-shell/app/google-services.json. Commit the dedicated SolCon Firebase client config.')
+    return
+  }
+
+  let config
+  try {
+    config = readJson(androidGoogleServicesPath)
+  } catch (error) {
+    fail(`android-shell/app/google-services.json is not valid JSON: ${error.message}`)
+    return
+  }
+
+  const projectId = config.project_info?.project_id || ''
+  if (projectId && projectId !== expectedFirebaseProjectId) {
+    warn(`android-shell/app/google-services.json uses Firebase project ${projectId}; expected ${expectedFirebaseProjectId}.`)
+  }
+
+  const packageNames = (config.client || [])
+    .map((client) => client.client_info?.android_client_info?.package_name)
+    .filter(Boolean)
+  if (!packageNames.includes(expectedAndroidPackageName)) {
+    fail(`android-shell/app/google-services.json must contain Android package ${expectedAndroidPackageName}. Found: ${packageNames.join(', ') || '(none)'}`)
+  }
+
+  const serviceAccountKeys = JSON.stringify(config).match(/private_key|client_email|service_account/gi)
+  if (serviceAccountKeys) {
+    fail('android-shell/app/google-services.json appears to contain service-account material. Commit only Firebase client config.')
+  }
+}
+
 function validateGeneratedRuntime() {
   const activePackId = getActivePackId()
   const activePack = getDemoPack(activePackId)
@@ -292,6 +327,7 @@ function validateBuiltOutputs() {
 
 try {
   validatePacks()
+  validateFirebaseConfig()
   validateGeneratedRuntime()
   validateBuiltOutputs()
   validateBridgeSyncContract()

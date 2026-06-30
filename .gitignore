@@ -43,7 +43,6 @@ android-shell/build/
 android-shell/app/build/
 android-shell/local.properties
 android-shell/local.properties.backup.*
-android-shell/app/google-services.json
 android-shell/app/src/**/google-services.json
 android-shell/.active-demo-pack
 .demo-launcher/

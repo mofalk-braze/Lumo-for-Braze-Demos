@@ -21,17 +21,15 @@ const excludedFiles = new Set([
   'web-template/package-lock.json',
 ])
 const allowedSecretTemplates = new Set([
-  'demo-packs/Aktion Mensch/secrets.properties.example',
-  'demo-packs/Lidl/secrets.properties.example',
-  'demo-packs/Lumo - Default/secrets.properties.example',
-  'demo-packs/Wolt/secrets.properties.example',
   'android-shell/local.properties.example',
   'ios-shell/Config.example.swift',
+])
+const allowedClientConfigFiles = new Set([
+  'android-shell/app/google-services.json',
 ])
 const ignoredCredentialPatterns = [
   /^android-shell\/local\.properties$/,
   /^android-shell\/local\.properties\.backup\./,
-  /^android-shell\/app\/google-services\.json$/,
   /^demo-packs\/[^/]+\/secrets\.properties$/,
   /^ios-shell\/Sources\/Config\.swift$/,
   /^\.env(?:\..*)?$/,
@@ -101,6 +99,7 @@ function shouldScanFile(file) {
   if (rel === 'tools/secret-scan.mjs') return false
   if (ignoredCredentialPatterns.some((pattern) => pattern.test(rel))) return false
   if (excludedFiles.has(rel)) return false
+  if (allowedClientConfigFiles.has(rel)) return true
   if (allowedSecretTemplates.has(rel)) return true
   if (rel.endsWith('.png') || rel.endsWith('.jpg') || rel.endsWith('.jpeg') || rel.endsWith('.webp')) return false
   if (rel.endsWith('.gif') || rel.endsWith('.pdf') || rel.endsWith('.zip') || rel.endsWith('.jar')) return false
@@ -121,7 +120,7 @@ function scanFiles() {
   const findings = []
   for (const file of walk(repoRoot)) {
     const rel = relative(file)
-    if (!allowedSecretTemplates.has(rel)) {
+    if (!allowedSecretTemplates.has(rel) && !allowedClientConfigFiles.has(rel)) {
       for (const detector of detectors.filter((item) => item.fileNameOnly)) {
         if (detector.pattern.test(rel)) {
           findings.push({ file: rel, detector: detector.name, line: 1 })
@@ -137,6 +136,7 @@ function scanFiles() {
     const lines = text.split(/\r?\n/)
     lines.forEach((line, index) => {
       for (const detector of detectors.filter((item) => !item.fileNameOnly)) {
+        if (allowedClientConfigFiles.has(rel) && detector.name === 'SDK/API key assignment') continue
         if (detector.pattern.test(line)) {
           if (/BuildConfig\.|process\.env|secrets\[|placeholder/i.test(line)) continue
           if (allowedSecretTemplates.has(rel) && /=$|=""|=''|YOUR_|REPLACE_|example|placeholder/i.test(line)) continue

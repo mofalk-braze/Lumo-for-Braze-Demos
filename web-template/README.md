@@ -43,8 +43,8 @@ render and clicks before local URL/deeplink handling.
 ## Control Boundary
 
 The browser renders the demo. The Control Room owns demo selection, workspace
-and user setup, event presets, Wolt flows, push/IAM/Content Card orchestration,
-REST triggers, validation, builds, and the live ledger.
+and user setup, event presets, pack-specific flows, push/IAM/Content Card
+orchestration, REST triggers, validation, builds, and the live ledger.
 
 New demo app UI should not include presenter/demo controls. If a product UI
 contains a real user-switching affordance, call `useBraze().changeUser(id)` so

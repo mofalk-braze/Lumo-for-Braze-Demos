@@ -8,11 +8,19 @@ you swap the icon + display name and rebuild.
 
 ## Prerequisites
 
-- Xcode 14+ on an **Apple-Silicon Mac** (real push to the Simulator needs this).
-- `xcodegen` (`brew install xcodegen`).
+- Xcode 14+ on an **Apple-Silicon Mac**.
+- `xcodegen` (`brew install xcodegen`, or run the top-level bootstrap).
 - The web template running: `cd ../web-template && npm run dev` (serves `http://localhost:5173`).
 - The active demo pack applied from the repo root, for example
-  `node tools/demo-launcher.mjs --pack wolt-food-delivery --apply-only`.
+  `npm run demo:apply:starter`.
+
+For SolCon distribution, use the top-level flow first:
+
+```bash
+./bootstrap-solcon.sh --check
+./bootstrap-solcon.sh --install
+npm run demo:launcher
+```
 
 ## Generate & run
 
@@ -47,10 +55,14 @@ are fallback diagnostics only. With creds set, bridge calls hit the real
 **app-channel** install; IAMs render natively; Content Cards flow into the demo
 surfaces.
 
-## Enable real push (per workspace, one-time)
+## Enable real push (pending SolCon signing path)
 
 Bundle ID is **`com.braze.masquerade`** — it reuses the org's already-registered
 Masquerade App ID so the team's APNs `.p8` is valid for this app's push topic.
+
+For the shared SolCon distribution, real iOS push is intentionally caveated until
+a dedicated Apple Developer signing/team path is available. Unsigned simulator
+builds still validate the web shell, bridge, SDK calls, IAM, and Content Cards.
 
 > **Push REQUIRES a properly signed build — the CLI ad-hoc build cannot do push.**
 > Getting an APNs device token needs the `aps-environment` entitlement, which the

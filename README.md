@@ -1,13 +1,14 @@
 # Braze Demo Shells
 
-Local-first demo tooling for Braze app demos. A demo pack generates a shared web
-runtime and native shell metadata, then the Control Room applies packs, launches
-Android/iOS, triggers SDK actions, and sends safe host-side Braze REST requests.
+Local-first demo tooling for Braze app demos, packaged for SolCon colleague
+distribution. A demo pack generates a shared web runtime and native shell
+metadata, then the Control Room applies packs, launches Android/iOS, triggers
+SDK actions, and sends safe host-side Braze REST requests.
 
 ## Architecture
 
-- `demo-packs/` contains public demo app concepts. Keep customer-private assets
-  and local credentials out of committed packs.
+- `demo-packs/` contains the sanitized `SolCon Starter` pack. Keep
+  customer/private packs and local credentials out of the shared distribution.
 - `web-template/` renders the product demo UI. It does not contain presenter
   controls; all real demo controls live in the Control Room.
 - `android-shell/` packages the built web app as Android assets and owns the
@@ -17,49 +18,55 @@ Android/iOS, triggers SDK actions, and sends safe host-side Braze REST requests.
 - `tools/demo-launcher.mjs` starts the local Control Room, applies packs, runs
   builds, launches devices, and keeps REST API keys host-only.
 
-## First Run
+## SolCon First Run
 
-1. Install prerequisites:
-   - Node.js and npm.
-   - Android Studio / Android SDK for Android demos.
-   - Xcode and `xcodegen` for iOS demos.
-2. Install web dependencies:
+Supported v1 host: Apple Silicon macOS.
 
-   ```sh
-   cd web-template
-   npm install
-   cd ..
-   ```
+```sh
+./bootstrap-solcon.sh --check
+./bootstrap-solcon.sh --install
+./bootstrap-solcon.sh --android-avd
+npm run demo:launcher
+```
 
-3. Create local credential files from examples as needed:
-   - `android-shell/local.properties`
-   - `android-shell/app/google-services.json`
-   - `ios-shell/Sources/Config.swift`
-   - `demo-packs/<pack>/secrets.properties`
-4. Apply a pack and validate generated runtime state:
+Open the Control Room URL printed by the launcher, choose `SolCon Starter`, and
+launch Android or iOS. Detailed setup and troubleshooting live in
+`docs/solcon-onboarding.md`.
 
-   ```sh
-   npm run demo:launcher
-   npm run validate:demo-runtime
-   ```
+## Diagnostics
 
-5. Use the Control Room URL printed by the launcher to choose a pack, configure
-   the active user, launch Android/iOS, and run demo controls.
+```sh
+npm run doctor
+npm run demo:apply:starter
+npm run validate:demo-runtime
+```
+
+## Agent Demo Build Workflow
+
+`plugins/braze-demo-builder/` is the source-distributed Codex/Claude plugin for
+guided demo app builds. It exposes `/demo-build`, which grounds in this repo's
+runtime docs, asks the required SolCon setup questions, recommends Content Card
+placements, and finishes with validation and dashboard setup notes.
 
 ## Local Secrets
 
 Do not commit credentials or generated local state. REST API keys should be set
 only in the Control Room session or environment variables such as
-`BRAZE_REST_API_KEY_<PACK_ID>` or `BRAZE_REST_API_KEY`. SDK keys, Firebase files,
-APNs material, service account JSON, keystores, and generated native config stay
-local and are ignored.
+`BRAZE_REST_API_KEY_<PACK_ID>` or `BRAZE_REST_API_KEY`.
+
+The dedicated SolCon `android-shell/app/google-services.json` is committed
+because it is Firebase client app config for `com.braze.demoshell` and is
+embedded in the APK. Firebase service account JSON, FCM server keys, APNs
+material, keystores, Braze REST keys, `local.properties`, `Config.swift`, and
+pack `secrets.properties` stay local and ignored.
 
 ## Sharing With Teammates
 
-The v1 distribution model is source-based: teammates clone the private repo,
-install prerequisites, provide their own local credentials, and run the Control
-Room locally. Hosted Control Room distribution is intentionally deferred because
-it would require authentication, authorization, audit logging, rate limits,
+The v1 distribution model is source-based: teammates clone the private repo, run
+the bootstrap script, use the committed starter pack and Firebase client config,
+then provide only local Braze SDK/REST credentials when they need live Braze
+workspaces. Hosted Control Room distribution is intentionally deferred because it
+would require authentication, authorization, audit logging, rate limits,
 server-side secret storage, and a formal deployment model.
 
 ## Commit Checks

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1090250680269",
+    "project_id": "braze-sc-demo-shell",
+    "storage_bucket": "braze-sc-demo-shell.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1090250680269:android:d0f6329d9752135a654684",
+        "android_client_info": {
+          "package_name": "com.braze.demoshell"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7v9U_asf6jHHwkqRoURcYz_oTXu5IgzM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

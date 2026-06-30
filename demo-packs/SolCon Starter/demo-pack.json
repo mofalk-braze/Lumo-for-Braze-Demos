@@ -1,0 +1,172 @@
+{
+  "id": "solcon-starter",
+  "name": "SolCon Starter",
+  "description": "Sanitized starter app for validating the shared SolCon demo shell distribution.",
+  "android": {
+    "defaultExternalId": "solcon-demo-user",
+    "defaultProfileName": "SolCon Starter"
+  },
+  "launcher": {
+    "presets": [
+      {
+        "id": "solcon_sdk_onboarding_step",
+        "label": "Complete onboarding",
+        "description": "Logs onboarding_completed through the active native SDK.",
+        "type": "sdk_event",
+        "payload": {
+          "name": "onboarding_completed",
+          "properties": {
+            "source": "control_room",
+            "plan": "starter"
+          }
+        }
+      },
+      {
+        "id": "solcon_sdk_set_interest",
+        "label": "Set demo interest",
+        "description": "Sets demo_interest=mobile_channels on the active SDK user.",
+        "type": "sdk_attribute",
+        "payload": {
+          "key": "demo_interest",
+          "value": "mobile_channels"
+        }
+      },
+      {
+        "id": "solcon_sdk_purchase",
+        "label": "Log sample order",
+        "description": "Logs a non-customer sample purchase through the active native SDK.",
+        "type": "sdk_purchase",
+        "payload": {
+          "productId": "starter_bundle",
+          "price": 29,
+          "currency": "EUR",
+          "quantity": 1,
+          "properties": {
+            "source": "control_room",
+            "category": "demo"
+          }
+        }
+      }
+    ]
+  },
+  "brand": {
+    "appName": "Starter",
+    "displayName": "SolCon Starter",
+    "tagline": "A clean test app for mobile messaging demos.",
+    "logoText": "SC",
+    "colors": {
+      "brand": "#0F766E",
+      "brandDark": "#115E59",
+      "brandLight": "#CCFBF1",
+      "accent": "#F97316",
+      "ink": "#111827",
+      "muted": "#64748B",
+      "line": "#D1D5DB",
+      "surface": "#F8FAFC"
+    },
+    "tabs": [
+      { "id": "home", "label": "Home", "icon": "Home" },
+      { "id": "inbox", "label": "Inbox", "icon": "Inbox" },
+      { "id": "account", "label": "Account", "icon": "User" }
+    ],
+    "flavorEvents": [
+      {
+        "name": "onboarding_completed",
+        "label": "Onboarding completed",
+        "anchor": "preference_updated",
+        "emitAnchor": true,
+        "sample": {
+          "plan": "starter",
+          "source": "app"
+        }
+      },
+      {
+        "name": "feature_explored",
+        "label": "Feature explored",
+        "anchor": "content_engaged",
+        "emitAnchor": true,
+        "sample": {
+          "feature": "message_center",
+          "source": "app"
+        }
+      },
+      {
+        "name": "offer_saved",
+        "label": "Offer saved",
+        "anchor": "offer_interaction",
+        "emitAnchor": true,
+        "sample": {
+          "offer": "starter_bundle",
+          "source": "app"
+        }
+      }
+    ],
+    "demoUser": {
+      "externalId": "solcon-demo-user",
+      "firstName": "SolCon",
+      "attributes": {
+        "demo_interest": "mobile_channels",
+        "lifecycle_stage": "starter",
+        "home_location": "Berlin",
+        "favorite_categories": ["messaging", "loyalty"],
+        "last_conversion_value": 29
+      }
+    }
+  },
+  "content": {
+    "hero": {
+      "title": "Your mobile demo is ready",
+      "subtitle": "Use this starter app to validate SDK actions, Content Cards, IAM, and push readiness.",
+      "cta": "Start walkthrough"
+    },
+    "categories": ["Messaging", "Loyalty", "Offers", "Inbox", "Analytics", "Push"],
+    "contentCardRail": {
+      "title": "Personalized updates",
+      "placement": "home_feed"
+    },
+    "contentCardSurfaces": [
+      {
+        "id": "home-feed",
+        "placement": "home_feed",
+        "surface": "carousel",
+        "screen": "home",
+        "title": "Personalized updates",
+        "variant": "carousel",
+        "emptyBehavior": "hide",
+        "maxCards": 4
+      },
+      {
+        "id": "starter-inbox",
+        "placement": "inbox",
+        "surface": "inbox",
+        "screen": "inbox",
+        "title": "Inbox",
+        "variant": "inbox",
+        "emptyBehavior": "empty-state",
+        "maxCards": 8
+      }
+    ],
+    "rails": [
+      {
+        "id": "starter-actions",
+        "title": "Try the core flows",
+        "items": [
+          { "id": "flow_push", "title": "Push readiness", "subtitle": "Android FCM", "meta": "Token check", "badge": "Native", "category": "push" },
+          { "id": "flow_iam", "title": "In-app message", "subtitle": "Triggered campaign", "meta": "demo_iam_trigger", "category": "messaging" },
+          { "id": "flow_cards", "title": "Content Cards", "subtitle": "Home and inbox", "meta": "extras.placement", "category": "inbox" },
+          { "id": "flow_user", "title": "User profile", "subtitle": "Attributes and events", "meta": "SDK bridge", "category": "analytics" }
+        ]
+      },
+      {
+        "id": "starter-offers",
+        "title": "Starter offers",
+        "items": [
+          { "id": "offer_bundle", "title": "Starter bundle", "subtitle": "Demo package", "meta": "EUR 29", "badge": "Sample", "category": "offers" },
+          { "id": "offer_loyalty", "title": "Loyalty boost", "subtitle": "Attribute story", "meta": "+250 points", "category": "loyalty" },
+          { "id": "offer_channel", "title": "Channel check", "subtitle": "Push + IAM", "meta": "Ready state", "category": "messaging" },
+          { "id": "offer_inbox", "title": "Message center", "subtitle": "Persistent cards", "meta": "Inbox", "category": "inbox" }
+        ]
+      }
+    ]
+  }
+}

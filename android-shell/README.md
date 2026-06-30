@@ -19,7 +19,24 @@ diagnostics through a hidden drawer.
 - Foreground push payloads can be forwarded into the branded demo banner;
   background push remains native Android notification behavior.
 
-## Local Setup
+## SolCon Setup
+
+Use the top-level bootstrap path first:
+
+```sh
+./bootstrap-solcon.sh --check
+./bootstrap-solcon.sh --install
+./bootstrap-solcon.sh --android-avd
+npm run demo:launcher
+```
+
+The shared distribution commits the dedicated SolCon Firebase client config at
+`android-shell/app/google-services.json`. Colleagues should not create their own
+Firebase apps or FCM credentials. Real push still requires local Braze SDK
+credentials for the active pack and the Firebase service account to be configured
+once in Braze by the owner/admin.
+
+## Manual Setup Fallback
 
 1. Build the web app:
 
@@ -37,9 +54,12 @@ diagnostics through a hidden drawer.
    - `braze.endpoint`: SDK endpoint, for example `sdk.iad-03.braze.com`.
    - `firebase.senderId`: Firebase project number / FCM sender ID.
 5. Register the Android app in Firebase with package name `com.braze.demoshell`.
-6. Download `google-services.json` and place it at `android-shell/app/google-services.json`.
-7. In Google Cloud, enable Firebase Cloud Messaging API.
-8. Create an FCM service account with Firebase Cloud Messaging send permission.
+6. Confirm the committed `android-shell/app/google-services.json` exists and
+   matches package `com.braze.demoshell`.
+7. In Google Cloud, enable Firebase Cloud Messaging API if the shared Firebase
+   project has not already been prepared.
+8. Create or use the owner-managed FCM service account with Firebase Cloud
+   Messaging send permission.
 9. Upload the service account JSON to Braze under the Android app's Push
    Notification Settings, then delete or secure the local JSON.
 10. Provision the dedicated rootable Google APIs emulator:
@@ -133,13 +153,13 @@ is the only normal control surface.
 
 ## Braze Dashboard Checks
 
-- Find user `lumo-demo-user` unless your active profile uses another external ID.
+- Find the active pack user external ID from the Control Room or pack defaults.
 - Confirm the Android app install appears on the profile.
 - Confirm default demo attributes and focused SDK or REST demo calls arrive.
 - Create a test IAM campaign triggered by custom event `demo_iam_trigger`.
-- Create Content Cards targeted to the demo user:
-  - `extras.placement=home_feed` for the Home recommendation rail.
-  - `extras.placement=inbox` for the Inbox tab.
+- Create Content Cards targeted to the demo user with `extras.placement` values
+  declared by the active pack's `content.contentCardSurfaces`; `inbox` remains
+  the default inbox-style placement and legacy packs may still use `home_feed`.
 - Confirm the profile becomes push registered after the FCM token is generated.
 - Send a push to the same external ID/device after notification permission is granted.
 
@@ -212,13 +232,16 @@ Do not commit:
 - `android-shell/local.properties`
 - `android-shell/.active-demo-pack`
 - `.demo-launcher/`
-- `android-shell/app/google-services.json`
 - `demo-packs/*/secrets.properties`
 - `web-template/src/brand/activeDemoConfig.generated.ts`
 - Firebase service account JSON credentials
+- FCM server keys or owner/admin service-account material
 - Braze REST keys or workspace keys
 - Keystores
 - Prospect-private screenshots or brand assets
 
-The checked-in examples are templates only. Real local values are read from
-`local.properties` and generated into Android resources at build time.
+The dedicated SolCon `android-shell/app/google-services.json` is committed
+because it is Firebase client app config for `com.braze.demoshell`, not a
+service-account credential. Real local SDK values are read from
+`local.properties`, ignored pack `secrets.properties`, or Control Room session
+state and generated into Android resources at build time.
