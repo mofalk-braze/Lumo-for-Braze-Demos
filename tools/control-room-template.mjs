@@ -149,6 +149,8 @@ export function launcherHtml() {
     }
     input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .field-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .field-note.warn { color: var(--warn); }
     .row { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .button-group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .button {
@@ -506,6 +508,11 @@ export function launcherHtml() {
               <summary>SDK and REST configuration</summary>
               <div class="form-grid">
                 <div>
+                  <label for="brazeCluster">Braze cluster</label>
+                  <select id="brazeCluster"></select>
+                  <p class="field-note" id="brazeClusterNote">Choose a cluster to fill SDK and REST endpoints.</p>
+                </div>
+                <div>
                   <label for="sdkApiKey">SDK API key</label>
                   <input id="sdkApiKey" autocomplete="off" placeholder="Keep current" />
                 </div>
@@ -855,6 +862,24 @@ export function launcherHtml() {
       ['staged', 'Staged'],
     ]
     const restActionTypes = ['rest_event', 'rest_attribute', 'rest_purchase', 'campaign_trigger', 'canvas_trigger', 'profile_export', 'braze_rest_request']
+    const brazeClusters = [
+      { id: 'custom', label: 'Custom', sdkEndpoint: '', restEndpoint: '' },
+      { id: 'us-01', label: 'US-01', sdkEndpoint: 'sdk.iad-01.braze.com', restEndpoint: 'https://rest.iad-01.braze.com' },
+      { id: 'us-02', label: 'US-02', sdkEndpoint: 'sdk.iad-02.braze.com', restEndpoint: 'https://rest.iad-02.braze.com' },
+      { id: 'us-03', label: 'US-03', sdkEndpoint: 'sdk.iad-03.braze.com', restEndpoint: 'https://rest.iad-03.braze.com' },
+      { id: 'us-04', label: 'US-04', sdkEndpoint: 'sdk.iad-04.braze.com', restEndpoint: 'https://rest.iad-04.braze.com' },
+      { id: 'us-05', label: 'US-05', sdkEndpoint: 'sdk.iad-05.braze.com', restEndpoint: 'https://rest.iad-05.braze.com' },
+      { id: 'us-06', label: 'US-06', sdkEndpoint: 'sdk.iad-06.braze.com', restEndpoint: 'https://rest.iad-06.braze.com' },
+      { id: 'us-07', label: 'US-07', sdkEndpoint: 'sdk.iad-07.braze.com', restEndpoint: 'https://rest.iad-07.braze.com' },
+      { id: 'us-08', label: 'US-08', sdkEndpoint: 'sdk.iad-08.braze.com', restEndpoint: 'https://rest.iad-08.braze.com' },
+      { id: 'us-10', label: 'US-10', sdkEndpoint: 'sdk.iad-10.braze.com', restEndpoint: 'https://rest.iad-10.braze.com' },
+      { id: 'eu-01', label: 'EU-01', sdkEndpoint: 'sdk.fra-01.braze.eu', restEndpoint: 'https://rest.fra-01.braze.eu' },
+      { id: 'eu-02', label: 'EU-02', sdkEndpoint: 'sdk.fra-02.braze.eu', restEndpoint: 'https://rest.fra-02.braze.eu' },
+      { id: 'au-01', label: 'AU-01', sdkEndpoint: 'sdk.au-01.braze.com', restEndpoint: 'https://rest.au-01.braze.com' },
+      { id: 'id-01', label: 'ID-01', sdkEndpoint: 'sdk.id-01.braze.com', restEndpoint: 'https://rest.id-01.braze.com' },
+      { id: 'jp-01', label: 'JP-01', sdkEndpoint: 'sdk.jp-01.braze.com', restEndpoint: 'https://rest.jp-01.braze.com' },
+      { id: 'kr-01', label: 'KR-01', sdkEndpoint: 'sdk.kr-01.braze.com', restEndpoint: 'https://rest.kr-01.braze.com' },
+    ]
     const actionTypes = ['change_user', 'sdk_event', 'sdk_attribute', 'sdk_purchase', 'sdk_event_sequence', 'content_cards_refresh', 'push_permission', 'push_readiness', 'trust_diagnostics', 'foreground_push', 'navigate', 'android_sequence', ...restActionTypes]
     const audienceActivityTypes = new Set([
       'change_user',
@@ -901,6 +926,56 @@ export function launcherHtml() {
     }
     const fmt = (value) => {
       try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+    }
+    const normalizeSdkEndpoint = (value) => String(value || '').trim().replace(/^https?:\\/\\//, '').replace(/\\/+$/, '').toLowerCase()
+    const normalizeRestEndpoint = (value) => {
+      const trimmed = String(value || '').trim().replace(/\\/+$/, '')
+      if (!trimmed) return ''
+      return (trimmed.startsWith('http') ? trimmed : 'https://' + trimmed).toLowerCase()
+    }
+    function selectedBrazeCluster() {
+      const sdkEndpoint = normalizeSdkEndpoint(el('sdkEndpoint').value)
+      const restEndpoint = normalizeRestEndpoint(el('restEndpoint').value)
+      return brazeClusters.find((cluster) =>
+        cluster.id !== 'custom' &&
+        normalizeSdkEndpoint(cluster.sdkEndpoint) === sdkEndpoint &&
+        normalizeRestEndpoint(cluster.restEndpoint) === restEndpoint
+      ) || brazeClusters[0]
+    }
+    function renderBrazeClusterOptions() {
+      el('brazeCluster').innerHTML = brazeClusters
+        .map((cluster) => '<option value="' + esc(cluster.id) + '">' + esc(cluster.label) + '</option>')
+        .join('')
+    }
+    function updateBrazeClusterState() {
+      const cluster = selectedBrazeCluster()
+      el('brazeCluster').value = cluster.id
+      const sdkEndpoint = normalizeSdkEndpoint(el('sdkEndpoint').value)
+      const restEndpoint = normalizeRestEndpoint(el('restEndpoint').value)
+      const sdkMatch = brazeClusters.find((item) => item.id !== 'custom' && normalizeSdkEndpoint(item.sdkEndpoint) === sdkEndpoint)
+      const restMatch = brazeClusters.find((item) => item.id !== 'custom' && normalizeRestEndpoint(item.restEndpoint) === restEndpoint)
+      const note = el('brazeClusterNote')
+      if (cluster.id !== 'custom') {
+        note.className = 'field-note'
+        note.textContent = 'Using ' + cluster.label + ' endpoints.'
+      } else if (sdkMatch && restMatch && sdkMatch.id !== restMatch.id) {
+        note.className = 'field-note warn'
+        note.textContent = 'SDK endpoint matches ' + sdkMatch.label + ', but REST endpoint matches ' + restMatch.label + '.'
+      } else if (sdkEndpoint || restEndpoint) {
+        note.className = 'field-note'
+        note.textContent = 'Custom endpoints will be saved exactly as entered.'
+      } else {
+        note.className = 'field-note'
+        note.textContent = 'Choose a cluster to fill SDK and REST endpoints.'
+      }
+    }
+    function applyBrazeCluster(clusterId) {
+      const cluster = brazeClusters.find((item) => item.id === clusterId) || brazeClusters[0]
+      if (cluster.id !== 'custom') {
+        el('sdkEndpoint').value = cluster.sdkEndpoint
+        el('restEndpoint').value = cluster.restEndpoint
+      }
+      updateBrazeClusterState()
     }
     const parseJson = (id) => {
       const raw = el(id).value.trim()
@@ -1195,6 +1270,7 @@ export function launcherHtml() {
       el('sdkApiKey').placeholder = credentials.fields.brazeApiKey || 'Keep current'
       el('sdkEndpoint').value = credentials.fields.brazeEndpoint || ''
       el('restEndpoint').value = credentials.fields.brazeRestEndpoint || ''
+      updateBrazeClusterState()
       el('restApiKey').value = ''
       el('restApiKey').placeholder = credentials.configured.rest
         ? 'Session key active (' + (credentials.security.restKeySource || 'configured') + ')'
@@ -2041,6 +2117,11 @@ export function launcherHtml() {
     el('displayName').addEventListener('input', () => {
       state.displayNameDirty = true
     })
+    el('brazeCluster').addEventListener('change', () => {
+      applyBrazeCluster(el('brazeCluster').value)
+    })
+    el('sdkEndpoint').addEventListener('input', updateBrazeClusterState)
+    el('restEndpoint').addEventListener('input', updateBrazeClusterState)
     el('platform').addEventListener('change', () => {
       if (el('builderTransport').value !== 'braze_rest') el('builderPlatform').value = selectedPlatform()
       updateBuilderPreview()
@@ -2069,6 +2150,8 @@ export function launcherHtml() {
     el('refreshFeed').addEventListener('click', load)
     el('cockpitRestRun').addEventListener('click', () => runCustomRestControl('cockpitRest'))
     el('cockpitRestStage').addEventListener('click', () => stageCustomRestControl('cockpitRest'))
+    renderBrazeClusterOptions()
+    updateBrazeClusterState()
     load().then(connectLiveUpdates).catch((error) => {
       el('topStatus').innerHTML = '<span class="chip error">Failed</span>'
       el('logs').textContent = error.stack || String(error)
