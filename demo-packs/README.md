@@ -3,8 +3,34 @@
 Demo packs are local app concepts that the Control Room applies before browser,
 Android, or iOS rendering. The shared SolCon distribution intentionally commits
 only `SolCon Starter`, a sanitized pack for smoke testing the shells and runtime.
-Customer, prospect, or brand-specific packs should be imported locally or kept on
-private branches, not committed to the shared distribution path.
+Customer, prospect, or brand-specific packs should be imported into ignored
+`.demo-packs/` folders or kept on private branches, not committed to the shared
+distribution path.
+
+In Braze Demo Studio, use **Import kit** for `.braze-demo-kit` files. Studio
+installs imported kits into the active workspace at
+`<workspace>/repo/.demo-packs/<pack-id>/`, then the Control Room discovers them
+ahead of committed packs. Studio users should not manually copy private kits into
+the committed `demo-packs/` folder.
+
+The Control Room discovers packs from:
+
+- `.demo-packs/` in the repo root, ignored and preferred for local-only packs.
+- directories listed in `BRAZE_DEMO_PACKS_DIRS` or `BRAZE_DEMO_PACKS_DIR`
+  (`:`-separated on macOS/Linux).
+- committed `demo-packs/`.
+
+To restore historical local packs from Git without adding them to the working
+tree, extract them into `.demo-packs/`:
+
+```sh
+mkdir -p .demo-packs
+git archive 12a94aa \
+  "demo-packs/Aktion Mensch" \
+  "demo-packs/Lidl" \
+  "demo-packs/Wolt" \
+  | tar -x -C .demo-packs --strip-components=1
+```
 
 Each pack contains:
 

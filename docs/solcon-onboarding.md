@@ -1,10 +1,52 @@
 # SolCon Onboarding
 
-This repo is distributed as source. Colleagues should be able to clone it, run
-the bootstrap checks, apply the sanitized starter pack, and launch the native
-shells without creating their own Firebase or APNs integrations.
+Braze Demo Studio is the preferred internal presenter/operator path. The source
+repo remains the builder/contributor path. Both flows keep demo execution local
+and avoid hosted Control Room state.
 
-## Fresh Machine Flow
+## Packaged App Flow
+
+Use this path when someone only needs to run, import, or present demos on an
+Apple Silicon Mac.
+
+1. Open the shared **Braze Demo Studio** app or DMG.
+2. Complete the first-run setup screen.
+3. Create or select a workspace.
+4. Run **Doctor** to see Web, Android, and iOS readiness.
+5. Run **Install system tools** for Homebrew-managed dependencies such as
+   Node/npm, Java 17, and `xcodegen`.
+6. Run **Install deps** before building or launching the web/native demos.
+7. Use **Android Studio**, **Xcode**, **Provision AVD**, **Verify Android**, and
+   **Verify iOS** actions from the capability checklist as needed.
+8. Import any `.braze-demo-kit` through **Import kit**.
+9. Configure SDK/REST credentials in Setup when using live Braze workspaces.
+10. Open the Control Room and apply/launch the active pack.
+
+The app stores workspaces under:
+
+```text
+~/Library/Application Support/Braze Demo Studio/workspaces/
+```
+
+Imported kits are copied to the selected workspace at:
+
+```text
+<workspace>/repo/.demo-packs/<pack-id>/
+```
+
+The packaged app includes Electron, Studio, a sanitized source template, the
+starter pack, design assets, and Firebase client app config. It does not bundle
+Android Studio/SDK, Java, Xcode, xcodegen, Braze credentials, APNs material,
+Firebase service accounts, native build outputs, or REST API keys.
+
+Studio installs what it can safely install. Android Studio, Xcode,
+first-launch/license prompts, Braze dashboard credentials, Apple signing/APNs,
+and Firebase service accounts remain explicit GUI/admin setup steps with
+verification in the app.
+
+## Source Fresh Machine Flow
+
+Use this path for builders and contributors:
 
 ```sh
 git clone <private-repo-url>

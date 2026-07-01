@@ -17,6 +17,7 @@ Before editing, inspect the relevant committed source of truth:
 - `web-template/README.md` plus relevant `web-template/src` screens/components for product UI and bridge usage.
 - `android-shell/README.md` and Android bridge/activity files when SDK behavior, Android launch, FCM, trust, or packaged assets are in scope.
 - `ios-shell/README.md` and iOS bridge/manager/app delegate files when SDK behavior, iOS launch, APNs, signing, or WebView behavior are in scope.
+- `demo-studio/README.md` when packaged app install, first-run setup, workspace isolation, `.braze-demo-kit` import/export, or sharing flows are in scope.
 
 Do not route to local `.claude/skills/...` references; those are ignored and are not part of distribution.
 
@@ -27,6 +28,7 @@ Choose the smallest credible surface before editing:
 - Product UI: app screen, route, component, content state, or screenshot translation.
 - Demo pack: brand, content, events, user metadata, presets, assets, and Content Card surfaces.
 - Control Room: presenter/operator action, REST trigger, readiness, validation, build/run control, diagnostics, or activity feed.
+- Demo Studio: packaged app setup, first-run flow, local workspace isolation, kit import/export, or internal sharing/install docs.
 - Native bridge: push, deep/app link, IAM-triggering SDK event, Content Cards, identity, purchases, or SDK attributes.
 - Launch-link story: external link or push tap opens a route and logs a native SDK event.
 
@@ -36,6 +38,8 @@ Choose the smallest credible surface before editing:
 - Do not hand-edit `web-template/src/brand/activeDemoConfig.generated.ts`, `web-template/public/demo-runtime.json`, synced demo assets, Android seed metadata, or iOS runtime defaults.
 - The web app renders product UI only. Do not add presenter/demo controls to product screens.
 - The Braze Demo Control Room owns setup, orchestration, triggers, staged controls, validation, build/run actions, diagnostics, and activity logs.
+- Braze Demo Studio wraps the same Control Room for local desktop use. Electron-only controls must appear inside the Control Room template and hide safely in browser mode.
+- Studio imports portable `.braze-demo-kit` bundles into the active workspace's ignored `.demo-packs/<pack-id>/` folder. Do not treat kit bundles as complete runnable environments or a place for secrets.
 - Android and iOS shells own real Braze SDK behavior: `changeUser`, SDK custom events, purchases, IAM display, Content Cards, push, notification permission, clicks, and impressions.
 - Do not add the Braze Web SDK to `web-template`.
 - Keep REST API keys host-only. Do not write them into web assets, native resources, source files, demo packs, or committed files.
@@ -85,6 +89,13 @@ Before finishing, run or explicitly justify skipping:
 npm run validate:demo-runtime
 npm run security:scan
 cd web-template && npm run build
+```
+
+When Demo Studio, packaging, install docs, first-run setup, or Electron bridge behavior changed, also run or justify skipping:
+
+```sh
+npm run demo:studio:check
+npm run demo:studio:pack
 ```
 
 Run Android checks when Android shell, bridge, manifest, push, app links, SDK commands, launch flow, or generated Android metadata changed:

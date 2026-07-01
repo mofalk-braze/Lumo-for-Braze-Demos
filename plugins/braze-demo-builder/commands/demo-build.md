@@ -22,6 +22,7 @@ Before asking where anything lives, inspect the project sources that define curr
 - `web-template/README.md`
 - `android-shell/README.md`
 - `ios-shell/README.md`
+- `demo-studio/README.md` when packaged app setup, workspace isolation, `.braze-demo-kit`, or sharing/install flows are involved
 - the active or requested `demo-packs/<pack>/demo-pack.json`
 - relevant `web-template/src` screens/components
 - `tools/demo-launcher.mjs` and pack `launcher.presets` when Control Room behavior is involved
@@ -36,6 +37,7 @@ Classify the work before editing:
 - product UI
 - demo pack
 - Control Room
+- Demo Studio
 - native bridge
 - launch-link story
 - documentation/setup only
@@ -76,6 +78,8 @@ Use real SDK Content Cards in shell builds. Browser fixtures are layout-only.
 
 - Demo packs are source of truth; generated runtime files are not hand-edited.
 - Product UI stays product-focused. Presenter/operator controls belong in the Control Room.
+- Demo Studio uses the same Control Room template as browser localhost. Electron-only setup, workspace, and kit actions must hide safely when the Studio bridge is unavailable.
+- Studio imports `.braze-demo-kit` bundles into the active workspace's ignored `.demo-packs/<pack-id>/` folder. Bundles must not contain secrets, generated runtime files, native local config, signing material, service accounts, or build outputs.
 - Native shells own `changeUser`, events, purchases, push, IAM display, Content Cards, clicks, and impressions.
 - REST API keys stay host-only and must not be written into committed files or generated web/native assets.
 - Preserve Android/iOS parity for pack application, runtime generation, asset packaging, launch flows, SDK bridge behavior, and Control Room controls. If parity is not applicable, document why.
@@ -90,6 +94,9 @@ npm run validate:demo-runtime
 npm run security:scan
 cd web-template && npm run build
 ```
+
+Also run `npm run demo:studio:check` and, when packaging/install behavior changed,
+`npm run demo:studio:pack`.
 
 Also run platform checks when relevant:
 
