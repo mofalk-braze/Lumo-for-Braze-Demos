@@ -10,7 +10,8 @@ import { activeDemoPackId } from '../brand/activeDemoConfig.generated'
 // Content Card surfaces (the home "Recommended" rail + the inbox). Never used in
 // a demo — the shell shows only real Content Cards from Braze.
 //
-// `placement` routes a card: home_feed (recommended rail) | inbox.
+// `placement` routes a card. Starter apps use the canonical values:
+// hero | home | inline | inbox | account.
 // ---------------------------------------------------------------------------
 
 const defaultCards: NormalizedCard[] = [
@@ -18,15 +19,15 @@ const defaultCards: NormalizedCard[] = [
     id: 'fx_rec_1',
     title: 'Because you viewed earbuds',
     description: 'Save 15% on audio this week.',
-    placement: 'home_feed',
-    extras: { placement: 'home_feed', offer_id: 'rec_audio' },
+    placement: 'home',
+    extras: { placement: 'home', offer_id: 'rec_audio' },
   },
   {
     id: 'fx_rec_2',
     title: 'Members-only: free shipping',
     description: 'On orders over €25, just for you.',
-    placement: 'home_feed',
-    extras: { placement: 'home_feed', offer_id: 'rec_freeship' },
+    placement: 'home',
+    extras: { placement: 'home', offer_id: 'rec_freeship' },
   },
   {
     id: 'fx_inbox_1',
@@ -41,6 +42,65 @@ const defaultCards: NormalizedCard[] = [
     description: 'You can now use points to cover part of any order.',
     placement: 'inbox',
     extras: { placement: 'inbox' },
+  },
+]
+
+const lumoCards: NormalizedCard[] = [
+  {
+    id: 'lumo_fx_hero_1',
+    title: '20% off your next basket',
+    description: 'Use your member reward before Sunday on market, home, and everyday picks.',
+    placement: 'hero',
+    extras: { placement: 'hero', offer_id: 'weekly_basket_20', cta: 'Shop now' },
+  },
+  {
+    id: 'lumo_fx_home_1',
+    title: 'Free delivery unlocked',
+    description: 'Your next order qualifies for delivery on us.',
+    placement: 'home',
+    extras: { placement: 'home', offer_id: 'free_delivery', cta: 'Use perk' },
+  },
+  {
+    id: 'lumo_fx_home_2',
+    title: 'Earn double points today',
+    description: 'Members get extra points on home essentials.',
+    placement: 'home',
+    extras: { placement: 'home', offer_id: 'double_points', cta: 'Browse' },
+  },
+  {
+    id: 'lumo_fx_inline_1',
+    title: 'Picked for your pantry',
+    description: 'Save on coffee, snacks, and weekly staples.',
+    placement: 'inline',
+    extras: { placement: 'inline', offer_id: 'pantry_picks', cta: 'Add items' },
+  },
+  {
+    id: 'lumo_fx_inline_2',
+    title: 'Weekend refresh',
+    description: 'Bundle home goods and earn 250 bonus points.',
+    placement: 'inline',
+    extras: { placement: 'inline', offer_id: 'weekend_refresh', cta: 'View bundle' },
+  },
+  {
+    id: 'lumo_fx_inbox_1',
+    title: 'Your reward is saved',
+    description: 'The 20% basket reward is waiting in your account.',
+    placement: 'inbox',
+    extras: { placement: 'inbox', offer_id: 'saved_reward', cta: 'View reward' },
+  },
+  {
+    id: 'lumo_fx_inbox_2',
+    title: 'Back-in-stock alert',
+    description: 'The coffee blend you viewed is available again.',
+    placement: 'inbox',
+    extras: { placement: 'inbox', offer_id: 'coffee_back_in_stock', cta: 'Order' },
+  },
+  {
+    id: 'lumo_fx_account_1',
+    title: 'You are close to Gold',
+    description: 'Spend EUR 18 more this month to unlock Gold rewards.',
+    placement: 'account',
+    extras: { placement: 'account', offer_id: 'gold_progress', cta: 'See progress' },
   },
 ]
 
@@ -139,4 +199,6 @@ export const fixtureCards: NormalizedCard[] =
     ? woltCards
     : activeDemoPackId === 'aktion-mensch'
       ? aktionMenschCards
-      : defaultCards
+      : activeDemoPackId === 'solcon-starter'
+        ? lumoCards
+        : defaultCards

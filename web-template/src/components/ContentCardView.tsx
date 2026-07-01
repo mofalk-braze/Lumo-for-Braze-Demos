@@ -8,11 +8,13 @@ import { SmartImage } from './SmartImage'
 export function ContentCardView({
   card,
   variant = 'feed',
+  compact = false,
   onClick,
   onImpression,
 }: {
   card: NormalizedCard
   variant?: 'hero' | 'carousel' | 'feed' | 'inbox'
+  compact?: boolean
   onClick: (card: NormalizedCard) => void
   onImpression?: (card: NormalizedCard) => void
 }) {
@@ -26,13 +28,13 @@ export function ContentCardView({
     return (
       <button
         onClick={handle}
-        className="animate-fade relative flex w-full overflow-hidden rounded-card bg-gradient-to-br from-brand to-brand-dark p-4 text-left text-white shadow-card"
+        className={`animate-fade relative flex w-full overflow-hidden rounded-card bg-gradient-to-br from-brand to-brand-dark text-left text-white shadow-card ${compact ? 'p-3' : 'p-4'}`}
       >
         <div className="flex-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Offer</p>
-          <h3 className="mt-1 text-lg font-bold leading-tight">{card.title}</h3>
-          {card.description && <p className="mt-1 text-sm text-white/85">{card.description}</p>}
-          <span className="mt-3 inline-block rounded-full bg-white px-4 py-1.5 text-sm font-bold text-brand">
+          <h3 className={`mt-1 font-bold leading-tight ${compact ? 'text-base' : 'text-lg'}`}>{card.title}</h3>
+          {card.description && <p className={`mt-1 text-white/85 ${compact ? 'line-clamp-2 text-xs' : 'text-sm'}`}>{card.description}</p>}
+          <span className={`inline-block rounded-full bg-white font-bold text-brand ${compact ? 'mt-2 px-3 py-1 text-xs' : 'mt-3 px-4 py-1.5 text-sm'}`}>
             {card.extras.cta ?? 'View'}
           </span>
         </div>
@@ -44,11 +46,11 @@ export function ContentCardView({
     return (
       <button
         onClick={handle}
-        className="flex w-[220px] shrink-0 flex-col rounded-card border border-line bg-white p-3 text-left shadow-card"
+        className={`flex shrink-0 flex-col rounded-card border border-line bg-white text-left shadow-card ${compact ? 'w-[172px] p-2.5' : 'w-[220px] p-3'}`}
       >
         <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-accent">Promo</span>
         <h3 className="mt-1 text-[15px] font-bold leading-tight text-ink">{card.title}</h3>
-        {card.description && <p className="mt-1 text-[12px] text-muted">{card.description}</p>}
+        {card.description && <p className={`mt-1 text-[12px] text-muted ${compact ? 'line-clamp-2' : ''}`}>{card.description}</p>}
       </button>
     )
   }
@@ -57,7 +59,7 @@ export function ContentCardView({
     return (
       <button
         onClick={handle}
-        className="flex w-full items-start gap-3 rounded-card border border-line bg-white p-3 text-left shadow-card"
+        className={`flex w-full items-start gap-3 rounded-card border border-line bg-white text-left shadow-card ${compact ? 'p-2.5' : 'p-3'}`}
       >
         <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-brand" />
         <div className="min-w-0 flex-1">
@@ -75,8 +77,8 @@ export function ContentCardView({
       onClick={handle}
       className="flex w-full overflow-hidden rounded-card border border-line bg-white text-left shadow-card"
     >
-      <SmartImage src={card.imageUrl} label={card.title} className="h-[88px] w-[88px] shrink-0 object-cover" />
-      <div className="min-w-0 flex-1 p-3">
+      <SmartImage src={card.imageUrl} label={card.title} className={`${compact ? 'h-[68px] w-[68px]' : 'h-[88px] w-[88px]'} shrink-0 object-cover`} />
+      <div className={`min-w-0 flex-1 ${compact ? 'p-2.5' : 'p-3'}`}>
         <h3 className="truncate text-[15px] font-bold text-ink">{card.title}</h3>
         {card.description && <p className="mt-0.5 line-clamp-2 text-[12px] text-muted">{card.description}</p>}
       </div>

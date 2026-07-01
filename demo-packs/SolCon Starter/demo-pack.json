@@ -1,10 +1,10 @@
 {
   "id": "solcon-starter",
   "name": "SolCon Starter",
-  "description": "Sanitized starter app for validating the shared SolCon demo shell distribution.",
+  "description": "Generic Lumo loyalty and offers app for validating Content Card placements in the shared SolCon demo shell.",
   "android": {
     "defaultExternalId": "solcon-demo-user",
-    "defaultProfileName": "SolCon Starter"
+    "defaultProfileName": "Lumo Playground"
   },
   "launcher": {
     "presets": [
@@ -17,7 +17,7 @@
           "name": "onboarding_completed",
           "properties": {
             "source": "control_room",
-            "plan": "starter"
+            "plan": "playground"
           }
         }
       },
@@ -33,11 +33,11 @@
       },
       {
         "id": "solcon_sdk_purchase",
-        "label": "Log sample order",
+        "label": "Log sample activation",
         "description": "Logs a non-customer sample purchase through the active native SDK.",
         "type": "sdk_purchase",
         "payload": {
-          "productId": "starter_bundle",
+          "productId": "lumo_activation",
           "price": 29,
           "currency": "EUR",
           "quantity": 1,
@@ -46,23 +46,39 @@
             "category": "demo"
           }
         }
+      },
+      {
+        "id": "library_trigger_content_card",
+        "label": "Trigger Content Card",
+        "description": "Template for an API-triggered campaign send.",
+        "type": "campaign_trigger",
+        "payload": {
+          "campaignId": "857ea04d-b7db-4493-8e06-c39934bd3993",
+          "triggerProperties": {
+            "source": "control_room"
+          }
+        },
+        "transport": "braze_rest",
+        "platform": "host",
+        "requiresPushToken": false,
+        "custom": false
       }
     ]
   },
   "brand": {
-    "appName": "Starter",
-    "displayName": "SolCon Starter",
-    "tagline": "A clean test app for mobile messaging demos.",
-    "logoText": "SC",
+    "appName": "Lumo",
+    "displayName": "Lumo Playground",
+    "tagline": "Deals, rewards, and updates in one place.",
+    "logoText": "LP",
     "colors": {
-      "brand": "#0F766E",
-      "brandDark": "#115E59",
-      "brandLight": "#CCFBF1",
-      "accent": "#F97316",
-      "ink": "#111827",
-      "muted": "#64748B",
-      "line": "#D1D5DB",
-      "surface": "#F8FAFC"
+      "brand": "#801ED7",
+      "brandDark": "#300266",
+      "brandLight": "#F4EAFE",
+      "accent": "#FFA524",
+      "ink": "#17131F",
+      "muted": "#686176",
+      "line": "#E4DDED",
+      "surface": "#FBF9FF"
     },
     "tabs": [
       { "id": "home", "label": "Home", "icon": "Home" },
@@ -76,7 +92,7 @@
         "anchor": "preference_updated",
         "emitAnchor": true,
         "sample": {
-          "plan": "starter",
+          "plan": "playground",
           "source": "app"
         }
       },
@@ -108,32 +124,62 @@
         "demo_interest": "mobile_channels",
         "lifecycle_stage": "starter",
         "home_location": "Berlin",
-        "favorite_categories": ["messaging", "loyalty"],
+        "favorite_categories": [
+          "messaging",
+          "loyalty"
+        ],
         "last_conversion_value": 29
       }
     }
   },
   "content": {
     "hero": {
-      "title": "Your mobile demo is ready",
-      "subtitle": "Use this starter app to validate SDK actions, Content Cards, IAM, and push readiness.",
-      "cta": "Start walkthrough"
+      "title": "Your weekly rewards are ready",
+      "subtitle": "Fresh offers, member perks, and hand-picked updates for your next order.",
+      "cta": "Browse offers"
     },
-    "categories": ["Messaging", "Loyalty", "Offers", "Inbox", "Analytics", "Push"],
+    "categories": [
+      "For you",
+      "New",
+      "Offers",
+      "Loyalty",
+      "Essentials",
+      "Nearby"
+    ],
     "contentCardRail": {
-      "title": "Personalized updates",
-      "placement": "home_feed"
+      "title": "For you",
+      "placement": "home"
     },
     "contentCardSurfaces": [
       {
+        "id": "lumo-hero",
+        "placement": "hero",
+        "surface": "hero",
+        "screen": "home",
+        "title": "Featured for you",
+        "variant": "hero",
+        "emptyBehavior": "hide",
+        "maxCards": 1
+      },
+      {
         "id": "home-feed",
-        "placement": "home_feed",
+        "placement": "home",
         "surface": "carousel",
         "screen": "home",
-        "title": "Personalized updates",
+        "title": "For you",
         "variant": "carousel",
         "emptyBehavior": "hide",
         "maxCards": 4
+      },
+      {
+        "id": "lumo-inline",
+        "placement": "inline",
+        "surface": "feed",
+        "screen": "home",
+        "title": "Recommended today",
+        "variant": "feed",
+        "emptyBehavior": "hide",
+        "maxCards": 2
       },
       {
         "id": "starter-inbox",
@@ -144,27 +190,97 @@
         "variant": "inbox",
         "emptyBehavior": "empty-state",
         "maxCards": 8
+      },
+      {
+        "id": "lumo-account-panel",
+        "placement": "account",
+        "surface": "account",
+        "screen": "account",
+        "title": "Member updates",
+        "variant": "feed",
+        "emptyBehavior": "hide",
+        "maxCards": 2
       }
     ],
+    "placementPlayground": {
+      "toggles": {
+        "hero": true,
+        "homeFeed": true,
+        "inlineModule": true,
+        "inboxTab": true,
+        "accountPanel": true,
+        "compactCards": false
+      }
+    },
     "rails": [
       {
         "id": "starter-actions",
-        "title": "Try the core flows",
+        "title": "Popular picks",
         "items": [
-          { "id": "flow_push", "title": "Push readiness", "subtitle": "Android FCM", "meta": "Token check", "badge": "Native", "category": "push" },
-          { "id": "flow_iam", "title": "In-app message", "subtitle": "Triggered campaign", "meta": "demo_iam_trigger", "category": "messaging" },
-          { "id": "flow_cards", "title": "Content Cards", "subtitle": "Home and inbox", "meta": "extras.placement", "category": "inbox" },
-          { "id": "flow_user", "title": "User profile", "subtitle": "Attributes and events", "meta": "SDK bridge", "category": "analytics" }
+          {
+            "id": "pick_market",
+            "title": "Market basket",
+            "subtitle": "Weekly essentials",
+            "meta": "EUR 29",
+            "badge": "Popular",
+            "category": "essentials"
+          },
+          {
+            "id": "pick_audio",
+            "title": "Wireless earbuds",
+            "subtitle": "Member price",
+            "meta": "EUR 49",
+            "category": "new"
+          },
+          {
+            "id": "pick_coffee",
+            "title": "Coffee subscription",
+            "subtitle": "Roasted nearby",
+            "meta": "EUR 12",
+            "category": "nearby"
+          },
+          {
+            "id": "pick_home",
+            "title": "Home refresh",
+            "subtitle": "Limited bundle",
+            "meta": "EUR 34",
+            "category": "offers"
+          }
         ]
       },
       {
         "id": "starter-offers",
-        "title": "Starter offers",
+        "title": "Member perks",
         "items": [
-          { "id": "offer_bundle", "title": "Starter bundle", "subtitle": "Demo package", "meta": "EUR 29", "badge": "Sample", "category": "offers" },
-          { "id": "offer_loyalty", "title": "Loyalty boost", "subtitle": "Attribute story", "meta": "+250 points", "category": "loyalty" },
-          { "id": "offer_channel", "title": "Channel check", "subtitle": "Push + IAM", "meta": "Ready state", "category": "messaging" },
-          { "id": "offer_inbox", "title": "Message center", "subtitle": "Persistent cards", "meta": "Inbox", "category": "inbox" }
+          {
+            "id": "offer_bundle",
+            "title": "Starter bundle",
+            "subtitle": "Member-only set",
+            "meta": "EUR 29",
+            "badge": "Deal",
+            "category": "offers"
+          },
+          {
+            "id": "offer_loyalty",
+            "title": "Loyalty boost",
+            "subtitle": "Next-tier progress",
+            "meta": "+250 points",
+            "category": "loyalty"
+          },
+          {
+            "id": "offer_channel",
+            "title": "Free delivery",
+            "subtitle": "This weekend",
+            "meta": "2 days",
+            "category": "offers"
+          },
+          {
+            "id": "offer_inbox",
+            "title": "Message center",
+            "subtitle": "Saved updates",
+            "meta": "Inbox",
+            "category": "inbox"
+          }
         ]
       }
     ]

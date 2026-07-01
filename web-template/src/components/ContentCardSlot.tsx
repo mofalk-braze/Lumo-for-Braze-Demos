@@ -21,11 +21,13 @@ export function ContentCardSlot({
   className = 'mt-5',
   titleClassName = '',
   listClassName,
+  compact = false,
 }: {
   surface: ContentCardSurface
   className?: string
   titleClassName?: string
   listClassName?: string
+  compact?: boolean
 }) {
   const { cardsForPlacement, clickCard, impressCard } = useBraze()
   const cards = limited(cardsForPlacement(surface.placement), surface.maxCards)
@@ -44,6 +46,7 @@ export function ContentCardSlot({
               key={card.id}
               card={card}
               variant={surface.variant}
+              compact={compact}
               onClick={clickCard}
               onImpression={impressCard}
             />
@@ -57,9 +60,11 @@ export function ContentCardSlot({
 export function ContentCardInbox({
   placement = 'inbox',
   maxCards,
+  compact = false,
 }: {
   placement?: string
   maxCards?: number
+  compact?: boolean
 }) {
   const { cardsForPlacement, clickCard, impressCard } = useBraze()
   const cards = limited(cardsForPlacement(placement), maxCards)
@@ -73,6 +78,7 @@ export function ContentCardInbox({
           key={card.id}
           card={card}
           variant="inbox"
+          compact={compact}
           onClick={clickCard}
           onImpression={impressCard}
         />

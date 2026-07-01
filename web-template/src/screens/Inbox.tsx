@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 import { useBraze } from '../braze/BrazeBridgeProvider'
 import { AnchorEvents } from '../braze/events'
 import { ContentCardInbox } from '../components/ContentCardSlot'
+import { usePlacementToggles } from '../placements/usePlacementToggles'
 
 /** The Content Cards "home" — every cloned app gets this inbox surface. */
 export function Inbox() {
   const { fireAnchor } = useBraze()
+  const { toggles } = usePlacementToggles()
 
   useEffect(() => {
     fireAnchor(AnchorEvents.SCREEN_VIEWED, { screen: 'inbox', section: 'main' }, 'inbox')
@@ -19,7 +21,7 @@ export function Inbox() {
       </div>
 
       <div className="space-y-3 px-4 pt-4">
-        <ContentCardInbox />
+        <ContentCardInbox compact={toggles.compactCards} />
       </div>
     </div>
   )

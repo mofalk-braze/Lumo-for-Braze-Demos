@@ -56,6 +56,19 @@ export interface ContentCardSurface {
   maxCards?: number
 }
 
+export interface PlacementToggleDefaults {
+  hero: boolean
+  homeFeed: boolean
+  inlineModule: boolean
+  inboxTab: boolean
+  accountPanel: boolean
+  compactCards: boolean
+}
+
+export interface PlacementPlaygroundContent {
+  toggles: PlacementToggleDefaults
+}
+
 export interface AppContent {
   hero: HeroCard
   categories: string[]
@@ -65,6 +78,7 @@ export interface AppContent {
   contentCardRail: { title: string; placement: string }
   /** Repeatable Content Card surface contract for screenshot-built apps. */
   contentCardSurfaces?: ContentCardSurface[]
+  placementPlayground?: PlacementPlaygroundContent
   wolt?: WoltContent
   aktionMensch?: AktionMenschContent
 }
@@ -96,6 +110,10 @@ export const contentCardSurfaces: ContentCardSurface[] =
 
 export function contentCardSurfaceForScreen(screen: string): ContentCardSurface | undefined {
   return contentCardSurfaces.find((surface) => surface.screen === screen && surface.surface !== 'inbox')
+}
+
+export function contentCardSurfacesForScreen(screen: string): ContentCardSurface[] {
+  return contentCardSurfaces.filter((surface) => surface.screen === screen)
 }
 
 export function contentCardSurfaceByPlacement(placement: string): ContentCardSurface | undefined {

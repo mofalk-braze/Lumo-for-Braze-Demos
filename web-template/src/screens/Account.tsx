@@ -4,12 +4,17 @@ import { Bell, ChevronRight, Server } from 'lucide-react'
 import { useBraze } from '../braze/BrazeBridgeProvider'
 import { AnchorEvents, StandardAttributes } from '../braze/events'
 import { brandConfig } from '../brand/brandConfig'
+import { contentCardSurfaceByPlacement } from '../brand/content'
+import { ContentCardSlot } from '../components/ContentCardSlot'
 import { BrandLogo } from '../components/ui'
+import { usePlacementToggles } from '../placements/usePlacementToggles'
 
 export function Account() {
   const { firstName, attributes, points, connection, fireAnchor, setAttribute, requestPush } = useBraze()
   const navigate = useNavigate()
   const [pushOptIn, setPushOptIn] = useState(false)
+  const { toggles } = usePlacementToggles()
+  const accountSurface = contentCardSurfaceByPlacement('account')
 
   useEffect(() => {
     fireAnchor(AnchorEvents.SCREEN_VIEWED, { screen: 'account', section: 'main' }, 'account')
@@ -60,6 +65,10 @@ export function Account() {
           <Row label="Favorite categories" value={categories.join(', ') || '—'} last />
         </div>
       </div>
+
+      {toggles.accountPanel && accountSurface && (
+        <ContentCardSlot surface={accountSurface} compact={toggles.compactCards} />
+      )}
 
       {/* Braze workspace (setup) */}
       <div className="mt-4 px-4">

@@ -85,7 +85,12 @@ interface BrazeContextValue {
 const BrazeContext = createContext<BrazeContextValue | null>(null)
 
 function placementOf(card: NormalizedCard): string {
-  return card.placement || card.extras?.placement || 'inbox'
+  const placement = card.placement || card.extras?.placement || 'inbox'
+  if (placement === 'lumo_hero') return 'hero'
+  if (placement === 'home_feed') return 'home'
+  if (placement === 'inline_module') return 'inline'
+  if (placement === 'account_panel') return 'account'
+  return placement
 }
 
 function clean(value: unknown): string {

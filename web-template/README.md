@@ -40,6 +40,18 @@ when no real cards exist; inbox-style slots may show an empty state. The native
 SDK remains the source of truth, while the web layer logs impressions when cards
 render and clicks before local URL/deeplink handling.
 
+For starter-style apps, Braze operators should only need one required key-value
+pair on a Content Card:
+
+```json
+{ "placement": "home" }
+```
+
+Canonical placement values are `hero`, `home`, `inline`, `inbox`, and `account`.
+The active demo pack decides which visual variant each placement uses. Optional
+extras such as `cta`, `offer_id`, and `deeplink` can refine copy, reporting, or
+tap destination, but placement alone is enough to route the card.
+
 ## Control Boundary
 
 The browser renders the demo. The Control Room owns demo selection, workspace
