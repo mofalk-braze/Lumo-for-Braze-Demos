@@ -91,6 +91,142 @@ export function launcherHtml() {
     }
     .nav button:hover, .nav button.active { background: rgba(255,255,255,0.13); color: #fff; }
     .nav .mark { width: 22px; color: rgba(255,255,255,0.55); font: 800 11px/1 var(--font-ui, var(--font-ui-safe)); }
+    .studio-workspace {
+      margin-top: 18px;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.1);
+      padding: 12px;
+      display: none;
+      gap: 10px;
+    }
+    .studio-workspace.active { display: grid; }
+    .studio-workspace label { color: rgba(255,255,255,0.68); margin-bottom: 6px; }
+    .studio-workspace select {
+      min-height: 36px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.96);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .studio-workspace .button {
+      min-height: 30px;
+      padding: 7px 9px;
+      border-radius: 8px;
+      font-size: 11px;
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      border-color: rgba(255,255,255,0.2);
+    }
+    .studio-meta {
+      color: rgba(255,255,255,0.64);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+    .studio-action-panel { display: none; }
+    .studio-action-panel.active { display: block; }
+    .studio-first-run {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      background: rgba(23, 19, 31, 0.46);
+      backdrop-filter: blur(12px);
+    }
+    .studio-first-run.active { display: flex; }
+    .first-run-panel {
+      width: min(1120px, calc(100vw - 40px));
+      max-height: min(780px, calc(100vh - 40px));
+      overflow: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(48,2,102,0.16);
+      background: #fff;
+      box-shadow: 0 28px 90px rgba(23, 19, 31, 0.28);
+      padding: 28px;
+    }
+    .first-run-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 22px;
+    }
+    .first-run-head h2 { font-size: 28px; }
+    .first-run-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.15fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .first-run-section {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+      background: var(--surface-subtle);
+    }
+    .first-run-section + .first-run-section { margin-top: 14px; }
+    .mode-grid, .readiness-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .capability-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .capability-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      padding: 13px;
+    }
+    .capability-card strong { display: block; font-size: 14px; line-height: 1.2; }
+    .capability-card p { font-size: 12px; margin-top: 4px; }
+    .capability-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 156px;
+    }
+    .mode-card, .readiness-card {
+      min-height: 92px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      padding: 13px;
+      text-align: left;
+    }
+    .mode-card {
+      cursor: pointer;
+      color: var(--text);
+    }
+    .mode-card.active {
+      border-color: var(--brand);
+      box-shadow: inset 0 0 0 1px var(--brand);
+    }
+    .readiness-card strong,
+    .mode-card strong { display: block; font-size: 14px; line-height: 1.2; }
+    .readiness-card p,
+    .mode-card p { font-size: 12px; }
+    .readiness-card .tag { margin-bottom: 8px; }
+    .first-run-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
     .callback {
       margin-top: auto;
       border-top: 1px solid rgba(255,255,255,0.14);
@@ -440,6 +576,12 @@ export function launcherHtml() {
       .presentation #view-cockpit .grid { grid-template-columns: 1fr; }
       .presentation #view-cockpit .span-4,
       .presentation #view-cockpit .span-12 { grid-column: 1; grid-row: auto; }
+      .first-run-grid,
+      .mode-grid,
+      .readiness-grid { grid-template-columns: 1fr; }
+      .capability-card { grid-template-columns: 1fr; }
+      .capability-actions { justify-content: flex-start; }
+      .first-run-panel { padding: 20px; }
     }
   </style>
 </head>
@@ -451,6 +593,18 @@ export function launcherHtml() {
         <div class="side-title">
           <h1>Demo Control</h1>
           <p>Configure quietly, run the app demo, and show the event-to-message story only when it helps the room.</p>
+        </div>
+        <div class="studio-workspace" id="studioWorkspace">
+          <div>
+            <label for="studioWorkspaceSelect">Workspace</label>
+            <select id="studioWorkspaceSelect"></select>
+          </div>
+          <div class="button-group">
+            ${buttonHtml({ id: 'studioNewWorkspace', kind: 'ghost compact', icon: 'plus', label: 'New' })}
+            ${buttonHtml({ id: 'studioRevealWorkspace', kind: 'ghost compact', icon: 'folder-open', label: 'Reveal' })}
+            ${buttonHtml({ id: 'studioRestartLauncher', kind: 'ghost compact', icon: 'refresh-cw', label: 'Restart' })}
+          </div>
+          <div class="studio-meta" id="studioWorkspaceMeta">Local workspace pending.</div>
         </div>
         <nav class="nav" aria-label="Control Room sections">
           <button class="active" data-view="cockpit"><span class="mark">01</span><span>Demo Cockpit</span></button>
@@ -552,6 +706,21 @@ export function launcherHtml() {
             </div>
             <div class="identity-status">
               <span class="chip" id="identityStatus">User pending</span>
+            </div>
+            <div class="studio-action-panel" id="studioActions">
+              <div class="panel-head" style="margin:18px 0 8px">
+                <div>
+                  <h3>Studio</h3>
+                  <p>Local setup, kit, and workspace actions for this Mac.</p>
+                </div>
+              </div>
+              <div class="button-group">
+                ${buttonHtml({ id: 'studioDoctor', kind: 'ghost compact', icon: 'stethoscope', label: 'Doctor' })}
+                ${buttonHtml({ id: 'studioInstallDeps', kind: 'ghost compact', icon: 'download', label: 'Install deps' })}
+                ${buttonHtml({ id: 'studioProvisionAvd', kind: 'ghost compact', icon: 'smartphone', label: 'AVD' })}
+                ${buttonHtml({ id: 'studioImportKit', kind: 'secondary compact', icon: 'package-plus', label: 'Import kit' })}
+                ${buttonHtml({ id: 'studioExportKit', kind: 'orange compact', icon: 'package-open', label: 'Export kit' })}
+              </div>
             </div>
           </section>
 
@@ -798,9 +967,11 @@ export function launcherHtml() {
             <div class="panel-head">
               <div>
                 <h2>Launcher Logs</h2>
-                <p>Build, install, emulator, and recovery output.</p>
+                <p>Studio process, build, install, emulator, and recovery output.</p>
               </div>
+              ${buttonHtml({ id: 'studioOpenLogs', kind: 'ghost compact', icon: 'folder-open', label: 'Open logs' })}
             </div>
+            <pre class="json light" id="studioDetails"></pre>
             <pre class="logs" id="logs">Launcher ready.</pre>
           </section>
           <section class="panel span-6">
@@ -826,6 +997,68 @@ export function launcherHtml() {
     </main>
   </div>
 
+  <section class="studio-first-run" id="studioFirstRun" aria-modal="true" role="dialog" aria-labelledby="studioFirstRunTitle">
+    <div class="first-run-panel">
+      <div class="first-run-head">
+        <div>
+          <h2 id="studioFirstRunTitle">Set up Braze Demo Studio</h2>
+          <p>Create a local workspace, install project dependencies, import kits, and confirm platform readiness before presenting.</p>
+        </div>
+        <span class="chip" id="firstRunStatus">Local app</span>
+      </div>
+      <div class="first-run-grid">
+        <div>
+          <section class="first-run-section">
+            <h3>Mode</h3>
+            <p>Choose the default setup posture for this Mac. You can still use every Control Room action later.</p>
+            <div class="mode-grid">
+              <button class="mode-card active" id="firstRunPresenter" type="button" data-first-run-mode="presenter">
+                <strong>Presenter</strong>
+                <p>Use packaged demos, import kits, and run live demo controls.</p>
+              </button>
+              <button class="mode-card" id="firstRunBuilder" type="button" data-first-run-mode="builder">
+                <strong>Builder</strong>
+                <p>Create workspaces, edit packs, and validate source changes locally.</p>
+              </button>
+            </div>
+          </section>
+          <section class="first-run-section">
+            <h3>Workspace and kits</h3>
+            <p id="firstRunWorkspace">Workspace pending.</p>
+            <div class="first-run-actions">
+              ${buttonHtml({ id: 'firstRunNewWorkspace', kind: 'secondary', icon: 'plus', label: 'New workspace' })}
+              ${buttonHtml({ id: 'firstRunImportKit', kind: 'secondary', icon: 'package-plus', label: 'Import kit' })}
+              ${buttonHtml({ id: 'firstRunRevealWorkspace', kind: 'ghost', icon: 'folder-open', label: 'Reveal' })}
+            </div>
+          </section>
+          <section class="first-run-section">
+            <h3>Quick setup</h3>
+            <p>Install what Studio can safely install, then open vendor tools for the parts that require GUI or account approval.</p>
+            <div class="first-run-actions">
+              ${buttonHtml({ id: 'firstRunDoctor', kind: 'secondary', icon: 'stethoscope', label: 'Run doctor' })}
+              ${buttonHtml({ id: 'firstRunInstallSystemTools', kind: 'secondary', icon: 'wrench', label: 'Install system tools' })}
+              ${buttonHtml({ id: 'firstRunInstallDeps', kind: 'primary', icon: 'download', label: 'Install deps' })}
+              ${buttonHtml({ id: 'firstRunOpenAndroidStudio', kind: 'ghost', icon: 'box', label: 'Android Studio' })}
+              ${buttonHtml({ id: 'firstRunOpenXcode', kind: 'ghost', icon: 'hammer', label: 'Xcode' })}
+              ${buttonHtml({ id: 'firstRunProvisionAvd', kind: 'ghost', icon: 'smartphone', label: 'Provision AVD' })}
+            </div>
+          </section>
+        </div>
+        <div>
+          <section class="first-run-section">
+            <h3>Capability checklist</h3>
+            <p>Each lane has the next safe action. Secrets and admin materials stay outside bundles.</p>
+            <div class="capability-list" id="firstRunCapabilities"></div>
+            <div class="first-run-actions">
+              ${buttonHtml({ id: 'firstRunOpenDiagnostics', kind: 'ghost', icon: 'activity', label: 'Diagnostics' })}
+              ${buttonHtml({ id: 'firstRunComplete', kind: 'orange', icon: 'arrow-right', label: 'Open Control Room' })}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <script>
     const state = {
       data: null,
@@ -839,6 +1072,9 @@ export function launcherHtml() {
       livePollTimer: null,
       openDetails: new Set(),
       activitySignatures: {},
+      studio: null,
+      studioError: '',
+      firstRunMode: 'presenter',
       credentialsPackId: '',
       identityDirty: false,
       displayNameDirty: false,
@@ -992,10 +1228,42 @@ export function launcherHtml() {
       if (!response.ok) throw new Error(payload.error || 'Request failed')
       return payload
     }
+    const studioBridge = () => window.demoStudio && typeof window.demoStudio.getState === 'function' ? window.demoStudio : null
+    const studioAvailable = () => Boolean(studioBridge())
+    async function loadStudioState() {
+      const bridge = studioBridge()
+      if (!bridge) {
+        state.studio = null
+        state.studioError = ''
+        return null
+      }
+      try {
+        state.studio = await bridge.getState()
+        state.studioError = ''
+      } catch (error) {
+        state.studioError = error.message || String(error)
+      }
+      return state.studio
+    }
+    async function studioAction(label, action) {
+      const bridge = studioBridge()
+      if (!bridge) return alert('Braze Demo Studio actions are only available in the desktop app.')
+      try {
+        setBusy(true)
+        state.studio = await action(bridge)
+        await load()
+      } catch (error) {
+        alert(error.message || String(error))
+        await loadStudioState()
+        render()
+      } finally {
+        setBusy(false)
+      }
+    }
     const setBusy = (busy) => {
       state.busy = busy
       document.querySelectorAll('button').forEach((button) => {
-        const navigation = button.matches('[data-view], [data-view-jump], #presentationToggle, #refreshCockpit, #refreshFeed')
+        const navigation = button.matches('[data-view], [data-view-jump], #presentationToggle, #refreshCockpit, #refreshFeed, #studioOpenLogs')
         if (!navigation) button.disabled = busy
       })
       renderTopStatus()
@@ -1139,7 +1407,10 @@ export function launcherHtml() {
       })
     }
     async function load() {
-      const response = await fetch('/api/state', { cache: 'no-store' })
+      const [response] = await Promise.all([
+        fetch('/api/state', { cache: 'no-store' }),
+        loadStudioState(),
+      ])
       state.data = await response.json()
       render()
     }
@@ -1147,6 +1418,8 @@ export function launcherHtml() {
       if (!state.data) return
       renderNav()
       renderTopStatus()
+      renderStudio()
+      renderFirstRun()
       renderSetup()
       renderReadiness()
       renderStoryControls()
@@ -1158,9 +1431,141 @@ export function launcherHtml() {
       updateActionAvailability()
       refreshIcons()
     }
+    function renderStudio() {
+      const available = studioAvailable()
+      const studio = state.studio
+      const workspaceRoot = el('studioWorkspace')
+      const actionRoot = el('studioActions')
+      workspaceRoot.classList.toggle('active', available)
+      actionRoot.classList.toggle('active', available)
+      if (!available) return
+      const workspaces = studio && Array.isArray(studio.workspaces) ? studio.workspaces : []
+      const active = workspaces.find((workspace) => workspace.id === studio.activeWorkspaceId) || workspaces[0] || null
+      el('studioWorkspaceSelect').innerHTML = workspaces.length
+        ? workspaces.map((workspace) => '<option value="' + esc(workspace.id) + '">' + esc(workspace.name) + '</option>').join('')
+        : '<option value="">No workspaces</option>'
+      el('studioWorkspaceSelect').value = active ? active.id : ''
+      el('studioWorkspaceMeta').textContent = active
+        ? active.repoPath
+        : (state.studioError || 'Create a workspace to start the local Control Room.')
+    }
+    const readinessLabel = (status) => status === 'ready' ? 'ready' : status === 'missing' ? 'missing' : status === 'manual' ? 'manual' : 'setup'
+    const readinessTagClass = (status) => status === 'ready' ? 'success' : status === 'missing' ? 'error' : status === 'manual' ? 'warn' : 'warn'
+    function setupButton(action, label, icon = 'arrow-right', kind = 'ghost') {
+      return buttonHtml({
+        kind: kind + ' compact',
+        icon,
+        label,
+        attrs: 'data-studio-setup-action="' + esc(action) + '"',
+      })
+    }
+    function capabilityCard(item) {
+      return '<article class="capability-card">' +
+        '<div>' +
+          '<span class="tag ' + readinessTagClass(item.status) + '">' + esc(readinessLabel(item.status)) + '</span>' +
+          '<strong>' + esc(item.label) + '</strong>' +
+          '<p>' + esc(item.detail || '') + '</p>' +
+        '</div>' +
+        '<div class="capability-actions">' + (item.actions || []).join('') + '</div>' +
+      '</article>'
+    }
+    function firstRunCapabilities(studio) {
+      const readiness = studio.readiness || {}
+      const profile = state.data && state.data.active && state.data.active.profile ? state.data.active.profile : {}
+      const sdkReady = Boolean(profile.sdkConfigured)
+      const restReady = Boolean(profile.restConfigured)
+      const item = (key, label, detail, actions = []) => {
+        const ready = readiness[key] || {}
+        return {
+          label,
+          status: ready.status || 'setup',
+          detail: detail || ready.detail || 'Run Doctor for details.',
+          actions,
+        }
+      }
+      return [
+        item('homebrew', 'Homebrew', '', [
+          setupButton('openHomebrew', 'Open Homebrew', 'external-link'),
+          setupButton('installSystemTools', 'Install tools', 'wrench', 'secondary'),
+        ]),
+        item('java', 'Java 17', '', [
+          setupButton('installSystemTools', 'Install', 'download', 'secondary'),
+        ]),
+        item('web', 'Web demo dependencies', '', [
+          setupButton('installDependencies', 'Install deps', 'download', 'primary'),
+          setupButton('runDoctor', 'Doctor', 'stethoscope'),
+        ]),
+        item('androidStudio', 'Android Studio', '', [
+          setupButton('openAndroidStudio', 'Open/install', 'box'),
+        ]),
+        item('androidSdk', 'Android SDK tools', '', [
+          setupButton('openAndroidStudio', 'SDK Manager', 'box'),
+          setupButton('provisionAvd', 'Provision AVD', 'smartphone'),
+        ]),
+        item('androidAvd', 'Android demo AVD', '', [
+          setupButton('provisionAvd', 'Provision', 'smartphone', 'secondary'),
+          setupButton('verifyAndroid', 'Verify', 'badge-check'),
+        ]),
+        item('xcode', 'Xcode', '', [
+          setupButton('openXcode', 'Open/install', 'hammer'),
+        ]),
+        item('xcodegen', 'xcodegen', '', [
+          setupButton('installSystemTools', 'Install', 'download', 'secondary'),
+          setupButton('verifyIos', 'Verify iOS', 'badge-check'),
+        ]),
+        {
+          label: 'Braze SDK credentials',
+          status: sdkReady ? 'ready' : 'manual',
+          detail: sdkReady ? 'SDK API key and endpoint are configured for the active pack.' : 'Enter SDK API key and endpoint in Setup. Values stay workspace-local and are never exported in kits.',
+          actions: [setupButton('focusCredentials', 'Configure', 'key-round', 'secondary')],
+        },
+        {
+          label: 'REST API key',
+          status: restReady ? 'ready' : 'manual',
+          detail: restReady ? 'REST key is available from this session or environment.' : 'Enter a session REST key in Setup or provide BRAZE_REST_API_KEY. Studio does not write REST keys into kits.',
+          actions: [
+            setupButton('focusCredentials', 'Configure', 'key-round', 'secondary'),
+            setupButton('openBraze', 'Braze', 'external-link'),
+          ],
+        },
+        item('firebaseClient', 'Firebase client config', '', [
+          setupButton('openFirebaseConsole', 'Firebase', 'external-link'),
+        ]),
+        item('firebaseServiceAccount', 'Braze-side Firebase push', 'Configure Firebase service account material in Braze dashboard/admin setup. Do not put service account JSON in this repo or kit bundles.', [
+          setupButton('openBraze', 'Braze', 'external-link'),
+          setupButton('openFirebaseConsole', 'Firebase', 'external-link'),
+        ]),
+        item('apns', 'iOS push/APNs', 'Requires Apple Developer team signing and APNs material. Keep it outside Studio until a deliberate iOS push setup is needed.', [
+          setupButton('openAppleDeveloper', 'Apple', 'external-link'),
+          setupButton('openBraze', 'Braze', 'external-link'),
+        ]),
+      ]
+    }
+    function renderFirstRun() {
+      const root = el('studioFirstRun')
+      if (!root) return
+      const available = studioAvailable()
+      const studio = state.studio
+      const completed = Boolean(studio && studio.firstRun && studio.firstRun.completed)
+      root.classList.toggle('active', available && !completed)
+      if (!available || completed) return
+      const workspaces = Array.isArray(studio.workspaces) ? studio.workspaces : []
+      const active = workspaces.find((workspace) => workspace.id === studio.activeWorkspaceId) || workspaces[0] || null
+      el('firstRunStatus').textContent = studio.launcher && studio.launcher.status ? studio.launcher.status : 'Local app'
+      el('firstRunWorkspace').textContent = active ? active.name + ' - ' + active.repoPath : 'Create a local workspace to continue.'
+      document.querySelectorAll('[data-first-run-mode]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.firstRunMode === state.firstRunMode)
+      })
+      el('firstRunCapabilities').innerHTML = firstRunCapabilities(studio).map(capabilityCard).join('')
+    }
     function renderLiveActivity() {
       if (!state.data) return
       renderTopStatus()
+      if (studioAvailable()) loadStudioState().then(() => {
+        renderStudio()
+        renderFirstRun()
+        renderDiagnostics()
+      }).catch(() => {})
       renderReadiness()
       renderActivityInto('recentActivity', audienceRows(state.data.ledger).slice(0, state.presentation ? 8 : 5))
       if (el('builderActivity')) renderActivityInto('builderActivity', audienceRows(state.data.ledger).slice(0, 4))
@@ -1618,6 +2023,7 @@ export function launcherHtml() {
     function renderDiagnostics() {
       const runtime = state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
       el('runtimeDetails').textContent = fmt(runtime)
+      const studio = state.studio
       const diagnostics = {
         selectedPlatform: state.data.active.platform,
         deviceRuntime: state.data.active.runtime && state.data.active.runtime.device ? state.data.active.runtime.device : null,
@@ -1630,6 +2036,18 @@ export function launcherHtml() {
         },
       }
       el('deviceDetails').textContent = fmt(diagnostics)
+      el('studioDetails').textContent = fmt(studio ? {
+        status: studio.launcher && studio.launcher.status,
+        url: studio.launcher && studio.launcher.url,
+        health: studio.launcher && studio.launcher.health,
+        activeWorkspaceId: studio.activeWorkspaceId,
+        workspace: (studio.workspaces || []).find((workspace) => workspace.id === studio.activeWorkspaceId) || null,
+        logFile: studio.logFile,
+        appData: studio.userDataRoot,
+      } : {
+        mode: 'browser',
+        message: 'Desktop workspace controls are available in Braze Demo Studio.',
+      })
       renderActivityInto('debugActivity', diagnosticsRows(state.data.ledger).slice(0, 30), { diagnostics: true })
       const responses = state.data.restResponses || []
       rememberOpenDetails(el('restActivity'))
@@ -1781,6 +2199,11 @@ export function launcherHtml() {
     }
     function renderJobLog() {
       const job = state.data.jobs && state.data.jobs[0]
+      if (state.studio && Array.isArray(state.studio.recentLogs) && state.studio.recentLogs.length) {
+        el('logs').textContent = state.studio.recentLogs.join('\\n')
+        el('logs').scrollTop = el('logs').scrollHeight
+        return
+      }
       if (!job) return
       el('logs').textContent = job.logs && job.logs.length ? job.logs.join('\\n') : 'Waiting for output.'
       el('logs').scrollTop = el('logs').scrollHeight
@@ -2150,6 +2573,90 @@ export function launcherHtml() {
     el('refreshFeed').addEventListener('click', load)
     el('cockpitRestRun').addEventListener('click', () => runCustomRestControl('cockpitRest'))
     el('cockpitRestStage').addEventListener('click', () => stageCustomRestControl('cockpitRest'))
+    el('studioWorkspaceSelect').addEventListener('change', () => {
+      const id = el('studioWorkspaceSelect').value
+      if (id) studioAction('Switch workspace', (bridge) => bridge.switchWorkspace(id))
+    })
+    el('studioNewWorkspace').addEventListener('click', () => {
+      const name = window.prompt('Workspace name', 'Demo Workspace')
+      if (name) studioAction('Create workspace', (bridge) => bridge.createWorkspace(name))
+    })
+    el('studioRevealWorkspace').addEventListener('click', () => studioAction('Reveal workspace', (bridge) => bridge.revealWorkspace()))
+    el('studioRestartLauncher').addEventListener('click', () => studioAction('Restart launcher', (bridge) => bridge.restartLauncher()))
+    el('studioDoctor').addEventListener('click', () => studioAction('Run doctor', (bridge) => bridge.runDoctor()))
+    el('studioInstallDeps').addEventListener('click', () => studioAction('Install dependencies', (bridge) => bridge.installDependencies()))
+    el('studioProvisionAvd').addEventListener('click', () => studioAction('Provision Android AVD', (bridge) => bridge.provisionAvd()))
+    el('studioImportKit').addEventListener('click', () => studioAction('Import kit', (bridge) => bridge.importKit()))
+    el('studioExportKit').addEventListener('click', () => studioAction('Export kit', (bridge) => bridge.exportActiveKit()))
+    el('studioOpenLogs').addEventListener('click', () => studioAction('Open logs', (bridge) => bridge.openLogs()))
+    document.querySelectorAll('[data-first-run-mode]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.firstRunMode = button.dataset.firstRunMode || 'presenter'
+        renderFirstRun()
+      })
+    })
+    el('firstRunNewWorkspace').addEventListener('click', () => {
+      const name = window.prompt('Workspace name', state.firstRunMode === 'builder' ? 'Builder Workspace' : 'Demo Workspace')
+      if (name) studioAction('Create workspace', (bridge) => bridge.createWorkspace(name))
+    })
+    el('firstRunImportKit').addEventListener('click', () => studioAction('Import kit', (bridge) => bridge.importKit()))
+    el('firstRunRevealWorkspace').addEventListener('click', () => studioAction('Reveal workspace', (bridge) => bridge.revealWorkspace()))
+    el('firstRunDoctor').addEventListener('click', () => studioAction('Run doctor', (bridge) => bridge.runDoctor()))
+    el('firstRunInstallSystemTools').addEventListener('click', () => studioAction('Install system tools', (bridge) => bridge.installSystemTools()))
+    el('firstRunInstallDeps').addEventListener('click', () => studioAction('Install dependencies', (bridge) => bridge.installDependencies()))
+    el('firstRunOpenAndroidStudio').addEventListener('click', () => studioAction('Open Android Studio', (bridge) => bridge.openAndroidStudio()))
+    el('firstRunOpenXcode').addEventListener('click', () => studioAction('Open Xcode', (bridge) => bridge.openXcode()))
+    el('firstRunProvisionAvd').addEventListener('click', () => studioAction('Provision Android AVD', (bridge) => bridge.provisionAvd()))
+    el('firstRunOpenDiagnostics').addEventListener('click', () => {
+      state.view = 'diagnostics'
+      render()
+    })
+    el('firstRunComplete').addEventListener('click', () => studioAction('Complete first run', (bridge) => bridge.completeFirstRun(state.firstRunMode)))
+    el('firstRunCapabilities').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-studio-setup-action]')
+      if (!button) return
+      const action = button.dataset.studioSetupAction
+      const actions = {
+        runDoctor: (bridge) => bridge.runDoctor(),
+        installSystemTools: (bridge) => bridge.installSystemTools(),
+        installDependencies: (bridge) => bridge.installDependencies(),
+        provisionAvd: (bridge) => bridge.provisionAvd(),
+        openHomebrew: (bridge) => bridge.openHomebrew(),
+        openAndroidStudio: (bridge) => bridge.openAndroidStudio(),
+        openXcode: (bridge) => bridge.openXcode(),
+        openBraze: (bridge) => bridge.openBraze(),
+        openAppleDeveloper: (bridge) => bridge.openAppleDeveloper(),
+        openFirebaseConsole: (bridge) => bridge.openFirebaseConsole(),
+        verifyAndroid: (bridge) => bridge.verifyAndroid(),
+        verifyIos: (bridge) => bridge.verifyIos(),
+      }
+      if (action === 'focusCredentials') {
+        state.view = 'cockpit'
+        render()
+        el('credentialsPanel').open = true
+        el('credentialsPanel').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+      if (actions[action]) studioAction('Setup action', actions[action])
+    })
+    if (studioBridge() && typeof studioBridge().onState === 'function') {
+      studioBridge().onState((studio) => {
+        state.studio = studio
+        renderStudio()
+        renderFirstRun()
+        renderDiagnostics()
+        renderJobLog()
+        refreshIcons()
+      })
+    }
+    if (studioBridge() && typeof studioBridge().onLog === 'function') {
+      studioBridge().onLog((entry) => {
+        if (!state.studio) state.studio = {}
+        const recent = Array.isArray(state.studio.recentLogs) ? state.studio.recentLogs : []
+        state.studio.recentLogs = [...recent, entry.line].slice(-120)
+        renderJobLog()
+      })
+    }
     renderBrazeClusterOptions()
     updateBrazeClusterState()
     load().then(connectLiveUpdates).catch((error) => {
