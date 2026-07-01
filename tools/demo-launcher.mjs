@@ -25,6 +25,11 @@ import {
 } from './demo-pack-utils.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const packageJsonPath = path.join(repoRoot, 'package.json')
+const packageVersion = fs.existsSync(packageJsonPath)
+  ? JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version || '0.0.0'
+  : '0.0.0'
+const workspaceRoot = process.env.BRAZE_DEMO_WORKSPACE_ROOT || repoRoot
 const designSystemDir =
   process.env.BRAZE_DESIGN_SYSTEM_DIR ||
   path.join(repoRoot, 'Braze Design System (Collaborative)')
@@ -212,6 +217,7 @@ function parseArgs(argv) {
     else if (arg === '--pack') args.pack = argv[++index]
     else if (arg === '--run') args.run = true
     else if (arg === '--apply-only') args.applyOnly = true
+    else if (arg === '--startup-json') args.startupJson = true
     else if (arg === '--port') {
       args.port = Number(argv[++index])
       args.explicitPort = true
@@ -426,6 +432,24 @@ function sendJson(res, status, body) {
 function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
   res.writeHead(status, { 'content-type': contentType })
   res.end(body)
+}
+
+function healthPayload() {
+  const state = readState()
+  const activePackId = state.activePackId || getActivePackId()
+  return {
+    ok: true,
+    name: 'Braze Demo Control Room',
+    version: packageVersion,
+    url: `http://127.0.0.1:${serverPort}`,
+    port: serverPort,
+    workspaceRoot,
+    repoRoot,
+    activePackId,
+    activePlatform: state.activePlatform || 'android',
+    activeExternalId: state.activeExternalId || '',
+    pid: process.pid,
+  }
 }
 
 function readBody(req) {
@@ -2574,6 +2598,8 @@ async function handleRequest(req, res) {
       serveDesignAsset(req, res)
     } else if (req.method === 'GET' && url.pathname === '/api/packs') {
       sendJson(res, 200, listDemoPacks())
+    } else if (req.method === 'GET' && url.pathname === '/api/health') {
+      sendJson(res, 200, healthPayload())
     } else if (req.method === 'GET' && url.pathname === '/api/state') {
       sendJson(res, 200, publicState())
     } else if (req.method === 'GET' && url.pathname === '/api/events') {
@@ -2781,8 +2807,12 @@ async function runCli(args) {
   })
   server.listen(port, '127.0.0.1', () => {
     const serverUrl = `http://127.0.0.1:${port}`
+    const readyPayload = healthPayload()
     console.log(`Braze Demo Control Room running at ${serverUrl}`)
     console.log(`Android telemetry callback: ${launcherCallbackUrl()}`)
+    if (args.startupJson || process.env.BRAZE_CONTROL_ROOM_STARTUP_JSON === '1') {
+      console.log(`BRAZE_DEMO_LAUNCHER_READY ${JSON.stringify(readyPayload)}`)
+    }
     console.log('Press Ctrl+C to stop.')
   })
 }

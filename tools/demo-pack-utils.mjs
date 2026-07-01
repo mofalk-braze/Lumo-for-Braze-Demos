@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const repoRoot = path.resolve(__dirname, '..')
 export const demoPacksDir = path.join(repoRoot, 'demo-packs')
+export const localDemoPacksDir = path.join(repoRoot, '.demo-packs')
 export const webTemplateDir = path.join(repoRoot, 'web-template')
 export const androidShellDir = path.join(repoRoot, 'android-shell')
 export const launcherStateDir = path.join(repoRoot, '.demo-launcher')
@@ -53,6 +54,23 @@ function hasHostRestKey(packId, secrets = {}) {
   )
 }
 
+function splitPathList(value) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function uniquePackRoots() {
+  const roots = [
+    localDemoPacksDir,
+    ...splitPathList(process.env.BRAZE_DEMO_PACKS_DIRS || process.env.BRAZE_DEMO_PACKS_DIR),
+    demoPacksDir,
+  ].map((dir) => path.resolve(repoRoot, dir))
+
+  return [...new Set(roots)]
+}
+
 export function resolvePackPath(pack, value, { fallback = '' } = {}) {
   const raw = value || fallback
   if (!raw) return ''
@@ -90,25 +108,28 @@ export function writeProperties(file, values, comments = []) {
 }
 
 export function listDemoPacks() {
-  if (!fs.existsSync(demoPacksDir)) return []
-  return fs
-    .readdirSync(demoPacksDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const dir = path.join(demoPacksDir, entry.name)
+  const byId = new Map()
+  for (const root of uniquePackRoots()) {
+    if (!fs.existsSync(root)) continue
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const dir = path.join(root, entry.name)
       const configPath = path.join(dir, 'demo-pack.json')
-      if (!fs.existsSync(configPath)) return null
+      if (!fs.existsSync(configPath)) continue
       const pack = validatePack(readJson(configPath), configPath)
+      if (byId.has(pack.id)) continue
       const secretsPath = path.join(dir, 'secrets.properties')
       const secrets = readProperties(secretsPath)
-      return {
+      byId.set(pack.id, {
         ...pack,
         directory: dir,
+        localOnly: !path.resolve(dir).startsWith(path.resolve(demoPacksDir) + path.sep),
         hasSecrets: fs.existsSync(secretsPath),
         restConfigured: Boolean(secrets['braze.restEndpoint'] && hasHostRestKey(pack.id, secrets)),
-      }
-    })
-    .filter(Boolean)
+      })
+    }
+  }
+  return [...byId.values()]
     .sort((a, b) => {
       if (a.id === 'lumo-default') return -1
       if (b.id === 'lumo-default') return 1
@@ -117,20 +138,22 @@ export function listDemoPacks() {
 }
 
 function findDemoPackDirectory(packId) {
-  if (!fs.existsSync(demoPacksDir)) return null
+  for (const root of uniquePackRoots()) {
+    if (!fs.existsSync(root)) continue
 
-  const directDir = path.join(demoPacksDir, packId)
-  if (fs.existsSync(path.join(directDir, 'demo-pack.json'))) {
-    return directDir
-  }
+    const directDir = path.join(root, packId)
+    if (fs.existsSync(path.join(directDir, 'demo-pack.json'))) {
+      return directDir
+    }
 
-  for (const entry of fs.readdirSync(demoPacksDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    const dir = path.join(demoPacksDir, entry.name)
-    const configPath = path.join(dir, 'demo-pack.json')
-    if (!fs.existsSync(configPath)) continue
-    const pack = validatePack(readJson(configPath), configPath)
-    if (pack.id === packId || entry.name === packId) return dir
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const dir = path.join(root, entry.name)
+      const configPath = path.join(dir, 'demo-pack.json')
+      if (!fs.existsSync(configPath)) continue
+      const pack = validatePack(readJson(configPath), configPath)
+      if (pack.id === packId || entry.name === packId) return dir
+    }
   }
 
   return null

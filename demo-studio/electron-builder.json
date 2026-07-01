@@ -1,0 +1,114 @@
+{
+  "appId": "com.braze.demostudio",
+  "productName": "Braze Demo Studio",
+  "asar": true,
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "src/**/*",
+    "assets/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": [
+          "arm64"
+        ]
+      }
+    ],
+    "icon": "assets/logo.icns",
+    "identity": null,
+    "category": "public.app-category.developer-tools"
+  },
+  "extraResources": [
+    {
+      "from": "../tools",
+      "to": "app-source/tools",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "../demo-packs",
+      "to": "app-source/demo-packs",
+      "filter": [
+        "**/*",
+        "!**/secrets.properties"
+      ]
+    },
+    {
+      "from": "../web-template",
+      "to": "app-source/web-template",
+      "filter": [
+        "**/*",
+        "!node_modules/**",
+        "!dist/**",
+        "!public/demo-assets/**",
+        "!public/demo-runtime.json",
+        "!src/brand/activeDemoConfig.generated.ts"
+      ]
+    },
+    {
+      "from": "../android-shell",
+      "to": "app-source/android-shell",
+      "filter": [
+        "**/*",
+        "!build/**",
+        "!app/build/**",
+        "!.gradle/**",
+        "!local.properties",
+        "!.active-demo-pack",
+        "!**/*.jks",
+        "!**/*.keystore",
+        "!**/firebase-service-account*.json",
+        "!**/service-account*.json",
+        "!**/braze-secrets*.json"
+      ]
+    },
+    {
+      "from": "../ios-shell",
+      "to": "app-source/ios-shell",
+      "filter": [
+        "**/*",
+        "!DerivedData/**",
+        "!build/**",
+        "!*.xcodeproj/**",
+        "!*.xcworkspace/**",
+        "!Sources/Config.swift"
+      ]
+    },
+    {
+      "from": "../docs",
+      "to": "app-source/docs",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "../Braze Design System (Collaborative)",
+      "to": "app-source/Braze Design System (Collaborative)",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "../bootstrap-solcon.sh",
+      "to": "app-source/bootstrap-solcon.sh"
+    },
+    {
+      "from": "../package.json",
+      "to": "app-source/package.json"
+    },
+    {
+      "from": "../package-lock.json",
+      "to": "app-source/package-lock.json"
+    },
+    {
+      "from": "../README.md",
+      "to": "app-source/README.md"
+    }
+  ]
+}

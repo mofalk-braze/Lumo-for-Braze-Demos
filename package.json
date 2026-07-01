@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "demo:studio": "npm --prefix demo-studio start",
+    "demo:studio:check": "npm --prefix demo-studio run check",
+    "demo:studio:pack": "npm --prefix demo-studio run pack",
+    "demo:studio:dist": "npm --prefix demo-studio run dist",
     "demo:launcher": "node tools/demo-launcher.mjs",
     "bootstrap:check": "node tools/doctor-solcon.mjs",
     "doctor": "node tools/doctor-solcon.mjs",
