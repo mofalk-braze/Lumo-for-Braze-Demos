@@ -1,10 +1,9 @@
 # Demo Packs
 
 Demo packs are local app concepts that the Control Room applies before browser,
-Android, or iOS rendering. The shared SolCon distribution intentionally commits
-only `SolCon Starter`, a sanitized pack for smoke testing the shells and runtime.
-Customer, prospect, or brand-specific packs should be imported locally or kept on
-private branches, not committed to the shared distribution path.
+Android, or iOS rendering. The public source distribution intentionally commits
+only sanitized packs such as `Lumo`. Customer, prospect, or brand-specific packs
+belong in the ignored `.demo-packs/` workspace, not in the shared source path.
 
 Each pack contains:
 
@@ -51,8 +50,8 @@ npm run validate:demo-runtime
 ```
 
 When a local pack needs real Braze credentials, create an ignored
-`secrets.properties` next to that pack. All packs share the dedicated SolCon
-Android Firebase app configured at `android-shell/app/google-services.json`.
+`secrets.properties` next to that pack. All packs share the Lumo Android
+Firebase client app configured at `android-shell/app/google-services.json`.
 
 `secrets.properties` may include SDK values and the non-secret REST endpoint:
 
@@ -60,12 +59,16 @@ Android Firebase app configured at `android-shell/app/google-services.json`.
 braze.apiKey=
 braze.endpoint=sdk.iad-03.braze.com
 braze.restEndpoint=https://rest.iad-03.braze.com
-demo.externalId=solcon-demo-user
-demo.profileName=SolCon Starter
-demo.displayName=SolCon
+demo.externalId=lumo-demo-user
+demo.profileName=Lumo
+demo.displayName=Lumo
 ```
 
 REST API keys are host-only and are not saved by the Control Room. The launcher
 resolves them from a session entry, `BRAZE_REST_API_KEY_<PACK_ID>`, or
 `BRAZE_REST_API_KEY`. Legacy `braze.restApiKey` values in `secrets.properties`
 are ignored unless `BRAZE_CONTROL_ROOM_ALLOW_LEGACY_REST_KEY=1` is set.
+
+Firebase service account JSON is not a demo-pack file. Teammates receive it
+outside Git only when they need to upload it into their own Braze workspace for
+Android push.

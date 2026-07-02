@@ -222,7 +222,7 @@ function validatePacks() {
 
 function validateFirebaseConfig() {
   if (!fs.existsSync(androidGoogleServicesPath)) {
-    fail('Missing android-shell/app/google-services.json. Commit the dedicated SolCon Firebase client config.')
+    fail('Missing android-shell/app/google-services.json. Commit the shared Lumo Firebase client config.')
     return
   }
 

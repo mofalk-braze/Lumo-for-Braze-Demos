@@ -22,7 +22,7 @@ Before asking where anything lives, inspect the project sources that define curr
 - `web-template/README.md`
 - `android-shell/README.md`
 - `ios-shell/README.md`
-- the active or requested `demo-packs/<pack>/demo-pack.json`
+- the active or requested `demo-packs/<pack>/demo-pack.json` or `.demo-packs/<pack>/demo-pack.json`
 - relevant `web-template/src` screens/components
 - `tools/demo-launcher.mjs` and pack `launcher.presets` when Control Room behavior is involved
 - Android/iOS bridge files only when SDK behavior, push, IAM, launch links, purchases, Content Cards, or identity are involved
@@ -76,8 +76,10 @@ Use real SDK Content Cards in shell builds. Browser fixtures are layout-only.
 
 - Demo packs are source of truth; generated runtime files are not hand-edited.
 - Product UI stays product-focused. Presenter/operator controls belong in the Control Room.
+- New Claude-created, imported, customer, or prospect packs belong in ignored `.demo-packs/` unless the user explicitly asks for a sanitized public pack under `demo-packs/`.
 - Native shells own `changeUser`, events, purchases, push, IAM display, Content Cards, clicks, and impressions.
 - REST API keys stay host-only and must not be written into committed files or generated web/native assets.
+- Firebase service account JSON stays outside Git. It may be uploaded manually into a teammate's own Braze workspace for Android push, but must not be committed or generated into app assets.
 - Preserve Android/iOS parity for pack application, runtime generation, asset packaging, launch flows, SDK bridge behavior, and Control Room controls. If parity is not applicable, document why.
 - Source URL overrides are advanced diagnostics and should remain visible when active.
 
@@ -104,5 +106,6 @@ Final response must include:
 - platform parity notes
 - Content Card placements and Braze dashboard `extras.placement` values
 - logo/app icon decisions
+- pack location (`demo-packs/` or `.demo-packs/`)
 - remaining manual Braze dashboard setup
 - any required SolCon operator notes

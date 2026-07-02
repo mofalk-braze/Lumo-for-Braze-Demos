@@ -2,7 +2,8 @@
 
 The demo pack is the source of truth. Applying a pack generates the web config,
 public runtime manifest, Android seed metadata, iOS runtime defaults, and synced
-demo assets from `demo-packs/<pack>/demo-pack.json`.
+demo assets from a committed `demo-packs/<pack>/demo-pack.json` or ignored local
+`.demo-packs/<pack>/demo-pack.json`.
 
 ## Ownership
 
@@ -143,5 +144,7 @@ web output, packaged Android assets, and stale legacy generated assets.
 
 SDK secrets stay in ignored `secrets.properties`, native local config, or user
 defaults. REST API keys are host-only session or environment values by default;
-legacy pack-stored REST keys are ignored unless explicitly enabled. Secrets are
-never generated into web assets.
+legacy pack-stored REST keys are ignored unless explicitly enabled. Firebase
+service account JSON stays outside Git and is uploaded manually into a Braze
+workspace when Android push must be configured there. Secrets are never
+generated into web assets.

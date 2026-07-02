@@ -1,15 +1,15 @@
 {
-  "id": "solcon-starter",
-  "name": "SolCon Starter",
-  "description": "Sanitized starter app for validating the shared SolCon demo shell distribution.",
+  "id": "lumo-default",
+  "name": "Lumo",
+  "description": "Sanitized starter app for validating the public Lumo demo shell distribution.",
   "android": {
-    "defaultExternalId": "solcon-demo-user",
-    "defaultProfileName": "SolCon Starter"
+    "defaultExternalId": "lumo-demo-user",
+    "defaultProfileName": "Lumo"
   },
   "launcher": {
     "presets": [
       {
-        "id": "solcon_sdk_onboarding_step",
+        "id": "lumo_sdk_onboarding_step",
         "label": "Complete onboarding",
         "description": "Logs onboarding_completed through the active native SDK.",
         "type": "sdk_event",
@@ -17,12 +17,12 @@
           "name": "onboarding_completed",
           "properties": {
             "source": "control_room",
-            "plan": "starter"
+            "plan": "lumo"
           }
         }
       },
       {
-        "id": "solcon_sdk_set_interest",
+        "id": "lumo_sdk_set_interest",
         "label": "Set demo interest",
         "description": "Sets demo_interest=mobile_channels on the active SDK user.",
         "type": "sdk_attribute",
@@ -32,7 +32,7 @@
         }
       },
       {
-        "id": "solcon_sdk_purchase",
+        "id": "lumo_sdk_purchase",
         "label": "Log sample order",
         "description": "Logs a non-customer sample purchase through the active native SDK.",
         "type": "sdk_purchase",
@@ -50,10 +50,10 @@
     ]
   },
   "brand": {
-    "appName": "Starter",
-    "displayName": "SolCon Starter",
+    "appName": "Lumo",
+    "displayName": "Lumo",
     "tagline": "A clean test app for mobile messaging demos.",
-    "logoText": "SC",
+    "logoText": "LU",
     "colors": {
       "brand": "#0F766E",
       "brandDark": "#115E59",
@@ -76,7 +76,7 @@
         "anchor": "preference_updated",
         "emitAnchor": true,
         "sample": {
-          "plan": "starter",
+          "plan": "lumo",
           "source": "app"
         }
       },
@@ -102,8 +102,8 @@
       }
     ],
     "demoUser": {
-      "externalId": "solcon-demo-user",
-      "firstName": "SolCon",
+      "externalId": "lumo-demo-user",
+      "firstName": "Lumo",
       "attributes": {
         "demo_interest": "mobile_channels",
         "lifecycle_stage": "starter",
@@ -136,7 +136,7 @@
         "maxCards": 4
       },
       {
-        "id": "starter-inbox",
+          "id": "lumo-inbox",
         "placement": "inbox",
         "surface": "inbox",
         "screen": "inbox",
@@ -148,7 +148,7 @@
     ],
     "rails": [
       {
-        "id": "starter-actions",
+        "id": "lumo-actions",
         "title": "Try the core flows",
         "items": [
           { "id": "flow_push", "title": "Push readiness", "subtitle": "Android FCM", "meta": "Token check", "badge": "Native", "category": "push" },
@@ -158,7 +158,7 @@
         ]
       },
       {
-        "id": "starter-offers",
+        "id": "lumo-offers",
         "title": "Starter offers",
         "items": [
           { "id": "offer_bundle", "title": "Starter bundle", "subtitle": "Demo package", "meta": "EUR 29", "badge": "Sample", "category": "offers" },

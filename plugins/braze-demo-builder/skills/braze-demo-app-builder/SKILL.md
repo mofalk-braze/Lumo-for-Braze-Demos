@@ -12,7 +12,7 @@ Use this skill to build real-feeling Braze demo app features inside this runtime
 Before editing, inspect the relevant committed source of truth:
 
 - `AGENTS.md` for project rules, parity expectations, generated-file boundaries, REST key handling, and validation requirements.
-- `demo-packs/README.md` and the active `demo-packs/<pack>/demo-pack.json` for pack schema, Content Card surfaces, assets, events, user metadata, and presets.
+- `demo-packs/README.md` and the active committed `demo-packs/<pack>/demo-pack.json` or local `.demo-packs/<pack>/demo-pack.json` for pack schema, Content Card surfaces, assets, events, user metadata, and presets.
 - `docs/demo-runtime-architecture.md` for runtime ownership, Control Room boundaries, bridge sync, readiness gates, and diagnostics.
 - `web-template/README.md` plus relevant `web-template/src` screens/components for product UI and bridge usage.
 - `android-shell/README.md` and Android bridge/activity files when SDK behavior, Android launch, FCM, trust, or packaged assets are in scope.
@@ -33,12 +33,14 @@ Choose the smallest credible surface before editing:
 ## Boundaries
 
 - Demo packs are the source of truth for public brand/content/demo metadata. Applying a pack generates web runtime config, runtime manifests, synced assets, Android seed metadata, and iOS runtime defaults.
+- `demo-packs/` is for sanitized public packs. New Claude-created, imported, customer, or prospect packs default to ignored `.demo-packs/` unless the user explicitly asks to prepare a sanitized public pack.
 - Do not hand-edit `web-template/src/brand/activeDemoConfig.generated.ts`, `web-template/public/demo-runtime.json`, synced demo assets, Android seed metadata, or iOS runtime defaults.
 - The web app renders product UI only. Do not add presenter/demo controls to product screens.
 - The Braze Demo Control Room owns setup, orchestration, triggers, staged controls, validation, build/run actions, diagnostics, and activity logs.
 - Android and iOS shells own real Braze SDK behavior: `changeUser`, SDK custom events, purchases, IAM display, Content Cards, push, notification permission, clicks, and impressions.
 - Do not add the Braze Web SDK to `web-template`.
 - Keep REST API keys host-only. Do not write them into web assets, native resources, source files, demo packs, or committed files.
+- Keep Firebase service account JSON outside Git. Teammates may upload it into their own Braze workspaces for Android push, but it must not be written into source, packs, generated assets, or committed files.
 - Preserve SDK device identity by default. Treat app-data, simulator, emulator, or SDK storage resets as explicit recovery/testing actions only.
 - Keep source URL overrides as visible advanced diagnostics, preferably local development origins unless a deliberate debug escape hatch is added.
 
@@ -48,7 +50,7 @@ Before implementation, ask when any required setup input is missing. In Codex, u
 
 Required intake for new or materially changed demo stories:
 
-- App/customer concept and intended SolCon audience.
+- App/customer concept and intended Lumo/SolCon audience.
 - Target platforms: web harness, Android, iOS, or all.
 - Source screenshots, product references, or brand assets.
 - Logo/app icon PNG availability and fallback if missing.
@@ -102,4 +104,4 @@ xcodegen generate
 xcodebuild -project BrazeDemoShell.xcodeproj -scheme BrazeDemoShell -sdk iphonesimulator -derivedDataPath ./DerivedData CODE_SIGNING_ALLOWED=NO build
 ```
 
-Report changed subsystems, validation results, skipped checks, platform parity notes, Content Card placements, logo/icon decisions, and any manual Braze dashboard setup still required.
+Report changed subsystems, validation results, skipped checks, platform parity notes, Content Card placements, logo/icon decisions, pack location (`demo-packs/` or `.demo-packs/`), and any manual Braze dashboard setup still required.

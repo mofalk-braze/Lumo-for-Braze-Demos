@@ -7,9 +7,14 @@
     "demo:launcher": "node tools/demo-launcher.mjs",
     "bootstrap:check": "node tools/doctor-solcon.mjs",
     "doctor": "node tools/doctor-solcon.mjs",
-    "demo:apply:starter": "node tools/demo-launcher.mjs --pack solcon-starter --apply-only",
+    "demo:apply:starter": "node tools/demo-launcher.mjs --pack lumo-default --apply-only",
+    "lumo:doctor": "node tools/doctor-solcon.mjs",
+    "lumo:apply": "node tools/demo-launcher.mjs --pack lumo-default --apply-only",
+    "lumo:cockpit": "node tools/demo-launcher.mjs",
+    "lumo:launch:android": "node tools/demo-launcher.mjs --pack lumo-default --run",
     "validate:demo-runtime": "node tools/validate-demo-runtime.mjs",
     "security:scan": "node tools/secret-scan.mjs",
+    "public:check": "node tools/public-readiness-check.mjs",
     "check:precommit": "npm run validate:demo-runtime && npm run security:scan"
   }
 }

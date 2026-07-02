@@ -11,6 +11,8 @@ Usage:
   ./bootstrap-solcon.sh --install      Install/guidance for shared dependencies, then run diagnostics.
   ./bootstrap-solcon.sh --android-avd  Provision the dedicated rootable Android demo AVD.
 
+Lumo public setup may use ./bootstrap-lumo.sh with the same flags.
+
 Supported v1 host: Apple Silicon macOS.
 EOF
 }

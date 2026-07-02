@@ -19,22 +19,26 @@ diagnostics through a hidden drawer.
 - Foreground push payloads can be forwarded into the branded demo banner;
   background push remains native Android notification behavior.
 
-## SolCon Setup
+## Lumo Setup
 
 Use the top-level bootstrap path first:
 
 ```sh
-./bootstrap-solcon.sh --check
-./bootstrap-solcon.sh --install
-./bootstrap-solcon.sh --android-avd
-npm run demo:launcher
+./bootstrap-lumo.sh --check
+./bootstrap-lumo.sh --install
+./bootstrap-lumo.sh --android-avd
+npm run lumo:cockpit
 ```
 
-The shared distribution commits the dedicated SolCon Firebase client config at
-`android-shell/app/google-services.json`. Colleagues should not create their own
-Firebase apps or FCM credentials. Real push still requires local Braze SDK
-credentials for the active pack and the Firebase service account to be configured
-once in Braze by the owner/admin.
+The public distribution commits the shared Firebase Android client config at
+`android-shell/app/google-services.json`. Real push in a teammate's own Braze
+workspace still requires local Braze SDK credentials for the active pack and the
+Firebase service account JSON uploaded into that Braze workspace. The service
+account JSON is distributed outside Git.
+
+Each local emulator/app install generates its own FCM registration token. The
+Control Room and Android debug drawer surface token readiness for the active
+user; FCM registration tokens are not shared or committed.
 
 ## Manual Setup Fallback
 
@@ -58,10 +62,10 @@ once in Braze by the owner/admin.
    matches package `com.braze.demoshell`.
 7. In Google Cloud, enable Firebase Cloud Messaging API if the shared Firebase
    project has not already been prepared.
-8. Create or use the owner-managed FCM service account with Firebase Cloud
+8. Create or use the shared Firebase service account with Firebase Cloud
    Messaging send permission.
-9. Upload the service account JSON to Braze under the Android app's Push
-   Notification Settings, then delete or secure the local JSON.
+9. Upload the service account JSON to your Braze workspace under the Android
+   app's Push Notification Settings, then delete or secure the local JSON.
 10. Provision the dedicated rootable Google APIs emulator:
 
     ```sh
@@ -120,7 +124,7 @@ node tools/demo-launcher.mjs --pack example-retail --apply-only
 node tools/demo-launcher.mjs --pack example-retail --run
 ```
 
-All demo packs share the Firebase Android app at
+All demo packs share the Firebase Android client app at
 `android-shell/app/google-services.json`. SDK credentials and active user setup
 belong in the Control Room. A saved `webURL` is now an explicit advanced local
 source override and is shown in diagnostics when active.
@@ -160,7 +164,7 @@ is the only normal control surface.
 - Create Content Cards targeted to the demo user with `extras.placement` values
   declared by the active pack's `content.contentCardSurfaces`; `inbox` remains
   the default inbox-style placement and legacy packs may still use `home_feed`.
-- Confirm the profile becomes push registered after the FCM token is generated.
+- Confirm the profile becomes push registered after this emulator's FCM token is generated.
 - Send a push to the same external ID/device after notification permission is granted.
 
 ## Pixel 10 Smoke Test
@@ -236,11 +240,12 @@ Do not commit:
 - `web-template/src/brand/activeDemoConfig.generated.ts`
 - Firebase service account JSON credentials
 - FCM server keys or owner/admin service-account material
+- FCM registration tokens
 - Braze REST keys or workspace keys
 - Keystores
 - Prospect-private screenshots or brand assets
 
-The dedicated SolCon `android-shell/app/google-services.json` is committed
+The shared Lumo `android-shell/app/google-services.json` is committed
 because it is Firebase client app config for `com.braze.demoshell`, not a
 service-account credential. Real local SDK values are read from
 `local.properties`, ignored pack `secrets.properties`, or Control Room session

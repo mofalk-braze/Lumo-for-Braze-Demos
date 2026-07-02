@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const repoRoot = path.resolve(__dirname, '..')
 export const demoPacksDir = path.join(repoRoot, 'demo-packs')
+export const localDemoPacksDir = path.join(repoRoot, '.demo-packs')
 export const webTemplateDir = path.join(repoRoot, 'web-template')
 export const androidShellDir = path.join(repoRoot, 'android-shell')
 export const launcherStateDir = path.join(repoRoot, '.demo-launcher')
@@ -90,12 +91,20 @@ export function writeProperties(file, values, comments = []) {
 }
 
 export function listDemoPacks() {
-  if (!fs.existsSync(demoPacksDir)) return []
-  return fs
-    .readdirSync(demoPacksDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const dir = path.join(demoPacksDir, entry.name)
+  const roots = [
+    { dir: demoPacksDir, source: 'committed', sourceLabel: 'Committed pack' },
+    { dir: localDemoPacksDir, source: 'local', sourceLabel: 'Local workspace pack' },
+  ]
+  return roots
+    .flatMap((root) => {
+      if (!fs.existsSync(root.dir)) return []
+      return fs
+        .readdirSync(root.dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => ({ ...root, entry }))
+    })
+    .map(({ dir: rootDir, source, sourceLabel, entry }) => {
+      const dir = path.join(rootDir, entry.name)
       const configPath = path.join(dir, 'demo-pack.json')
       if (!fs.existsSync(configPath)) return null
       const pack = validatePack(readJson(configPath), configPath)
@@ -104,6 +113,8 @@ export function listDemoPacks() {
       return {
         ...pack,
         directory: dir,
+        source,
+        sourceLabel,
         hasSecrets: fs.existsSync(secretsPath),
         restConfigured: Boolean(secrets['braze.restEndpoint'] && hasHostRestKey(pack.id, secrets)),
       }
@@ -117,20 +128,25 @@ export function listDemoPacks() {
 }
 
 function findDemoPackDirectory(packId) {
-  if (!fs.existsSync(demoPacksDir)) return null
+  const roots = [demoPacksDir, localDemoPacksDir]
 
-  const directDir = path.join(demoPacksDir, packId)
-  if (fs.existsSync(path.join(directDir, 'demo-pack.json'))) {
-    return directDir
+  for (const root of roots) {
+    const directDir = path.join(root, packId)
+    if (fs.existsSync(path.join(directDir, 'demo-pack.json'))) {
+      return directDir
+    }
   }
 
-  for (const entry of fs.readdirSync(demoPacksDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    const dir = path.join(demoPacksDir, entry.name)
-    const configPath = path.join(dir, 'demo-pack.json')
-    if (!fs.existsSync(configPath)) continue
-    const pack = validatePack(readJson(configPath), configPath)
-    if (pack.id === packId || entry.name === packId) return dir
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const dir = path.join(root, entry.name)
+      const configPath = path.join(dir, 'demo-pack.json')
+      if (!fs.existsSync(configPath)) continue
+      const pack = validatePack(readJson(configPath), configPath)
+      if (pack.id === packId || entry.name === packId) return dir
+    }
   }
 
   return null
@@ -142,9 +158,12 @@ export function getDemoPack(packId) {
     throw new Error(`Demo pack not found: ${packId}`)
   }
   const configPath = path.join(packDir, 'demo-pack.json')
+  const isLocal = packDir.startsWith(`${localDemoPacksDir}${path.sep}`)
   return {
     ...validatePack(readJson(configPath), configPath),
     directory: packDir,
+    source: isLocal ? 'local' : 'committed',
+    sourceLabel: isLocal ? 'Local workspace pack' : 'Committed pack',
     secrets: readProperties(path.join(packDir, 'secrets.properties')),
   }
 }

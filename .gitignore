@@ -46,6 +46,7 @@ android-shell/local.properties.backup.*
 android-shell/app/src/**/google-services.json
 android-shell/.active-demo-pack
 .demo-launcher/
+.demo-packs/
 demo-packs/*/secrets.properties
 web-template/src/brand/activeDemoConfig.generated.ts
 web-template/public/demo-runtime.json

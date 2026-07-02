@@ -325,7 +325,7 @@ function safeGetDemoPack(packId) {
   }
 
   const firstPack = listDemoPacks()[0]
-  if (!firstPack) throw new Error('No demo packs found in demo-packs/.')
+  if (!firstPack) throw new Error('No demo packs found in demo-packs/ or .demo-packs/.')
   return getDemoPack(firstPack.id)
 }
 
@@ -2010,6 +2010,8 @@ function publicState() {
       name: item.name,
       description: item.description,
       brand: item.brand,
+      source: item.source,
+      sourceLabel: item.sourceLabel,
       hasSecrets: item.hasSecrets,
       restConfigured: Boolean(itemSecrets['braze.restEndpoint'] && itemRestStatus.configured),
       sdkConfigured: Boolean(itemSecrets['braze.apiKey'] && itemSecrets['braze.endpoint']),
@@ -2399,12 +2401,13 @@ function launcherHtml() {
       const profile = data.active.profile
       el('callback').textContent = 'Device callback: ' + data.active.callbackUrl
       el('status').textContent = 'Ready'
-      el('pack').innerHTML = data.packs.map((pack) => '<option value="' + pack.id + '">' + pack.name + '</option>').join('')
+      el('pack').innerHTML = data.packs.map((pack) => '<option value="' + pack.id + '">' + pack.name + ' · ' + (pack.sourceLabel || pack.source || 'pack') + '</option>').join('')
       el('pack').value = profile.packId
       el('externalId').value = profile.externalId || ''
       el('displayName').value = profile.displayName || ''
       el('packStatus').textContent = profile.packName
       el('profileChips').innerHTML = [
+        '<span class="chip">' + (data.active.pack.sourceLabel || data.active.pack.source || 'pack') + '</span>',
         '<span class="chip">' + (profile.sdkConfigured ? 'SDK ready' : 'SDK missing') + '</span>',
         '<span class="chip ' + (profile.restConfigured ? '' : 'warn') + '">' + (profile.restConfigured ? 'REST ready' : 'REST missing') + '</span>',
         '<span class="chip">' + (profile.sdkEndpoint || 'no sdk endpoint') + '</span>',

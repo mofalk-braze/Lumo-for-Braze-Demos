@@ -193,7 +193,7 @@ function main() {
   const runtimeGenerated =
     fs.existsSync(path.join(repoRoot, 'web-template/src/brand/activeDemoConfig.generated.ts')) &&
     fs.existsSync(path.join(repoRoot, 'web-template/public/demo-runtime.json'))
-  runtimeGenerated ? pass('Generated demo runtime', 'Present') : warn('Generated demo runtime', 'Not present.', 'Run npm run demo:apply:starter or use the Control Room Apply button.')
+  runtimeGenerated ? pass('Generated demo runtime', 'Present') : warn('Generated demo runtime', 'Not present.', 'Run npm run lumo:apply or use the Control Room Apply button.')
 
   const webReady = Boolean(node && npm)
   const androidReady = Boolean(java && sdkmanager && avdmanager && adb && emulator && firebaseReady)

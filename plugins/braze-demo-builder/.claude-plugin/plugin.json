@@ -1,7 +1,7 @@
 {
   "name": "braze-demo-builder",
   "version": "0.1.0",
-  "description": "Guided Braze demo app build workflow for the pack-driven SolCon Android, iOS, and web demo runtime.",
+  "description": "Guided Braze demo app build workflow for the pack-driven Lumo Android, iOS, and web demo runtime.",
   "author": {
     "name": "Braze"
   },

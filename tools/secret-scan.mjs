@@ -10,6 +10,7 @@ const excludedDirs = new Set([
   '.gradle',
   '.idea',
   '.demo-launcher',
+  '.demo-packs',
   'build',
   'DerivedData',
   'dist',

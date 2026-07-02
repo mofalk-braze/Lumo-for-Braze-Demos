@@ -12,14 +12,14 @@ you swap the icon + display name and rebuild.
 - `xcodegen` (`brew install xcodegen`, or run the top-level bootstrap).
 - The web template running: `cd ../web-template && npm run dev` (serves `http://localhost:5173`).
 - The active demo pack applied from the repo root, for example
-  `npm run demo:apply:starter`.
+  `npm run lumo:apply`.
 
 For SolCon distribution, use the top-level flow first:
 
 ```bash
-./bootstrap-solcon.sh --check
-./bootstrap-solcon.sh --install
-npm run demo:launcher
+./bootstrap-lumo.sh --check
+./bootstrap-lumo.sh --install
+npm run lumo:cockpit
 ```
 
 ## Generate & run
