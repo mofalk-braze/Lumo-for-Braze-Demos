@@ -21,6 +21,21 @@ Required `demo-pack.json` identity fields:
 - `content`: app content, rails, and Content Card placement metadata.
 - optional `android`, `ios`, `launcher.presets`.
 
+The optional Android configuration supports `defaultExternalId`,
+`defaultProfileName`, and `sessionTimeoutSeconds`; iOS supports its own
+`sessionTimeoutSeconds`. The session timeout is the number of seconds the app
+may remain backgrounded before the native Braze SDK starts a new session on
+foreground. Each platform value must be an integer of at least `1` and defaults
+to `60` when omitted. Set both values when a pack relies on repeatable
+session-start IAM timing. Both shells use a one-second minimum interval between
+triggered actions so presenter-driven IAM tests do not inherit a platform-only
+timing difference.
+
+`brand.demoUser.attributes` are presenter-controlled seed values. Applying or
+launching a pack does not automatically rewrite the Braze profile. Use the
+Control Room's `Sync demo seed attributes` action when those defaults should be
+sent through the native SDK for the active user.
+
 ## Content Card Surfaces
 
 `content.contentCardRail` remains supported for legacy home rail demos. New

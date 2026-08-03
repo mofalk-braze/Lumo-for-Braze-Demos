@@ -40,7 +40,10 @@ setup-first and cockpit-like rather than a preset wall:
   templates, pack controls, staged demo controls, visibility controls, and
   promotion into reusable pack presets. Tailoring happens in an embedded editor
   with payload preview and validation feedback, so operators do not leave the
-  template overview to edit a staged control.
+  template overview to edit a staged control. The built-in
+  `Sync demo seed attributes` template derives its SDK attribute payload from
+  the active pack's `brand.demoUser.attributes`; running it is explicit and
+  the Activity Feed shows the attribute names and values that were applied.
 - Diagnostics: runtime contract, expected render sources, native SDK device ID,
   native diagnostic boundary, advanced override visibility, bridge/debug events,
   job logs, and REST response history.
@@ -102,6 +105,12 @@ changes, and explicit readiness commands. Failed Android TLS diagnostics block
 IAM media validation and push-dependent controls because the SDK may be able to
 track an event while media fetches or Firebase token services still fail.
 
+Pack `brand.demoUser.attributes` are not replayed automatically on app ready,
+identity resolution, relaunch, or Content Card refresh. They are seed data for
+presenter-controlled setup. Use the Control Room's `Sync demo seed attributes`
+template when a demo needs to write the pack defaults to Braze through the
+native SDK.
+
 When the host has a Zscaler root CA, `android-shell/tools/run-demo-emulator.sh`
 requires the dedicated rootable Google APIs emulator by default:
 `Braze_Demo_API_36`, or `BRAZE_DEMO_ANDROID_AVD` when deliberately overridden.
@@ -124,12 +133,27 @@ callback state.
 
 Push token readiness is tracked by platform, SDK device ID, and external user.
 Controls can opt into `requiresPushToken: true`; those controls are blocked
-until native token telemetry is successful for the active user. Generic campaign
-and Canvas REST triggers are still runnable because the Control Room cannot know
-their message channel from the Braze ID alone, but the editor warns that push
-readiness will not block them unless the control is marked push-dependent.
+until native token telemetry and notification display diagnostics are successful
+for the active user. On Android this includes notification permission, app-level
+notification enablement, and the configured notification channel state. The
+default high-visibility demo channel is `braze_demo_high_v1`; Braze campaigns
+and Canvas steps that should appear as heads-up notifications should select that
+channel instead of relying on the SDK fallback
+`com_appboy_default_notification_channel`. Generic campaign and Canvas REST
+triggers are still runnable because the Control Room cannot know their message
+channel from the Braze ID alone, but the editor warns that push readiness will
+not block them unless the control is marked push-dependent. `/users/export/ids`
+push-token gaps are shown as warnings when local Android SDK token/display
+readiness is current, because Braze export visibility can lag local device
+telemetry.
 
 ## Drift Prevention
+
+For work against an already installed mobile demo, the bundled
+`assets/demo/demo-runtime.json` is the target identity. Confirm its pack id
+before editing a local customer pack, then apply and deploy that same pack.
+A matching brand name, a handoff directory, or an archived asset bundle is not
+evidence that it is the installed runtime.
 
 Use the host Control Room or CLI:
 

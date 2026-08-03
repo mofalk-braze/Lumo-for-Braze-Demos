@@ -837,6 +837,8 @@ export function launcherHtml() {
       presentation: false,
       live: 'connecting',
       livePollTimer: null,
+      liveRenderTimer: null,
+      jobLogSignature: '',
       openDetails: new Set(),
       activitySignatures: {},
       credentialsPackId: '',
@@ -892,8 +894,10 @@ export function launcherHtml() {
       'campaign_trigger',
       'canvas_trigger',
       'profile_export',
-      'foreground_push',
       'push_permission',
+      'push_received',
+      'push_opened',
+      'push_deleted',
       'content_cards_refresh',
       'content_card_impression',
       'content_card_click',
@@ -904,6 +908,8 @@ export function launcherHtml() {
       'runtime_ready',
       'content_cards',
       'content_cards_refresh',
+      'foreground_push',
+      'push_preview',
       'fcm_token',
       'trust_diagnostics',
       'demo_command',
@@ -1062,6 +1068,18 @@ export function launcherHtml() {
       if (push.platform && push.platform !== selectedPlatform()) return 'Waiting for push-token telemetry from the selected platform.'
       const applied = appliedExternalId()
       if (push.externalId && applied && push.externalId !== applied) return 'Push token was reported for ' + push.externalId + ', expected ' + applied + '.'
+      if (selectedPlatform() === 'android') {
+        if (push.permission !== 'granted') return 'Android notification permission is not granted.'
+        if (push.notificationsEnabled === false) return 'Android app notifications are disabled in system settings.'
+        if (push.notificationChannelsSupported) {
+          const activeChannel = push.activeChannelId || push.defaultChannelId || '(default)'
+          const demoChannel = push.highVisibilityChannelId || 'braze_demo_high_v1'
+          if (push.channelBlocked) return 'Android notification channel ' + activeChannel + ' is blocked.'
+          if (Number(push.channelImportance || 0) === 0) return 'Android notification channel ' + activeChannel + ' has no display importance.'
+          if (push.preferredChannelBlocked) return 'Android high-visibility demo channel ' + demoChannel + ' is blocked.'
+          if (Number(push.preferredChannelImportance || 0) === 0) return 'Android high-visibility demo channel ' + demoChannel + ' has no display importance.'
+        }
+      }
       if (!push.tokenPresent || !push.ready) {
         if (push.retryScheduled) return 'Native push token is not ready yet; retry is scheduled.'
         return push.registrationError || 'Native push token is not ready for this user.'
@@ -1170,9 +1188,39 @@ export function launcherHtml() {
       updateActionAvailability()
       refreshIcons()
     }
+    function scheduleLiveRender() {
+      if (state.liveRenderTimer) return
+      state.liveRenderTimer = window.setTimeout(() => {
+        state.liveRenderTimer = null
+        renderLiveActivity()
+      }, 100)
+    }
     function applyLiveState(data) {
       state.data = data
-      renderLiveActivity()
+      scheduleLiveRender()
+    }
+    function applyJobUpdate(update) {
+      if (!state.data || !update || !update.job) return
+      const jobs = Array.isArray(state.data.jobs) ? [...state.data.jobs] : []
+      const index = jobs.findIndex((job) => job.id === update.job.id)
+      const current = index >= 0 ? jobs[index] : { logs: [] }
+      const currentLogs = Array.isArray(current.logs) ? current.logs : []
+      const appendedLogs = Array.isArray(update.logs) ? update.logs : []
+      const logOffset = Number.isInteger(update.logOffset) ? update.logOffset : currentLogs.length
+      if (logOffset > currentLogs.length) {
+        refreshLiveState()
+        return
+      }
+      const next = {
+        ...current,
+        ...update.job,
+        logs: [...currentLogs.slice(0, logOffset), ...appendedLogs],
+      }
+      delete next.logCount
+      if (index >= 0) jobs[index] = next
+      else jobs.unshift(next)
+      state.data = { ...state.data, jobs: jobs.slice(0, 10) }
+      scheduleLiveRender()
     }
     async function refreshLiveState() {
       try {
@@ -1186,27 +1234,38 @@ export function launcherHtml() {
     }
     function startLivePolling() {
       if (state.livePollTimer) return
-      state.livePollTimer = window.setInterval(refreshLiveState, 1000)
+      state.live = 'polling'
+      refreshLiveState()
+      state.livePollTimer = window.setInterval(refreshLiveState, 2000)
+    }
+    function stopLivePolling() {
+      if (!state.livePollTimer) return
+      window.clearInterval(state.livePollTimer)
+      state.livePollTimer = null
     }
     function connectLiveUpdates() {
-      startLivePolling()
       if (!window.EventSource) {
-        state.live = 'polling'
-        renderTopStatus()
+        startLivePolling()
         return
       }
       const events = new EventSource('/api/events')
       events.addEventListener('state', (event) => {
         state.live = 'connected'
+        stopLivePolling()
         applyLiveState(JSON.parse(event.data))
+      })
+      events.addEventListener('job', (event) => {
+        state.live = 'connected'
+        stopLivePolling()
+        applyJobUpdate(JSON.parse(event.data))
       })
       events.onopen = () => {
         state.live = 'connected'
+        stopLivePolling()
         renderTopStatus()
       }
       events.onerror = () => {
-        state.live = 'polling'
-        renderTopStatus()
+        startLivePolling()
       }
     }
     function renderNav() {
@@ -1292,6 +1351,12 @@ export function launcherHtml() {
       const profile = data.active.profile
       const deviceRuntime = data.active.runtime && data.active.runtime.device ? data.active.runtime.device : null
       const job = data.jobs && data.jobs[0]
+      const failedJobIsCurrent = Boolean(job && job.status === 'failed' && (
+        !deviceRuntime ||
+        !deviceRuntime.ts ||
+        !job.finishedAt ||
+        Date.parse(job.finishedAt) >= Date.parse(deviceRuntime.ts)
+      ))
       const platform = data.active.platform || 'android'
       const controls = runnableStoryControls()
       const needsRest = allControls().some((control) => control.transport === 'braze_rest' || restActionTypes.includes(control.type))
@@ -1300,6 +1365,7 @@ export function launcherHtml() {
       const trustReason = trustDiagnosticsReason()
       const pushReason = pushReadinessReason()
       const push = activePushReadiness()
+      const pushWarning = !pushReason && push && push.lastPushChannelWarning ? push.lastPushChannelWarning : ''
       const trust = activeTrustDiagnostics()
       const accessLevel = profile.sdkConfigured && (!needsRest || profile.restConfigured)
         ? 'success'
@@ -1314,7 +1380,7 @@ export function launcherHtml() {
         : 'Add SDK API key and endpoint before running app SDK story moments.'
       const deviceLevel = runtimeReason
         ? 'error'
-        : job && job.status === 'failed'
+        : failedJobIsCurrent
         ? 'error'
         : job && job.status === 'running'
           ? 'warn'
@@ -1323,29 +1389,35 @@ export function launcherHtml() {
             : 'warn'
       const deviceTitle = job && job.status === 'running'
         ? job.step
-        : job && job.status === 'failed'
+        : failedJobIsCurrent
           ? 'Launch needs attention'
           : runtimeReason
             ? 'Runtime not aligned'
             : deviceRuntime
             ? (platform === 'ios' ? 'iOS reported ready' : 'Android reported ready')
             : 'Device not yet reported'
-      const deviceDetail = deviceRuntime
+      const deviceDetail = failedJobIsCurrent
+        ? ((job.failedStep || job.step || 'Launch failed') + '. Open Logs for the underlying launcher error.')
+        : deviceRuntime
         ? (runtimeReason || 'Latest native handshake received. Identity and source details are in Diagnostics.')
         : 'Build/install/launch the selected platform to confirm the app is ready.'
       const pushLevel = !push
         ? 'warn'
         : pushReason
           ? (push.retryScheduled ? 'warn' : 'error')
+          : pushWarning
+            ? 'warn'
           : 'success'
       const pushTitle = !push
         ? 'Push token unknown'
         : pushReason
           ? 'Push not ready'
+          : pushWarning
+            ? 'Push channel warning'
           : 'Push token ready'
       const pushDetail = !push
         ? 'Run push readiness after launch to verify native token binding.'
-        : pushReason || ('Token telemetry is current for ' + (push.externalId || profile.externalId || 'the active user') + '.')
+        : pushReason || pushWarning || ('Token telemetry is current for ' + (push.externalId || profile.externalId || 'the active user') + (platform === 'android' && push.highVisibilityChannelId ? '; demo channel ' + push.highVisibilityChannelId + ' importance ' + (push.preferredChannelImportance || 'unknown') + '.' : '.'))
       const trustLevel = platform !== 'android'
         ? 'success'
         : trustReason
@@ -1431,7 +1503,7 @@ export function launcherHtml() {
       if (state.templateFilter === 'identity') return ['change_user', 'sdk_attribute', 'rest_attribute', 'profile_export'].includes(type)
       if (state.templateFilter === 'events') return ['sdk_event', 'sdk_event_sequence', 'rest_event', 'android_sequence'].includes(type)
       if (state.templateFilter === 'purchases') return ['sdk_purchase', 'rest_purchase'].includes(type)
-      if (state.templateFilter === 'messaging') return ['campaign_trigger', 'canvas_trigger', 'foreground_push', 'push_permission', 'push_readiness', 'trust_diagnostics'].includes(type)
+      if (state.templateFilter === 'messaging') return ['campaign_trigger', 'canvas_trigger', 'push_permission', 'push_readiness', 'trust_diagnostics'].includes(type)
       if (state.templateFilter === 'content_cards') return type === 'content_cards_refresh'
       if (state.templateFilter === 'rest_api') return transport === 'braze_rest' || restActionTypes.includes(type)
       if (state.templateFilter === 'navigation') return type === 'navigate'
@@ -1553,6 +1625,14 @@ export function launcherHtml() {
         requiresPushToken: el('builderRequiresPushToken').checked,
       }
     }
+    function isBrazeTriggerSend(body) {
+      if (!body || body.transport !== 'braze_rest') return false
+      if (['campaign_trigger', 'canvas_trigger'].includes(body.type)) return true
+      if (body.type !== 'braze_rest_request') return false
+      const payload = body.payload || {}
+      const path = String(payload.path || payload.endpoint || '').toLowerCase()
+      return path === '/campaigns/trigger/send' || path === '/canvas/trigger/send'
+    }
     function updateBuilderPreview() {
       try {
         const body = currentBuilderBody()
@@ -1562,7 +1642,7 @@ export function launcherHtml() {
         if (body.transport === 'android_sdk' && body.platform !== 'android') warnings.push('Android SDK is pinned to Android.')
         if (body.transport === 'ios_sdk' && body.platform !== 'ios') warnings.push('iOS SDK is pinned to iOS.')
         if (body.transport === 'braze_rest' && !restActionTypes.includes(body.type)) warnings.push('REST supports focused REST actions and safe custom requests.')
-        if (['campaign_trigger', 'canvas_trigger'].includes(body.type) && !body.requiresPushToken) warnings.push('Message channel unknown; push readiness will not block this trigger unless push token is required.')
+        if (isBrazeTriggerSend(body) && !body.requiresPushToken) warnings.push('Message channel unknown; push readiness will not block this trigger unless push token is required.')
         el('builderValidation').textContent = warnings.length ? warnings.join(' ') : 'Valid'
         el('builderValidation').className = 'chip ' + (warnings.length ? 'warn' : 'success')
       } catch (error) {
@@ -1661,17 +1741,30 @@ export function launcherHtml() {
         const name = request.commands && request.commands[0] && request.commands[0].payload ? request.commands[0].payload.name : entry.payload && entry.payload.name
         return 'The SDK captured event "' + (name || 'custom event') + '" for this user.'
       }
+      if (entry.type === 'sdk_attribute' && entry.seedSync) {
+        const payload = request.commands && request.commands[0] && request.commands[0].payload ? request.commands[0].payload : entry.payload || {}
+        const attributes = payload.attributes && typeof payload.attributes === 'object' ? payload.attributes : {}
+        const keys = Object.keys(attributes)
+        return keys.length
+          ? 'The SDK explicitly applied ' + keys.length + ' demo seed attributes: ' + keys.slice(0, 6).join(', ') + (keys.length > 6 ? ' +' + (keys.length - 6) + ' more' : '') + '.'
+          : 'The SDK explicitly applied the active pack demo seed attributes.'
+      }
       if (entry.type === 'sdk_attribute') return 'The SDK updated profile attributes for this user.'
       if (entry.type === 'sdk_purchase') return 'The SDK captured a purchase for this user.'
       if (entry.type === 'push_permission') return 'The app handled notification permission for this user.'
+      if (entry.type === 'push_received') return 'The app received a real Braze push and reported the native display path.'
+      if (entry.type === 'push_opened') return 'A native push notification was opened and routed into the app.'
+      if (entry.type === 'push_deleted') return 'A native push notification was dismissed.'
+      if (entry.type === 'push_preview') return 'Diagnostics-only native notification preview; this is not proof of Braze push delivery.'
       if (entry.type === 'content_card_impression') return 'A Content Card impression was recorded for this user.'
       if (entry.type === 'content_card_click') return 'A Content Card click was recorded for this user.'
       if (entry.type === 'content_cards_refresh') return 'The app requested fresh Content Cards from the SDK.'
-      if (entry.type === 'foreground_push') return 'The app displayed a foreground push preview for the demo user.'
+      if (entry.type === 'foreground_push') return 'Legacy diagnostics-only notification preview; this is not proof of Braze push delivery.'
       if (entry.type === 'job') return response && response.error ? response.error : 'The launcher updated demo runtime, build, install, or launch state.'
       return 'The control room recorded this demo activity and its response.'
     }
     function titleFor(entry) {
+      if (entry.type === 'sdk_attribute' && entry.seedSync) return 'Demo Seed Attributes Synced'
       return entry.displayTitle || entry.label || entry.type || 'Activity Recorded'
     }
     function severityFor(entry) {
@@ -1782,9 +1875,12 @@ export function launcherHtml() {
     function renderJobLog() {
       const job = state.data.jobs && state.data.jobs[0]
       if (!job) return
-      el('logs').textContent = job.logs && job.logs.length ? job.logs.join('\\n') : 'Waiting for output.'
+      const logs = Array.isArray(job.logs) ? job.logs : []
+      const signature = [job.id, job.status, job.step, logs.length, logs[logs.length - 1] || ''].join(':')
+      if (state.jobLogSignature === signature) return
+      state.jobLogSignature = signature
+      el('logs').textContent = logs.length ? logs.join('\\n') : 'Waiting for output.'
       el('logs').scrollTop = el('logs').scrollHeight
-      if (job.status === 'running') setTimeout(load, 1200)
     }
     async function executeControl(controlId) {
       const control = allControls().find((item) => item.id === controlId)

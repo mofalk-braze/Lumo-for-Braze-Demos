@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Lumo</string>
+    <string name="app_name">Braze Demo Runtime</string>
     <string name="default_notification_channel_id">braze_demo_default</string>
+    <string name="high_visibility_notification_channel_id">braze_demo_high_v1</string>
     <string name="default_notification_channel_name">Braze Demo</string>
     <string name="default_notification_channel_description">Braze demo push notifications</string>
+    <string name="high_visibility_notification_channel_name">Braze Demo Alerts</string>
+    <string name="high_visibility_notification_channel_description">High-visibility Braze demo push notifications</string>
 </resources>

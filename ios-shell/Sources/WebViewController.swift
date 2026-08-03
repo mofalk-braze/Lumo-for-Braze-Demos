@@ -1,12 +1,17 @@
 import UIKit
 import UserNotifications
 import WebKit
+import BrazeUI
 
 /// Hosts the web template in a safe-area WKWebView and implements the bridge:
 /// JS → native (WKScriptMessageHandler) and native → JS (evaluateJavaScript into
 /// window.__brazeBridge.receive). The contract matches src/braze/bridge.ts.
 final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
   private var webView: WKWebView!
+  private var bannerViews: [String: BrazeBannerUI.BannerUIView] = [:]
+  private var webBridgeReady = false
+  private var pendingNavigationRoute: String?
+  private var pendingNavigationSource = "pending"
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -41,6 +46,12 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
           payload: ["count": cards.count],
           result: cards)
       }
+    }
+    BrazeManager.shared.onOpenURL = { [weak self] context in
+      self?.handleInternalRoute(
+        context.url.absoluteString,
+        source: "braze:\(String(describing: context.channel))"
+      ) ?? false
     }
 
     // Ignore cache so a fresh web build is always loaded against the dev server.
@@ -77,9 +88,11 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
         ])
     switch action {
     case "webReady":
+      webBridgeReady = true
       send("ready", payload: nil)
       sendConnection()
       send("profiles", payload: braze.profilesPayload())
+      flushPendingNavigation()
       reportPushStatus(reason: "webReady")
       postLauncherTelemetry(
         type: "runtime_ready",
@@ -155,6 +168,20 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
           status: "success",
           payload: payload ?? [:])
       }
+    case "mountBanner":
+      if let placementId = payload?["placementId"] as? String,
+        let rect = payload?["rect"] as? [String: Any] {
+        mountBanner(placementId: placementId, rect: rect)
+      }
+    case "unmountBanner":
+      if let placementId = payload?["placementId"] as? String {
+        bannerViews.removeValue(forKey: placementId)?.removeFromSuperview()
+      }
+    case "requestBannersRefresh":
+      if let placementIds = payload?["placementIds"] as? [String], let sdk = braze.braze {
+        sdk.banners.requestBannersRefresh(placementIds: placementIds)
+        postLauncherTelemetry(type: "banners_refresh", label: "Requested iOS Banners refresh", status: "info", payload: ["placements": placementIds])
+      }
     case "requestContentCardsRefresh":
       braze.requestContentCardsRefresh()
       postLauncherTelemetry(
@@ -179,6 +206,15 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
           status: "success",
           payload: ["cardId": id])
       }
+    case "dismissContentCard":
+      if let id = payload?["cardId"] as? String {
+        let dismissed = braze.dismissContentCard(cardId: id)
+        postLauncherTelemetry(
+          type: "content_card_dismissed",
+          label: "iOS Content Card dismissed",
+          status: dismissed ? "success" : "info",
+          payload: ["cardId": id, "dismissed": dismissed])
+      }
     case "requestPushPermission":
       requestPush()
     case "requestPushReadiness":
@@ -186,6 +222,35 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     default:
       print("[bridge] unknown action: \(action)")
     }
+  }
+
+  private func mountBanner(placementId: String, rect: [String: Any]) {
+    guard !placementId.isEmpty, let sdk = BrazeManager.shared.braze else { return }
+    let number: (String) -> CGFloat = { key in
+      if let value = rect[key] as? NSNumber { return CGFloat(truncating: value) }
+      return 0
+    }
+    let viewportWidth = number("viewportWidth")
+    let scale = viewportWidth > 0 ? webView.bounds.width / viewportWidth : 1
+    let frame = CGRect(x: number("x") * scale, y: number("y") * scale, width: max(1, number("width") * scale), height: max(1, number("height") * scale))
+    let bannerView: BrazeBannerUI.BannerUIView
+    if let existing = bannerViews[placementId] {
+      bannerView = existing
+    } else {
+      bannerView = BrazeBannerUI.BannerUIView(placementId: placementId, braze: sdk) { [weak self] result in
+        switch result {
+        case .success(let updates):
+          self?.postLauncherTelemetry(type: "banner_rendered", label: "Rendered iOS Banner", status: "success", payload: ["placementId": placementId, "height": updates.height ?? 0])
+        case .failure(let error):
+          self?.postLauncherTelemetry(type: "banner_error", label: "iOS Banner render failed", status: "error", payload: ["placementId": placementId, "error": error.localizedDescription])
+        }
+      }
+      bannerViews[placementId] = bannerView
+      view.addSubview(bannerView)
+      postLauncherTelemetry(type: "banner_mounted", label: "Mounted iOS Banner placement", status: "success", payload: ["placementId": placementId])
+    }
+    bannerView.frame = webView.convert(frame, to: view)
+    bannerView.isHidden = false
   }
 
   func executeDemoCommand(_ command: [String: Any]) {
@@ -214,7 +279,10 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
 
     switch action {
     case "changeUser":
-      BrazeManager.shared.changeUser(externalId, sync: commandSync)
+      BrazeManager.shared.changeUser(
+        externalId,
+        sync: commandSync,
+        displayName: payload["displayName"] as? String)
       sendConnection(sync: commandSync)
       requestPushReadiness(reason: "change_user")
     case "logCustomEvent":
@@ -377,11 +445,39 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
   /// Reload the web layer after a workspace change so it re-runs its handshake
   /// (attributes/events/CC refresh) against the freshly re-initialized SDK.
   private func reloadWeb() {
+    webBridgeReady = false
     webView.load(URLRequest(url: BrazeManager.shared.activeWebURL, cachePolicy: .reloadIgnoringLocalCacheData))
   }
 
-  /// Called by AppDelegate when a REAL push arrives while the app is foreground —
-  /// the web layer renders it as a branded in-app banner (active brand's logo).
+  /// Routes any safe product deep link through the native → web bridge.
+  /// Returns false for external URLs so Braze can retain its default behavior.
+  @discardableResult
+  func handleInternalRoute(_ value: String, source: String = "native") -> Bool {
+    guard let route = InternalRoute.parse(value) else { return false }
+    guard webBridgeReady else {
+      pendingNavigationRoute = route
+      pendingNavigationSource = source
+      return true
+    }
+
+    send("navigate", rawJSON: jsonString(route))
+    postLauncherTelemetry(
+      type: "bridge_action",
+      label: "Forwarded internal navigation",
+      status: "success",
+      payload: ["route": route, "uri": value, "source": source])
+    return true
+  }
+
+  private func flushPendingNavigation() {
+    guard let route = pendingNavigationRoute else { return }
+    let source = pendingNavigationSource
+    pendingNavigationRoute = nil
+    pendingNavigationSource = "pending"
+    _ = handleInternalRoute(route, source: source)
+  }
+
+  /// Diagnostics-only preview banner. Real APNs/Braze push display is native.
   func deliverForegroundPush(title: String, body: String, uri: String?) {
     var payload: [String: Any] = ["title": title, "body": body]
     if let uri = uri { payload["uri"] = uri }
@@ -399,6 +495,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
       "connected": braze.isConfigured,
       "label": braze.connectionLabel,
       "externalId": braze.activeExternalId,
+      "displayName": braze.activeDisplayName,
       "sync": braze.syncEnvelope(authority: "native", reason: "default"),
       "setupNeeded": !braze.isConfigured,
       "runtime": braze.runtimePayload(),

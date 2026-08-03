@@ -1,5 +1,5 @@
 import type { NormalizedCard } from '../braze/bridge'
-import { activeDemoPackId } from '../brand/activeDemoConfig.generated'
+import { activeAppContent, activeDemoPackId } from '../brand/activeDemoConfig.generated'
 
 // ---------------------------------------------------------------------------
 // Layout fixtures — DEV ONLY.
@@ -135,7 +135,9 @@ const aktionMenschCards: NormalizedCard[] = [
 ]
 
 export const fixtureCards: NormalizedCard[] =
-  activeDemoPackId === 'wolt-food-delivery'
+  activeAppContent.harnessCards?.length
+    ? activeAppContent.harnessCards
+    : activeDemoPackId === 'wolt-food-delivery'
     ? woltCards
     : activeDemoPackId === 'aktion-mensch'
       ? aktionMenschCards

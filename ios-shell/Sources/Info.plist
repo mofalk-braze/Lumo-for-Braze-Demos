@@ -14,7 +14,7 @@
   <string>$(PRODUCT_NAME)</string>
   <!-- Per-app brand name shown on the home screen + in the push banner. -->
   <key>CFBundleDisplayName</key>
-  <string>Lumo</string>
+  <string>Braze Demo Runtime</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleURLTypes</key>

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useBraze } from './braze/BrazeBridgeProvider'
 import { isInShell } from './braze/bridge'
@@ -20,10 +20,13 @@ function AppSurface({ shell }: { shell: boolean }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { navigationRoute } = useBraze()
+  const lastNavigationRouteId = useRef<number | null>(null)
   const onSetup = pathname === '/setup'
 
   useEffect(() => {
-    if (navigationRoute?.startsWith('/')) navigate(navigationRoute)
+    if (!navigationRoute || lastNavigationRouteId.current === navigationRoute.id) return
+    lastNavigationRouteId.current = navigationRoute.id
+    if (navigationRoute.route.startsWith('/')) navigate(navigationRoute.route)
   }, [navigationRoute, navigate])
 
   if (activeDemoPackId === 'wolt-food-delivery') {

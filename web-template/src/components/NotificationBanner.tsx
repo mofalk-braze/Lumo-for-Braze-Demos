@@ -5,12 +5,7 @@ import { useBraze } from '../braze/BrazeBridgeProvider'
 import { brandConfig } from '../brand/brandConfig'
 import { BrandLogo } from './ui'
 
-/**
- * iOS-style banner for a REAL foreground push (delivered natively via the bridge),
- * or a dev simulate. Uses the app's OWN logo so a push looks on-brand without a
- * per-brand native build. The push is genuine — this only controls its in-app
- * (foreground) presentation, which is standard iOS app behavior.
- */
+/** Diagnostics-only push preview banner. Real mobile push display is native/OS-owned. */
 export function NotificationBanner() {
   const { push, dismissPush } = useBraze()
   const navigate = useNavigate()

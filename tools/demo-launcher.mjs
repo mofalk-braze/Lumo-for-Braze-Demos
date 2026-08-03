@@ -32,6 +32,9 @@ const jobs = new Map()
 const statePath = path.join(launcherStateDir, 'state.json')
 const sseClients = new Set()
 const sessionRestApiKeys = new Map()
+const stateBroadcastIntervalMs = 200
+let stateBroadcastTimer = null
+let lastStateBroadcastAt = 0
 let serverPort = Number(process.env.PORT || 4177)
 const requestBodyLimitBytes = Number(process.env.BRAZE_CONTROL_ROOM_BODY_LIMIT || 256 * 1024)
 const defaultAndroidAvd = process.env.BRAZE_DEMO_ANDROID_AVD || 'Braze_Demo_API_36'
@@ -83,8 +86,8 @@ const builtInPresets = [
   },
   {
     id: 'sdk_foreground_push',
-    label: 'Show push preview',
-    description: 'Shows a foreground push-style banner on the selected app render surface.',
+    label: 'Diagnostics: native notification preview',
+    description: 'Displays a local native notification for layout/routing diagnostics only. This is not a Braze push send.',
     type: 'foreground_push',
     payload: {
       title: 'Demo notification',
@@ -196,6 +199,24 @@ const builtInPresets = [
     platform: 'host',
   },
 ]
+
+function demoSeedAttributesPreset(pack) {
+  const attributes =
+    pack?.brand?.demoUser?.attributes && typeof pack.brand.demoUser.attributes === 'object'
+      ? pack.brand.demoUser.attributes
+      : {}
+  const attributeCount = Object.keys(attributes).length
+  return {
+    id: 'sdk_sync_demo_seed_attributes',
+    label: 'Sync demo seed attributes',
+    description: attributeCount
+      ? `Applies ${attributeCount} active pack demo-user attributes through the native SDK. This can overwrite matching Braze profile fields.`
+      : 'No demo-user attributes are defined for the active pack.',
+    type: 'sdk_attribute',
+    seedSync: true,
+    payload: { attributes },
+  }
+}
 
 function slug(value) {
   return String(value)
@@ -373,7 +394,8 @@ function writeSse(res, event, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`)
 }
 
-function broadcastState() {
+function flushStateBroadcast() {
+  stateBroadcastTimer = null
   if (!sseClients.size) return
   let payload
   try {
@@ -388,6 +410,46 @@ function broadcastState() {
       sseClients.delete(client)
     }
   }
+  lastStateBroadcastAt = Date.now()
+}
+
+function broadcastState() {
+  if (!sseClients.size || stateBroadcastTimer) return
+  const delay = Math.max(0, stateBroadcastIntervalMs - (Date.now() - lastStateBroadcastAt))
+  if (delay === 0) {
+    flushStateBroadcast()
+    return
+  }
+  stateBroadcastTimer = setTimeout(flushStateBroadcast, delay)
+}
+
+function publicJobUpdate(job) {
+  const { logs: _logs, ...metadata } = job
+  return { ...metadata, logCount: job.logs.length }
+}
+
+function broadcastJob(job, appendedLogs = []) {
+  if (!job || !sseClients.size) return
+  const payload = {
+    job: publicJobUpdate(job),
+    logOffset: Math.max(0, job.logs.length - appendedLogs.length),
+    logs: appendedLogs,
+  }
+  for (const client of sseClients) {
+    try {
+      writeSse(client, 'job', payload)
+    } catch {
+      sseClients.delete(client)
+    }
+  }
+}
+
+function appendJobLogs(job, lines) {
+  if (!job) return
+  const appendedLogs = lines.filter((line) => line && line.trim())
+  if (!appendedLogs.length) return
+  job.logs.push(...appendedLogs)
+  broadcastJob(job, appendedLogs)
 }
 
 function streamState(req, res) {
@@ -486,12 +548,60 @@ async function findAvailablePort(startPort, { strict = false, attempts = 20 } = 
   throw new Error(`No available launcher port found from ${startPort} to ${startPort + attempts}.`)
 }
 
+function controlRoomIsListening(port) {
+  return new Promise((resolve) => {
+    const request = http.get({ host: '127.0.0.1', port, path: '/api/state', timeout: 750 }, (response) => {
+      response.resume()
+      resolve(response.statusCode === 200)
+    })
+    request.once('timeout', () => {
+      request.destroy()
+      resolve(false)
+    })
+    request.once('error', () => resolve(false))
+  })
+}
+
+function listenControlRoomServer(port, { announce = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      handleRequest(req, res)
+    })
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      server.removeListener('error', reject)
+      if (announce) {
+        const serverUrl = `http://127.0.0.1:${port}`
+        console.log(`Braze Demo Control Room running at ${serverUrl}`)
+        console.log(`Android telemetry callback: ${launcherCallbackUrl()}`)
+        console.log('Press Ctrl+C to stop.')
+      }
+      resolve(server)
+    })
+  })
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      if (error) reject(error)
+      else resolve()
+    }
+    server.close(finish)
+    server.closeIdleConnections?.()
+    setTimeout(() => {
+      server.closeAllConnections?.()
+      finish()
+    }, 1_000).unref()
+  })
+}
+
 async function runCommand(command, args, options, job) {
   const line = `$ ${[command, ...args].join(' ')}`
-  if (job) {
-    job.logs.push(line)
-    broadcastState()
-  }
+  appendJobLogs(job, [line])
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -533,26 +643,19 @@ function runCapture(command, args, options = {}) {
 
 function pushLog(job, text) {
   if (!job) return
-  let changed = false
-  for (const line of text.split(/\r?\n/)) {
-    if (line.trim()) {
-      job.logs.push(line)
-      changed = true
-    }
-  }
-  if (changed) broadcastState()
+  appendJobLogs(job, text.split(/\r?\n/))
 }
 
 function setJobStep(job, step) {
   job.step = step
-  broadcastState()
+  broadcastJob(job)
 }
 
 function finishJob(job, status, step) {
   job.status = status
   job.step = step
   job.finishedAt = new Date().toISOString()
-  broadcastState()
+  broadcastJob(job)
 }
 
 function sleep(ms) {
@@ -717,6 +820,10 @@ function saveCredentials(body = {}) {
 function packPresets(pack, state = readState()) {
   const controlState = controlStateForPack(state, pack.id)
   return [
+    {
+      ...demoSeedAttributesPreset(pack),
+      origin: 'standard',
+    },
     ...builtInPresets.map((preset) => ({
       ...preset,
       origin: preset.type === 'change_user' ? 'internal' : 'standard',
@@ -783,20 +890,62 @@ function extractPushTelemetry(platform, body = {}) {
       : null
   const push = nestedPush || payload
   const type = body.type || body.action || ''
-  const pushType = ['fcm_token', 'apns_token', 'push_permission', 'runtime_ready'].includes(type)
-  if (!pushType && !nestedPush && !Object.hasOwn(push, 'tokenPresent')) return null
+  const pushType = ['fcm_token', 'apns_token', 'push_permission', 'push_readiness', 'runtime_ready'].includes(type)
+  const hasMeaningfulPushState =
+    Object.hasOwn(push, 'tokenPresent') ||
+    Object.hasOwn(push, 'permission') ||
+    Object.hasOwn(push, 'notificationsEnabled') ||
+    Object.hasOwn(push, 'defaultChannelId') ||
+    Object.hasOwn(push, 'highVisibilityChannelId') ||
+    Object.hasOwn(push, 'lastPush')
+  if (!pushType && !nestedPush && !hasMeaningfulPushState) return null
+  if (pushType && !nestedPush && !hasMeaningfulPushState) return null
 
   const externalId = String(body.externalId || push.externalId || runtime?.externalId || diagnostics.externalId || '').trim()
   const deviceId = String(push.sdkDeviceId || runtime?.deviceId || diagnostics.sdkDeviceId || body.deviceId || payload.deviceId || '').trim()
   const status = normalizeSeverity(body.status || (push.tokenPresent ? 'success' : 'info'))
   const tokenPresent = Boolean(push.tokenPresent)
-  const ready = status === 'success' && tokenPresent
+  const permission = push.permission || payload.permission || ''
+  const notificationsEnabled = Object.hasOwn(push, 'notificationsEnabled') ? push.notificationsEnabled : null
+  const notificationChannelsSupported = push.notificationChannelsSupported === true
+  const channelBlocked = Boolean(push.channelBlocked)
+  const channelImportance = Number(push.channelImportance || 0)
+  const preferredChannelBlocked = Boolean(push.preferredChannelBlocked)
+  const preferredChannelImportance = Number(push.preferredChannelImportance || 0)
+  const activeChannelId = push.activeChannelId || push.defaultChannelId || ''
+  const displayPossible = platform !== 'android' || (
+    permission === 'granted' &&
+    notificationsEnabled !== false &&
+    (!notificationChannelsSupported || (
+      !channelBlocked &&
+      channelImportance !== 0 &&
+      !preferredChannelBlocked &&
+      preferredChannelImportance !== 0
+    ))
+  )
+  const ready = status === 'success' && tokenPresent && displayPossible
   const result = body.result && typeof body.result === 'object' ? body.result : {}
   return {
     platform,
     deviceId,
     externalId,
-    permission: push.permission || payload.permission || '',
+    permission,
+    notificationsEnabled,
+    notificationChannelsSupported,
+    defaultChannelId: push.defaultChannelId || '',
+    highVisibilityChannelId: push.highVisibilityChannelId || '',
+    brazeDefaultChannelId: push.brazeDefaultChannelId || '',
+    activeChannelId,
+    channelName: push.channelName || '',
+    channelImportance: push.channelImportance || '',
+    channelBlocked,
+    preferredChannelImportance: push.preferredChannelImportance || '',
+    preferredChannelBlocked,
+    lastPushUsesHighVisibilityChannel: push.lastPushUsesHighVisibilityChannel !== false,
+    lastPushChannelWarning: push.lastPushChannelWarning || '',
+    channels: Array.isArray(push.channels) ? push.channels : [],
+    lastPush: push.lastPush && typeof push.lastPush === 'object' ? push.lastPush : null,
+    lifecycleState: push.lifecycleState || '',
     tokenPresent,
     ready,
     status,
@@ -818,11 +967,44 @@ function latestActivePushReadiness(state = readState()) {
   const platform = state.activePlatform || 'android'
   const externalId = state.activeExternalId || ''
   const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
-  return all
+  const matching = all
     .filter((entry) => entry && entry.platform === platform)
     .filter((entry) => !externalId || entry.externalId === externalId)
-    .filter((entry) => !deviceId || !entry.deviceId || entry.deviceId === deviceId)
-    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))[0] || null
+    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
+  if (!deviceId) return matching[0] || null
+  return matching.find((entry) => entry.deviceId === deviceId) ||
+    matching.find((entry) => !entry.deviceId) ||
+    null
+}
+
+function triggerSendEndpoint(endpoint = '') {
+  const normalized = String(endpoint || '').trim().toLowerCase()
+  return normalized === '/campaigns/trigger/send' || normalized === '/canvas/trigger/send'
+}
+
+function pushReadinessBlockReason(push, { platform = 'android', externalId = '' } = {}) {
+  if (!push) return 'Waiting for native push notification telemetry.'
+  if (push.platform && push.platform !== platform) return `Waiting for native push telemetry from ${platform}.`
+  if (push.externalId && externalId && push.externalId !== externalId) {
+    return `Native push telemetry was reported for ${push.externalId}, expected ${externalId}.`
+  }
+  if (platform === 'android') {
+    if (push.permission !== 'granted') return 'Android notification permission is not granted.'
+    if (push.notificationsEnabled === false) return 'Android app notifications are disabled in system settings.'
+    if (push.notificationChannelsSupported) {
+      const activeChannel = push.activeChannelId || push.defaultChannelId || '(default)'
+      const demoChannel = push.highVisibilityChannelId || 'braze_demo_high_v1'
+      if (push.channelBlocked) return `Android notification channel ${activeChannel} is blocked.`
+      if (Number(push.channelImportance || 0) === 0) return `Android notification channel ${activeChannel} has no display importance.`
+      if (push.preferredChannelBlocked) return `Android high-visibility demo channel ${demoChannel} is blocked.`
+      if (Number(push.preferredChannelImportance || 0) === 0) return `Android high-visibility demo channel ${demoChannel} has no display importance.`
+    }
+  }
+  if (!push.tokenPresent || !push.ready) {
+    if (push.retryScheduled) return 'Native push token is not ready yet; retry is scheduled.'
+    return push.registrationError || 'Native push notifications are not ready for this user.'
+  }
+  return ''
 }
 
 function extractTrustTelemetry(platform, body = {}) {
@@ -840,7 +1022,9 @@ function extractTrustTelemetry(platform, body = {}) {
 
   const checks = Array.isArray(trust.checks) ? trust.checks : []
   const failed = checks.find((check) => check && check.ok === false) || null
-  const status = normalizeSeverity(body.status || (trust.ready ? 'success' : 'error'))
+  const status = normalizeSeverity(
+    type === 'trust_diagnostics' ? (body.status || (trust.ready ? 'success' : 'error')) : (trust.ready ? 'success' : 'error'),
+  )
   const externalId = String(body.externalId || trust.externalId || runtime?.externalId || diagnostics.externalId || '').trim()
   const deviceId = String(trust.sdkDeviceId || runtime?.deviceId || diagnostics.sdkDeviceId || body.deviceId || payload.deviceId || '').trim()
   return {
@@ -849,7 +1033,7 @@ function extractTrustTelemetry(platform, body = {}) {
     externalId,
     ready: status === 'success' && Boolean(trust.ready),
     status,
-    type,
+    type: 'trust_diagnostics',
     label: body.label || '',
     reason: trust.reason || payload.reason || '',
     checks,
@@ -937,6 +1121,31 @@ async function waitForAndroidTrustDiagnostics(job, { externalId, since }) {
   throw new Error(timeout.error)
 }
 
+async function waitForDeviceRuntime(job, { platform, packId, configHash, since }) {
+  setJobStep(job, `Verifying installed ${platform === 'android' ? 'Android' : 'iOS'} runtime`)
+  const deadline = Date.now() + trustDiagnosticsTimeoutMs
+  let lastMismatch = null
+  while (Date.now() < deadline) {
+    const runtime = readState().deviceRuntime
+    const runtimeTs = Date.parse(runtime?.ts || '')
+    if (runtime?.platform === platform && Number.isFinite(runtimeTs) && runtimeTs >= since) {
+      if (runtime.id === packId && runtime.configHash === configHash) {
+        pushLog(job, `${platform === 'android' ? 'Android' : 'iOS'} reported the selected pack and config hash.`)
+        return runtime
+      }
+      lastMismatch = runtime
+    }
+    await sleep(500)
+  }
+  if (lastMismatch) {
+    throw new Error(
+      `Installed ${platform} runtime mismatch: reported ${lastMismatch.id || '(no pack id)'} ` +
+      `(${lastMismatch.configHash || 'no config hash'}), expected ${packId} (${configHash}).`,
+    )
+  }
+  throw new Error(`Installed ${platform} runtime did not report its pack identity before the launch readiness timeout.`)
+}
+
 function ledgerPlatformFor(entry) {
   if (entry.platform) return entry.platform
   if (entry.source === 'android' || entry.source === 'android_sdk') return 'android'
@@ -992,16 +1201,42 @@ function activityEndpoint(entry) {
   return entry.request?.endpoint || payload.endpoint || payload.path || ''
 }
 
+function isDemoSeedAttributeSync(entry) {
+  return Boolean(entry.seedSync || entry.demoSeedSync)
+}
+
+function seedAttributesForEntry(entry) {
+  const payload = activityPayload(entry)
+  const attributes = payload.attributes
+  return attributes && typeof attributes === 'object' && !Array.isArray(attributes) ? attributes : {}
+}
+
+function compactAttributeValue(value) {
+  let rendered
+  if (typeof value === 'string') rendered = `"${value}"`
+  else rendered = JSON.stringify(value)
+  if (rendered === undefined) rendered = String(value)
+  return rendered.length > 72 ? `${rendered.slice(0, 69)}...` : rendered
+}
+
+function attributePreview(attributes, limit = 8) {
+  const entries = Object.entries(attributes)
+  if (!entries.length) return ''
+  const shown = entries.slice(0, limit).map(([key, value]) => `${key}=${compactAttributeValue(value)}`)
+  const remaining = entries.length - shown.length
+  return remaining > 0 ? `${shown.join(', ')} (+${remaining} more)` : shown.join(', ')
+}
+
 function activityCategory(entry, severity) {
   const type = entry.type || ''
   if (type === 'error' || (severity === 'error' && (entry.source === 'launcher' || entry.transport === 'launcher'))) return 'error'
   if (['job', 'control_promoted'].includes(type)) return 'launcher'
   if (['sdk_event', 'sdk_event_sequence', 'sdk_attribute', 'sdk_purchase', 'change_user', 'demo_command'].includes(type)) return 'sdk'
   if (['rest_event', 'rest_attribute', 'rest_purchase', 'braze_rest_request'].includes(type)) return 'rest'
-  if (['campaign_trigger', 'canvas_trigger', 'foreground_push'].includes(type)) return 'message'
+  if (['campaign_trigger', 'canvas_trigger'].includes(type)) return 'message'
   if (type === 'profile_export') return 'profile'
   if (['content_cards_refresh', 'content_card_impression', 'content_card_click', 'content_cards'].includes(type)) return 'content_cards'
-  if (['push_permission', 'push_readiness', 'apns_token', 'fcm_token'].includes(type)) return 'push'
+  if (['foreground_push', 'push_permission', 'push_readiness', 'push_profile_preflight', 'push_received', 'push_opened', 'push_deleted', 'push_preview', 'apns_token', 'fcm_token'].includes(type)) return 'push'
   if (['runtime_ready', 'trust_diagnostics', 'bridge_action', 'device_event'].includes(type) || entry.transport === 'device_callback' || entry.transport === 'web_bridge' || entry.transport === 'ios_bridge') return 'diagnostics'
   return entry.transport === 'braze_rest' ? 'rest' : 'diagnostics'
 }
@@ -1016,6 +1251,7 @@ function activityDisplayTitle(entry, category) {
   if (type === 'job') return label || 'Launcher Job Updated'
   if (type === 'sdk_event') return `SDK Event Logged${name ? `: ${name}` : ''}`
   if (type === 'sdk_event_sequence' || type === 'android_sequence') return label || 'SDK Event Sequence Ran'
+  if (type === 'sdk_attribute' && isDemoSeedAttributeSync(entry)) return 'Demo Seed Attributes Synced'
   if (type === 'sdk_attribute') return 'SDK Attribute Updated'
   if (type === 'sdk_purchase') return `SDK Purchase Logged${payload.productId ? `: ${payload.productId}` : ''}`
   if (type === 'change_user') return `User Changed${entry.externalId ? `: ${entry.externalId}` : ''}`
@@ -1030,9 +1266,14 @@ function activityDisplayTitle(entry, category) {
   if (type === 'content_cards_refresh') return 'Content Cards Refreshed'
   if (type === 'content_card_impression') return 'Content Card Impression Logged'
   if (type === 'content_card_click') return 'Content Card Click Logged'
-  if (type === 'foreground_push') return 'Foreground Push Preview Shown'
+  if (type === 'foreground_push') return 'Diagnostics Push Preview Shown'
+  if (type === 'push_received') return 'Native Push Received'
+  if (type === 'push_opened') return 'Native Push Opened'
+  if (type === 'push_deleted') return 'Native Push Dismissed'
+  if (type === 'push_preview') return 'Diagnostics Push Preview Shown'
   if (type === 'push_permission') return 'Push Permission Updated'
   if (type === 'push_readiness') return 'Push Readiness Checked'
+  if (type === 'push_profile_preflight') return 'Braze Push Profile Checked'
   if (type === 'trust_diagnostics') return 'Android HTTPS Trust Checked'
   if (type === 'apns_token' || type === 'fcm_token') return 'Push Token Updated'
   if (type === 'runtime_ready') return 'Runtime Ready'
@@ -1047,6 +1288,14 @@ function activityDisplaySummary(entry, category) {
     return response?.error || 'This action did not complete. Open details for the exact error and validation context.'
   }
   if (type === 'profile_export') return 'The active user profile was exported so profile, events, purchases, apps, and push token data can be checked.'
+  if (type === 'push_profile_preflight') {
+    const result = response && typeof response === 'object' ? response : {}
+    if (result.warning) return result.warning
+    if (result.pushTokenCount !== undefined) {
+      return `Braze profile push check: ${result.pushTokenCount} token(s), ${result.appCount || 0} app record(s), ${result.deviceCount || 0} device record(s).`
+    }
+    return 'The active Braze profile was checked for push-token and app evidence before sending.'
+  }
   if (type === 'campaign_trigger') return 'A campaign trigger was sent for the active user.'
   if (type === 'canvas_trigger') return 'A Canvas trigger was sent for the active user.'
   if (type === 'rest_event') return 'A REST event was tracked for the active user.'
@@ -1055,15 +1304,33 @@ function activityDisplaySummary(entry, category) {
   if (type === 'braze_rest_request') return 'A safe custom Braze REST request was sent from the host launcher.'
   if (type === 'change_user') return 'The selected app SDK user was changed for this demo.'
   if (type === 'sdk_event') return 'The native SDK captured this custom event for the active demo user.'
+  if (type === 'sdk_attribute' && isDemoSeedAttributeSync(entry)) {
+    const attributes = seedAttributesForEntry(entry)
+    const preview = attributePreview(attributes, 6)
+    return preview
+      ? `The native SDK explicitly applied ${Object.keys(attributes).length} demo seed attributes: ${preview}.`
+      : 'The native SDK explicitly applied the active pack demo seed attributes.'
+  }
   if (type === 'sdk_attribute') return 'The native SDK updated profile attributes for this user.'
   if (type === 'sdk_purchase') return 'The native SDK captured a purchase for this user.'
   if (type === 'push_permission') return 'The app handled notification permission for this user.'
+  if (type === 'push_received') {
+    const warning = payload.lastPushChannelWarning || payload.diagnostics?.push?.lastPushChannelWarning || ''
+    if (warning) return warning
+    const channel = payload.displayChannelId || payload.notificationChannelId || payload.diagnostics?.push?.activeChannelId || ''
+    return channel
+      ? `A real Braze push was received; native display path used channel ${channel}.`
+      : 'A real Braze push was received and handled by the native notification path.'
+  }
+  if (type === 'push_opened') return 'A native push notification was opened and routed into the app.'
+  if (type === 'push_deleted') return 'A native push notification was dismissed.'
+  if (type === 'push_preview') return 'Diagnostics-only native notification preview; this is not proof of Braze push delivery.'
   if (type === 'push_readiness') return 'The app refreshed native push-token registration for this user.'
   if (type === 'trust_diagnostics') return 'The app verified HTTPS trust for Braze image media and Firebase endpoints.'
   if (type === 'content_card_impression') return 'A Content Card impression was recorded for this user.'
   if (type === 'content_card_click') return 'A Content Card click was recorded for this user.'
   if (type === 'content_cards_refresh') return 'The app requested fresh Content Cards from the SDK.'
-  if (type === 'foreground_push') return 'The app displayed a foreground push preview for the demo user.'
+  if (type === 'foreground_push') return 'Diagnostics-only notification preview; this is not proof of Braze push delivery.'
   if (type === 'job') return 'The launcher updated demo runtime, build, install, or launch state.'
   if (category === 'diagnostics') return 'The app or bridge reported runtime telemetry for diagnostics.'
   return 'The Control Room recorded this demo activity and its response.'
@@ -1078,10 +1345,12 @@ function normalizeActivityEntry(entry) {
   const severity = normalizeSeverity(entry.status)
   const category = entry.category || activityCategory(entry, severity)
   const payload = activityPayload(entry)
+  const seedAttributes = isDemoSeedAttributeSync(entry) ? seedAttributesForEntry(entry) : {}
   const context = [
     contextItem('Platform', entry.platform),
     contextItem('Transport', entry.transport),
     contextItem('User', entry.externalId),
+    contextItem('Seed attributes', attributePreview(seedAttributes, 12)),
     contextItem('Event', activityEventName(entry)),
     contextItem('Action', payload.action),
     contextItem('Endpoint', activityEndpoint(entry)),
@@ -1108,6 +1377,7 @@ function addLedger(entry) {
     transport: ledgerTransportFor(entry),
     type: entry.type || 'info',
     label: entry.label || entry.type || 'Event',
+    seedSync: Boolean(entry.seedSync),
     externalId: entry.externalId || readState().activeExternalId,
     payload: entry.payload || {},
     request: entry.request || null,
@@ -1154,14 +1424,17 @@ function createJob(packId, options = {}) {
     logs: [],
   }
   jobs.set(id, job)
-  broadcastState()
+  broadcastJob(job)
   runApplyBuildLaunch(job, options).catch((error) => {
-    finishJob(job, 'failed', 'Failed')
-    job.logs.push(error.stack || String(error))
-    if (job.platform === 'android' && /emulator|install|launch/i.test(job.step || '')) {
-      job.logs.push('Android launch did not complete. The emulator may still have an older installed app until a successful installDebug run finishes.')
+    const failedStep = job.step || 'Unknown stage'
+    const staleInstallPossible = job.platform === 'android' && /emulator|install|launch|runtime/i.test(failedStep)
+    job.failedStep = failedStep
+    finishJob(job, 'failed', failedStep)
+    const failureLogs = [error.stack || String(error)]
+    if (staleInstallPossible) {
+      failureLogs.push('Android launch did not complete. The wrapper force-stops the previous app so a stale pack is not presented as the selected one.')
     }
-    broadcastState()
+    appendJobLogs(job, failureLogs)
     addLedger({
       source: 'launcher',
       type: 'job',
@@ -1170,8 +1443,8 @@ function createJob(packId, options = {}) {
       platform: job.platform,
       result: {
         error: error.message || String(error),
-        step: job.step,
-        staleInstallPossible: job.platform === 'android' && /emulator|install|launch/i.test(job.step || ''),
+        step: failedStep,
+        staleInstallPossible,
       },
     })
   })
@@ -1198,8 +1471,7 @@ async function runApplyBuildLaunch(job, options = {}) {
       state.activeDisplayName = pack.brand.demoUser.firstName || ''
     }
   })
-  job.logs.push(`Applied demo pack: ${pack.name}`)
-  broadcastState()
+  appendJobLogs(job, [`Applied demo pack: ${pack.name}`])
 
   if (options.applyOnly) {
     finishJob(job, 'complete', 'Applied')
@@ -1217,8 +1489,7 @@ async function runApplyBuildLaunch(job, options = {}) {
     if (!fs.existsSync(indexPath)) {
       throw new Error(`Missing ${indexPath}. Build the source app or set web.build in the demo pack.`)
     }
-    job.logs.push(`Using prebuilt web assets: ${distDir}`)
-    broadcastState()
+    appendJobLogs(job, [`Using prebuilt web assets: ${distDir}`])
   }
 
   if (options.run === false) {
@@ -1246,7 +1517,15 @@ async function runApplyBuildLaunch(job, options = {}) {
 
   setJobStep(job, 'Starting emulator and installing app')
   const env = { AVD: resolvedAndroidAvd(options) }
+  const runtimeWaitStartedAt = Date.now()
   await runCommand(path.join(androidShellDir, 'tools/run-demo-emulator.sh'), [], { cwd: repoRoot, env }, job)
+  const expectedRuntime = runtimeForPack(pack)
+  await waitForDeviceRuntime(job, {
+    platform: 'android',
+    packId: expectedRuntime.id,
+    configHash: expectedRuntime.configHash,
+    since: runtimeWaitStartedAt,
+  })
 
   setJobStep(job, 'Applying runtime identity')
   const externalId = readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId
@@ -1399,6 +1678,122 @@ async function callBraze(pathname, payload, { method = 'POST', query = {} } = {}
   return summary
 }
 
+function deepContainsAndroid(value) {
+  if (typeof value === 'string') return value.toLowerCase().includes('android')
+  if (Array.isArray(value)) return value.some((item) => deepContainsAndroid(item))
+  if (value && typeof value === 'object') return Object.values(value).some((item) => deepContainsAndroid(item))
+  return false
+}
+
+function arrayCount(value) {
+  return Array.isArray(value) ? value.length : 0
+}
+
+async function preflightPushProfile({ externalId, platform = 'android', label = 'Push profile preflight', localPush = null }) {
+  const body = {
+    external_ids: [externalId],
+    fields_to_export: ['external_id', 'apps', 'devices', 'push_tokens', 'push_subscribe'],
+  }
+  try {
+    const result = await callBraze('/users/export/ids', body)
+    const users = Array.isArray(result.body?.users) ? result.body.users : []
+    const user = users[0] || null
+    const pushTokenCount = arrayCount(user?.push_tokens)
+    const appCount = arrayCount(user?.apps)
+    const deviceCount = arrayCount(user?.devices)
+    const androidEvidence = deepContainsAndroid(user?.apps) || deepContainsAndroid(user?.devices) || deepContainsAndroid(user?.push_tokens)
+    const platformEvidence = platform !== 'android' || androidEvidence || (appCount === 0 && deviceCount === 0 && pushTokenCount > 0)
+    const appDeviceEvidence = appCount > 0 || deviceCount > 0
+    const strongPushEvidence = pushTokenCount > 0 && platformEvidence
+    const fallbackPushEvidence = platform === 'android' && appDeviceEvidence && androidEvidence
+    const localPushEvidence = Boolean(localPush?.tokenPresent && localPush?.ready)
+    const ok = Boolean(user) && (strongPushEvidence || fallbackPushEvidence || (platform === 'android' && localPushEvidence))
+    const warning = ok && !strongPushEvidence
+      ? localPushEvidence
+        ? 'Braze export did not include push_tokens, but local Android SDK token/display readiness is current; allowing send with a warning.'
+        : 'Braze export did not include push_tokens, but Android app/device evidence exists; allowing send based on local SDK token readiness.'
+      : ''
+    const summary = {
+      externalId,
+      platform,
+      userFound: Boolean(user),
+      pushSubscribe: user?.push_subscribe || '',
+      appCount,
+      deviceCount,
+      pushTokenCount,
+      androidEvidence,
+      localPushEvidence,
+      localTokenPreview: localPush?.tokenPreview || '',
+      localSdkDeviceId: localPush?.deviceId || '',
+      warning,
+    }
+    addLedger({
+      source: 'braze_rest',
+      transport: 'braze_rest',
+      type: 'push_profile_preflight',
+      label,
+      status: ok ? (warning ? 'warning' : 'success') : 'error',
+      externalId,
+      payload: body,
+      result: summary,
+    })
+    if (!ok) {
+      const reason = !user
+        ? `Braze profile ${externalId} was not found.`
+        : !appDeviceEvidence && pushTokenCount === 0
+          ? `Braze profile ${externalId} has no exported push tokens.`
+          : `Braze profile ${externalId} does not show Android app/token evidence.`
+      const error = new Error(reason)
+      error.details = { preflight: summary }
+      throw error
+    }
+    return summary
+  } catch (error) {
+    if (!error.details?.preflight) {
+      addLedger({
+        source: 'braze_rest',
+        transport: 'braze_rest',
+        type: 'push_profile_preflight',
+        label,
+        status: 'error',
+        externalId,
+        payload: body,
+        result: { error: error.message || 'Braze profile export failed' },
+      })
+    }
+    throw error
+  }
+}
+
+async function ensurePushDependentSendReady({ preset, rest, externalId }) {
+  if (!preset.requiresPushToken || !triggerSendEndpoint(rest.endpoint)) return
+  const state = readState()
+  const platform = state.activePlatform || 'android'
+  const push = latestActivePushReadiness(state)
+  const localReason = pushReadinessBlockReason(push, { platform, externalId })
+  if (localReason) {
+    addLedger({
+      source: 'launcher',
+      platform,
+      type: 'push_readiness',
+      label: 'Native push readiness blocked trigger',
+      status: 'error',
+      externalId,
+      payload: { endpoint: rest.endpoint, reason: localReason, push: push || null },
+      result: { error: localReason },
+    })
+    const error = new Error(localReason)
+    error.details = { pushReadiness: push || null }
+    throw error
+  }
+  await preflightPushProfile({
+    externalId,
+    platform,
+    label: `Push preflight before ${rest.endpoint}`,
+    localPush: push,
+  })
+}
+
 async function resolveAndroidActivity() {
   const adb = process.env.ADB || path.join(process.env.HOME, 'Library/Android/sdk/platform-tools/adb')
   const appId = process.env.APP_ID || 'com.braze.demoshell'
@@ -1500,6 +1895,7 @@ function commandsForPreset(preset, externalId, payloadOverride = {}) {
 async function applyRuntimeIdentity(body = {}) {
   const externalId = String(body.externalId || '').trim()
   if (!externalId) throw new Error('External user ID is required')
+  const displayName = String(body.displayName || '').trim()
   const platform = body.platform === 'ios' ? 'ios' : 'android'
   const pack = body.packId ? getDemoPack(body.packId) : activePackAndSecrets().pack
 
@@ -1507,11 +1903,11 @@ async function applyRuntimeIdentity(body = {}) {
     state.activePackId = pack.id
     state.activePlatform = platform
     state.activeExternalId = externalId
-    if (body.displayName !== undefined) state.activeDisplayName = String(body.displayName || '').trim()
+    if (body.displayName !== undefined) state.activeDisplayName = displayName
   })
 
   const commands = [
-    { action: 'changeUser', externalId, payload: { externalId } },
+    { action: 'changeUser', externalId, payload: { externalId, displayName } },
     { action: 'requestContentCardsRefresh', externalId, payload: {} },
     { action: 'requestTrustDiagnostics', externalId, payload: { reason: 'identity_apply' } },
     { action: 'requestPushReadiness', externalId, payload: { reason: 'identity_apply' } },
@@ -1531,7 +1927,7 @@ async function applyRuntimeIdentity(body = {}) {
     externalId,
     payload: {
       packId: pack.id,
-      displayName: body.displayName || '',
+      displayName,
     },
     request: { commands },
     response: result,
@@ -1600,19 +1996,26 @@ function restPayloadForPreset(preset, externalId, payloadOverride = {}) {
         },
       }
     case 'canvas_trigger':
+      {
+        const context = payload.context && typeof payload.context === 'object'
+          ? payload.context
+          : payload.triggerProperties || {}
+        const triggerProperties = payload.triggerProperties || context
       return {
         endpoint: '/canvas/trigger/send',
         method: 'POST',
         body: {
           canvas_id: payload.canvasId,
+          context,
           recipients: [
             {
               external_user_id: externalId,
-              trigger_properties: payload.triggerProperties || {},
+              trigger_properties: triggerProperties,
               send_to_existing_only: payload.sendToExistingOnly !== false,
             },
           ],
         },
+      }
       }
     case 'profile_export':
       return {
@@ -1789,6 +2192,7 @@ async function executePresetObject(preset, payloadOverride = {}, externalIdOverr
     transport: resolvedPreset.transport,
     type: resolvedPreset.type,
     label: resolvedPreset.label,
+    seedSync: Boolean(resolvedPreset.seedSync),
     externalId,
     payload,
     validation: resolvedPreset.validation || null,
@@ -1811,6 +2215,7 @@ async function executePresetObject(preset, payloadOverride = {}, externalIdOverr
       error.details = { validation: rest.validation }
       throw error
     }
+    await ensurePushDependentSendReady({ preset: resolvedPreset, rest, externalId })
     const result = await callBraze(rest.endpoint, rest.body, { method: rest.method || 'POST', query: rest.query || {} })
     return addLedger({ ...ledgerBase, status: 'success', request: redactSecrets(rest), response: result, result })
   }
@@ -1878,7 +2283,7 @@ function manualTriggerPreset(body = {}) {
   } else if (actionType === 'foreground_push') {
     payload = {
       title: payload.title || 'Demo notification',
-      body: payload.body || 'Control Room sent a foreground push preview.',
+      body: payload.body || 'Control Room sent a diagnostics-only notification preview.',
       uri: payload.uri || payload.route || '/notifications',
     }
   } else if (actionType === 'navigate') {
@@ -2015,7 +2420,7 @@ function publicState() {
       hasSecrets: item.hasSecrets,
       restConfigured: Boolean(itemSecrets['braze.restEndpoint'] && itemRestStatus.configured),
       sdkConfigured: Boolean(itemSecrets['braze.apiKey'] && itemSecrets['braze.endpoint']),
-      presetCount: builtInPresets.length + (item.launcher?.presets?.length || 0),
+      presetCount: builtInPresets.length + 1 + (item.launcher?.presets?.length || 0),
     }
   })
   return {
@@ -2764,30 +3169,36 @@ async function runCli(args) {
     return
   }
   if (args.command === 'apply') {
-    const job = createJob(args.pack, {
-      applyOnly: args.applyOnly,
-      run: Boolean(args.run),
-      avd: args.avd,
-    })
-    while (job.status === 'running') {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+    let callbackServer = null
+    if (args.run) {
+      serverPort = args.port
+      if (!(await controlRoomIsListening(serverPort))) {
+        if (!(await canListen(serverPort))) {
+          throw new Error(`Port ${serverPort} is already in use and is not a Braze Demo Control Room. Stop that process or choose --port <port>.`)
+        }
+        callbackServer = await listenControlRoomServer(serverPort)
+      }
     }
-    console.log(job.logs.join('\n'))
-    if (job.status !== 'complete') process.exitCode = 1
+    try {
+      const job = createJob(args.pack, {
+        applyOnly: args.applyOnly,
+        run: Boolean(args.run),
+        avd: args.avd,
+      })
+      while (job.status === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+      console.log(job.logs.join('\n'))
+      if (job.status !== 'complete') process.exitCode = 1
+    } finally {
+      if (callbackServer) await closeServer(callbackServer)
+    }
     return
   }
 
   const port = await findAvailablePort(args.port, { strict: args.explicitPort })
   serverPort = port
-  const server = http.createServer((req, res) => {
-    handleRequest(req, res)
-  })
-  server.listen(port, '127.0.0.1', () => {
-    const serverUrl = `http://127.0.0.1:${port}`
-    console.log(`Braze Demo Control Room running at ${serverUrl}`)
-    console.log(`Android telemetry callback: ${launcherCallbackUrl()}`)
-    console.log('Press Ctrl+C to stop.')
-  })
+  await listenControlRoomServer(port, { announce: true })
 }
 
 runCli(parseArgs(process.argv.slice(2))).catch((error) => {

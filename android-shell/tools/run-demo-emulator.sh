@@ -65,6 +65,10 @@ wait_for_launcher_activity() {
   return 1
 }
 
+quiesce_previous_app() {
+  "$ADB" shell am force-stop --user "$ANDROID_USER" "$APP_ID" >/dev/null 2>&1 || true
+}
+
 print_trust_remediation() {
   cat >&2 <<'EOF'
 
@@ -111,6 +115,7 @@ echo "Stopping any running emulator..."
 "$ADB" emu kill >/dev/null 2>&1 || true
 if command -v screen >/dev/null 2>&1; then
   screen -S braze-demo-emulator -X quit >/dev/null 2>&1 || true
+  screen -S braze-demo-time-sync -X quit >/dev/null 2>&1 || true
 fi
 sleep 3
 
@@ -124,16 +129,23 @@ else
 fi
 
 wait_for_boot
+echo "Stopping the previously installed demo shell until the selected pack is installed..."
+quiesce_previous_app
 
 if security find-certificate -a -c "Zscaler Root CA" /Library/Keychains/System.keychain >/dev/null 2>&1; then
   echo "Applying Zscaler system trust pattern..."
   if ! "$SCRIPT_DIR/install-zscaler-system-ca.sh"; then
+    quiesce_previous_app
     print_trust_remediation
     exit 1
   fi
 else
   echo "No Zscaler Root CA found in macOS System keychain; skipping CA install."
 fi
+
+# The trust workflow can reboot Android or restart its framework. Stop any
+# restored stale activity again before installDebug replaces the package.
+quiesce_previous_app
 
 if [[ "$INSTALL_APP" == "1" ]]; then
   if [[ "$RESET_APP_DATA" == "1" ]]; then
@@ -144,6 +156,26 @@ if [[ "$INSTALL_APP" == "1" ]]; then
   fi
   echo "Installing debug APK..."
   (cd "$ROOT_DIR" && ./gradlew installDebug)
+  # A framework restart for the Conscrypt CA mount can leave an updated user app
+  # installed but temporarily absent from activity resolution on recent emulator
+  # images. Re-register it for the active user without clearing its SDK data.
+  "$ADB" shell cmd package install-existing --user "$ANDROID_USER" "$APP_ID" >/dev/null
+fi
+
+TIME_SYNC_SCRIPT="$SCRIPT_DIR/sync-emulator-network-time.mjs"
+TIME_SYNC_LOG="/tmp/lumo-demo-time-sync.log"
+echo "Checking Android network clock..."
+if ! "$TIME_SYNC_SCRIPT"; then
+  echo "Warning: Android network clock refresh was unavailable; the selected pack was still installed." >&2
+fi
+
+echo "Starting Android network clock guard..."
+if command -v screen >/dev/null 2>&1; then
+  screen -dmS braze-demo-time-sync bash -lc \
+    'exec "$1" --watch >>"$2" 2>&1' \
+    _ "$TIME_SYNC_SCRIPT" "$TIME_SYNC_LOG"
+else
+  nohup "$TIME_SYNC_SCRIPT" --watch >"$TIME_SYNC_LOG" 2>&1 &
 fi
 
 if [[ "$LAUNCH_APP" == "1" ]]; then
@@ -159,3 +191,4 @@ if [[ "$LAUNCH_APP" == "1" ]]; then
 fi
 
 echo "Ready. Emulator log: /tmp/lumo-demo-emulator.log"
+echo "Android network clock guard log: /tmp/lumo-demo-time-sync.log"

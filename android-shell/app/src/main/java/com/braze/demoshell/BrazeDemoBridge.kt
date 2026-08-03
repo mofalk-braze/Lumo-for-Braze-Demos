@@ -73,6 +73,13 @@ class BrazeDemoBridge(
             "showContentCards" -> activity.refreshContentCards()
             "logContentCardImpression" -> activity.logContentCardImpression(payload.optString("cardId"))
             "logContentCardClick" -> activity.logContentCardClick(payload.optString("cardId"))
+            "dismissContentCard" -> activity.dismissContentCard(payload.optString("cardId"))
+            "mountBanner" -> activity.mountBanner(payload.optString("placementId"), payload.optJSONObject("rect") ?: JSONObject())
+            "unmountBanner" -> activity.unmountBanner(payload.optString("placementId"))
+            "requestBannersRefresh" -> {
+                val ids = payload.optJSONArray("placementIds") ?: JSONArray()
+                activity.requestBannersRefresh(List(ids.length()) { index -> ids.optString(index) }.filter(String::isNotBlank))
+            }
             "requestPushPermission" -> activity.requestNotificationPermission()
             else -> activity.appendLog("Unknown bridge action: $action")
         }
@@ -101,9 +108,15 @@ class BrazeDemoBridge(
                 is Double -> user.setCustomUserAttribute(key, value)
                 is Number -> user.setCustomUserAttribute(key, value.toDouble())
                 is JSONArray -> {
-                    val values = Array(value.length()) { index -> value.optString(index) }
-                    user.setCustomAttributeArray(key, values)
+                    if (value.length() > 0 && value.opt(0) is JSONObject) {
+                        // Array of objects -> Braze nested custom attribute array, not a plain string array.
+                        user.setCustomUserAttribute(key, value)
+                    } else {
+                        val values = Array(value.length()) { index -> value.optString(index) }
+                        user.setCustomAttributeArray(key, values)
+                    }
                 }
+                is JSONObject -> user.setCustomUserAttribute(key, value)
                 JSONObject.NULL, null -> user.unsetCustomUserAttribute(key)
                 else -> user.setCustomUserAttribute(key, value.toString())
             }

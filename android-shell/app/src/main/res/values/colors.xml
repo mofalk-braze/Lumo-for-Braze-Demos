@@ -3,4 +3,5 @@
     <color name="braze_orange">#4F46E5</color>
     <color name="braze_ink">#15171A</color>
     <color name="braze_surface">#F9FAFB</color>
+    <color name="launcher_icon_background">#050712</color>
 </resources>

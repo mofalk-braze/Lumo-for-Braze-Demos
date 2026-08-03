@@ -40,6 +40,10 @@ android {
 
         val brazeApiKey = localValue("braze.apiKey")
         val brazeEndpoint = localValue("braze.endpoint")
+        val brazeSessionTimeoutSeconds = localValue("braze.sessionTimeoutSeconds")
+            .toIntOrNull()
+            ?.takeIf { it >= 1 }
+            ?: 60
         val firebaseSenderId = localValue("firebase.senderId")
         val demoExternalId = localValue("demo.externalId").ifBlank { "lumo-demo-user" }
         val demoProfileName = localValue("demo.profileName").ifBlank { "Seed (local.properties)" }
@@ -55,6 +59,7 @@ android {
 
         buildConfigField("String", "BRAZE_API_KEY", buildConfigString(brazeApiKey))
         buildConfigField("String", "BRAZE_ENDPOINT", buildConfigString(brazeEndpoint))
+        buildConfigField("int", "BRAZE_SESSION_TIMEOUT_SECONDS", brazeSessionTimeoutSeconds.toString())
         buildConfigField("String", "FIREBASE_SENDER_ID", buildConfigString(firebaseSenderId))
         buildConfigField("String", "DEMO_EXTERNAL_ID", buildConfigString(demoExternalId))
         buildConfigField("String", "DEMO_PROFILE_NAME", buildConfigString(demoProfileName))
@@ -74,7 +79,7 @@ android {
         resValue("string", "com_braze_firebase_cloud_messaging_sender_id", firebaseSenderId)
         resValue("bool", "com_braze_firebase_messaging_service_on_new_token_registration_enabled", "true")
         resValue("bool", "com_braze_handle_push_deep_links_automatically", "true")
-        resValue("integer", "com_braze_trigger_action_minimum_time_interval_seconds", "5")
+        resValue("integer", "com_braze_trigger_action_minimum_time_interval_seconds", "1")
     }
 
     buildFeatures {

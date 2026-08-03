@@ -17,9 +17,9 @@ export function SmartImage({
   if (!src || errored) {
     return (
       <div
-        className={`flex items-center justify-center bg-gradient-to-br from-brand-light to-white ${className}`}
+        className={`flex items-center justify-center overflow-hidden bg-gradient-to-br from-brand-light to-white ${className}`}
       >
-        <span className="px-2 text-center text-xs font-bold uppercase tracking-wide text-brand/70">
+        <span className="line-clamp-2 px-2 text-center text-xs font-bold uppercase tracking-wide text-brand/70">
           {label ?? alt ?? ''}
         </span>
       </div>

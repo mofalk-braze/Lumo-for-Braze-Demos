@@ -256,6 +256,18 @@ function validatePack(pack, file) {
   if (!pack.content.hero || !Array.isArray(pack.content.categories) || !Array.isArray(pack.content.rails)) {
     throw new Error(`${file} has an incomplete content section`)
   }
+  if (
+    pack.android?.sessionTimeoutSeconds !== undefined &&
+    (!Number.isInteger(pack.android.sessionTimeoutSeconds) || pack.android.sessionTimeoutSeconds < 1)
+  ) {
+    throw new Error(`${file} android.sessionTimeoutSeconds must be an integer of at least 1`)
+  }
+  if (
+    pack.ios?.sessionTimeoutSeconds !== undefined &&
+    (!Number.isInteger(pack.ios.sessionTimeoutSeconds) || pack.ios.sessionTimeoutSeconds < 1)
+  ) {
+    throw new Error(`${file} ios.sessionTimeoutSeconds must be an integer of at least 1`)
+  }
   validateContentCardSurfaces(pack, file)
   if (pack.launcher?.presets && !Array.isArray(pack.launcher.presets)) {
     throw new Error(`${file} launcher.presets must be an array`)
@@ -366,10 +378,12 @@ function writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl = '' } = {
   const sdkDir = secrets['sdk.dir'] || existing['sdk.dir'] || `${process.env.HOME}/Library/Android/sdk`
   const profileName = secrets['demo.profileName'] || android.defaultProfileName || pack.name
   const externalId = secrets['demo.externalId'] || android.defaultExternalId || pack.brand.demoUser.externalId
+  const sessionTimeoutSeconds = android.sessionTimeoutSeconds ?? 60
   const values = {
     'sdk.dir': sdkDir,
     'braze.apiKey': secrets['braze.apiKey'] || existing['braze.apiKey'] || '',
     'braze.endpoint': secrets['braze.endpoint'] || existing['braze.endpoint'] || '',
+    'braze.sessionTimeoutSeconds': sessionTimeoutSeconds,
     'firebase.senderId': secrets['firebase.senderId'] || existing['firebase.senderId'] || '',
     'demo.packId': manifest.id,
     'demo.packName': manifest.name,
@@ -410,6 +424,13 @@ function upsertSwiftLet(source, name, value) {
   return source.replace(/\n}\s*$/, `\n${line}\n}`)
 }
 
+function upsertSwiftNumberLet(source, name, value) {
+  const line = `  static let ${name} = ${Number(value)}`
+  const pattern = new RegExp(`^\\s*static let ${name} = .*$`, 'm')
+  if (pattern.test(source)) return source.replace(pattern, line)
+  return source.replace(/\n}\s*$/, `\n${line}\n}`)
+}
+
 function upsertSwiftUrlLet(source, name, value) {
   const line = `  static let ${name} = URL(string: ${swiftStringLiteral(value)})!`
   const pattern = new RegExp(`^\\s*static let ${name} = URL\\(string: .*$`, 'm')
@@ -423,6 +444,8 @@ function writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl = '' } = 
   let source = fs.readFileSync(iosConfigPath, 'utf8')
   source = upsertSwiftLet(source, 'brazeAPIKey', secrets['braze.apiKey'] || '')
   source = upsertSwiftLet(source, 'brazeEndpoint', secrets['braze.endpoint'] || '')
+  source = upsertSwiftNumberLet(source, 'sessionTimeoutSeconds', pack.ios?.sessionTimeoutSeconds ?? 60)
+  source = upsertSwiftNumberLet(source, 'triggerMinimumTimeIntervalSeconds', 1)
   source = upsertSwiftUrlLet(source, 'webURL', manifest.expectedSources.ios)
   source = upsertSwiftLet(source, 'demoPackId', manifest.id)
   source = upsertSwiftLet(source, 'demoPackName', manifest.name)

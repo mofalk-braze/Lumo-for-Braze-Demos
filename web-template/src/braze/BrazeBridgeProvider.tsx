@@ -54,9 +54,12 @@ interface BrazeContextValue {
   refreshCards: () => void
   impressCard: (card: NormalizedCard) => void
   clickCard: (card: NormalizedCard) => void
+  dismissCard: (card: NormalizedCard) => void
   // Events
   changeUser: (externalId: string) => void
   track: (name: string, properties?: Record<string, unknown>, detail?: string) => void
+  /** Compatibility surface for pack-specific apps authored against signal IDs. */
+  trackSignal: (signalId: string, payload?: Record<string, unknown>, detail?: string) => void
   fireAnchor: (anchor: AnchorEventName, properties?: Record<string, unknown>, detail?: string) => void
   fireFlavor: (flavor: FlavorEvent) => void
   logPurchase: (
@@ -73,11 +76,11 @@ interface BrazeContextValue {
   profiles: CredentialProfile[]
   saveProfile: (p: CredentialProfile) => void
   selectProfile: (id: string) => void
-  // Push → branded in-app banner
+  // Push preview → diagnostics-only banner
   push: PushNotification | null
   dismissPush: () => void
   simulatePush: (p: PushNotification) => void
-  navigationRoute: string | null
+  navigationRoute: { id: number; route: string } | null
   // Demo feed
   eventLog: EventLogEntry[]
 }
@@ -101,6 +104,52 @@ function makeInitials(firstName: string, lastName: string, fallback: string): st
   return (picked || fallback || 'U').slice(0, 2).toUpperCase()
 }
 
+const initialFileDocumentUrl =
+  typeof window !== 'undefined' && window.location.protocol === 'file:'
+    ? window.location.href.split('#')[0]
+    : ''
+
+function internalRouteFromTarget(target: string): string | null {
+  const trimmed = target.trim()
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed
+
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'braze-demo:' || parsed.hostname !== 'route') {
+      return null
+    }
+
+    const route = `${parsed.pathname || '/'}${parsed.search}${parsed.hash}`
+    return route.startsWith('/') && !route.startsWith('//') ? route : null
+  } catch {
+    return null
+  }
+}
+
+function navigateInternalRoute(target: string): void {
+  const internalRoute = internalRouteFromTarget(target)
+  if (!internalRoute) {
+    window.location.href = target
+    return
+  }
+
+  if (window.location.protocol === 'file:') {
+    if (window.location.href.split('#')[0] === initialFileDocumentUrl) {
+      window.location.hash = internalRoute
+    } else {
+      window.location.href = `${initialFileDocumentUrl}#${internalRoute}`
+    }
+    return
+  }
+
+  window.history.pushState({}, '', internalRoute)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function contentCardClickTarget(card: NormalizedCard): string {
+  return card.extras.deeplink || card.extras.deep_link || card.extras.url || card.url || ''
+}
+
 export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
   const bridge = useMemo(() => getBridge(fixtureCards), [])
 
@@ -116,9 +165,10 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
   )
   const [profiles, setProfiles] = useState<CredentialProfile[]>([])
   const [push, setPush] = useState<PushNotification | null>(null)
-  const [navigationRoute, setNavigationRoute] = useState<string | null>(null)
+  const [navigationRoute, setNavigationRoute] = useState<{ id: number; route: string } | null>(null)
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([])
   const logSeq = useRef(0)
+  const navigationSeq = useRef(0)
   const impressed = useRef<Set<string>>(new Set())
 
   const activeProfile = useMemo(() => profiles.find((profile) => profile.active), [profiles])
@@ -126,8 +176,12 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
   const displayUser = useMemo(() => {
     const seeded = brandConfig.demoUser.attributes
     const fallbackFirst = brandConfig.demoUser.firstName
-    const firstName = clean(activeProfile?.firstName) || clean(attributes.first_name) || fallbackFirst
-    const lastName = clean(activeProfile?.lastName) || clean(attributes.last_name)
+    const runtimeName = clean(connection.displayName)
+    const runtimeNameParts = runtimeName.split(/\s+/).filter(Boolean)
+    const runtimeFirstName = runtimeNameParts.shift() || ''
+    const runtimeLastName = runtimeNameParts.join(' ')
+    const firstName = runtimeFirstName || clean(activeProfile?.firstName) || clean(attributes.first_name) || fallbackFirst
+    const lastName = runtimeName ? runtimeLastName : clean(activeProfile?.lastName) || clean(attributes.last_name)
     const homeLocation =
       clean(activeProfile?.homeLocation) ||
       clean(attributes[StandardAttributes.HOME_LOCATION]) ||
@@ -156,14 +210,16 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
     return {
       firstName,
       lastName,
-      initials: clean(activeProfile?.initials) || makeInitials(firstName, lastName, brandConfig.logoText),
+      initials: runtimeName
+        ? makeInitials(firstName, lastName, brandConfig.logoText)
+        : clean(activeProfile?.initials) || makeInitials(firstName, lastName, brandConfig.logoText),
       homeLocation,
       homeAddress,
       loyaltyTier,
       loyaltyPoints,
       favoriteCategories,
     }
-  }, [activeProfile, attributes])
+  }, [activeProfile, attributes, connection.displayName])
 
   const pushLog = useCallback((name: string, kind: EventLogEntry['kind'], detail?: string) => {
     logSeq.current += 1
@@ -182,39 +238,19 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
       bridge.subscribeToConnection(setConnection),
       bridge.subscribeToProfiles(setProfiles),
       bridge.subscribeToPush(setPush),
-      bridge.subscribeToNavigation(setNavigationRoute),
+      bridge.subscribeToNavigation((route) => {
+        navigationSeq.current += 1
+        setNavigationRoute({ id: navigationSeq.current, route })
+      }),
     ]
 
     bridge.ready().then(() => {
       setReady(true)
-      // Native owns the user identity (changeUser from the active credential
-      // profile). The web only enriches that user with attributes + events.
-      Object.entries(brandConfig.demoUser.attributes).forEach(([k, v]) =>
-        bridge.setCustomAttribute(k, v),
-      )
       bridge.requestContentCardsRefresh()
     })
 
     return () => unsubs.forEach((u) => u())
   }, [bridge])
-
-  useEffect(() => {
-    if (!ready) return
-    const profileAttributes: Record<string, unknown> = {
-      first_name: displayUser.firstName,
-      last_name: displayUser.lastName,
-      home_address: displayUser.homeAddress,
-      [StandardAttributes.HOME_LOCATION]: displayUser.homeLocation,
-      [StandardAttributes.LOYALTY_TIER]: displayUser.loyaltyTier,
-      [StandardAttributes.LOYALTY_POINTS]: displayUser.loyaltyPoints,
-      [StandardAttributes.FAVORITE_CATEGORIES]: displayUser.favoriteCategories,
-    }
-    Object.entries(profileAttributes).forEach(([key, value]) => {
-      if (value !== '' && !(Array.isArray(value) && value.length === 0)) {
-        bridge.setCustomAttribute(key, value)
-      }
-    })
-  }, [bridge, displayUser, ready])
 
   // — Events ---------------------------------------------------------------
   const changeUser = useCallback(
@@ -297,17 +333,22 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
         card.title,
       )
 
-      const target = card.extras.deeplink || card.url
+      const target = contentCardClickTarget(card)
       if (target) {
-        if (target.startsWith('/')) {
-          window.history.pushState({}, '', target)
-          window.dispatchEvent(new PopStateEvent('popstate'))
-        } else {
-          window.location.href = target
-        }
+        navigateInternalRoute(target)
       }
     },
     [bridge, fireAnchor, pushLog],
+  )
+
+  const dismissCard = useCallback(
+    (card: NormalizedCard) => {
+      bridge.dismissContentCard(card.id)
+      setContentCards((prev) => prev.filter((entry) => entry.id !== card.id))
+      impressed.current.delete(card.id)
+      pushLog('content_card_dismissed', 'card', card.title)
+    },
+    [bridge, pushLog],
   )
 
   // — Attributes / push ----------------------------------------------------
@@ -351,8 +392,10 @@ export function BrazeBridgeProvider({ children }: { children: ReactNode }) {
     refreshCards,
     impressCard,
     clickCard,
+    dismissCard,
     changeUser,
     track,
+    trackSignal: track,
     fireAnchor,
     fireFlavor,
     logPurchase,

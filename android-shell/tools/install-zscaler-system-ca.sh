@@ -6,6 +6,8 @@ ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 WORK_DIR="${TMPDIR:-/tmp}/lumo-android-ca"
 PEM="$WORK_DIR/zscaler-root-ca.pem"
 HASHED="$WORK_DIR/zscaler-root-ca.hashed"
+TRUST_SMOKE_INFRA_FAILURE=125
+TRUST_SMOKE_LAST_OUTPUT=""
 
 mkdir -p "$WORK_DIR"
 
@@ -79,13 +81,12 @@ find_d8() {
   printf '%s' "$candidate"
 }
 
-run_java_https_smoke_checks() {
+compile_java_https_smoke_probe() {
   command -v javac >/dev/null 2>&1 || return 127
   local d8_bin
   d8_bin="$(find_d8)" || return 127
 
   local probe_dir="$WORK_DIR/https-smoke"
-  local remote_dex="/data/local/tmp/braze-demo-trust-smoke.dex"
   rm -rf "$probe_dir"
   mkdir -p "$probe_dir/classes" "$probe_dir/dex"
 
@@ -121,11 +122,39 @@ public class TrustSmoke {
 }
 EOF
 
-  javac -encoding UTF-8 -source 8 -target 8 -d "$probe_dir/classes" "$probe_dir/TrustSmoke.java" >/dev/null
-  "$d8_bin" --output "$probe_dir/dex" "$probe_dir/classes" >/dev/null
-  "$ADB" push "$probe_dir/dex/classes.dex" "$remote_dex" >/dev/null
-  "$ADB" shell "CLASSPATH='$remote_dex' app_process /system/bin TrustSmoke https://braze-images.com/ https://firebaseinstallations.googleapis.com/"
+  if ! javac -encoding UTF-8 -source 8 -target 8 -d "$probe_dir/classes" "$probe_dir/TrustSmoke.java" >/dev/null; then
+    echo "Failed to compile the Android HTTPS trust probe with javac." >&2
+    return "$TRUST_SMOKE_INFRA_FAILURE"
+  fi
+
+  local class_file="$probe_dir/classes/TrustSmoke.class"
+  if [[ ! -f "$class_file" ]]; then
+    echo "Android HTTPS trust probe compilation did not produce $class_file." >&2
+    return "$TRUST_SMOKE_INFRA_FAILURE"
+  fi
+  if ! "$d8_bin" --output "$probe_dir/dex" "$class_file" >/dev/null; then
+    echo "Failed to convert the Android HTTPS trust probe class to DEX." >&2
+    return "$TRUST_SMOKE_INFRA_FAILURE"
+  fi
+}
+
+run_java_https_smoke_checks() {
+  compile_java_https_smoke_probe || return $?
+
+  local probe_dir="$WORK_DIR/https-smoke"
+  local remote_dex="/data/local/tmp/braze-demo-trust-smoke.dex"
+  if ! "$ADB" push "$probe_dir/dex/classes.dex" "$remote_dex" >/dev/null; then
+    echo "Failed to copy the Android HTTPS trust probe to the emulator." >&2
+    return "$TRUST_SMOKE_INFRA_FAILURE"
+  fi
+
+  local app_process_status=0
+  TRUST_SMOKE_LAST_OUTPUT="$(
+    "$ADB" shell "CLASSPATH='$remote_dex' app_process /system/bin TrustSmoke https://braze-images.com/ https://firebaseinstallations.googleapis.com/" 2>&1
+  )" || app_process_status=$?
+  [[ -n "$TRUST_SMOKE_LAST_OUTPUT" ]] && printf '%s\n' "$TRUST_SMOKE_LAST_OUTPUT"
   "$ADB" shell "rm -f '$remote_dex'" >/dev/null 2>&1 || true
+  return "$app_process_status"
 }
 
 run_shell_https_smoke_checks() {
@@ -146,12 +175,24 @@ run_shell_https_smoke_checks() {
 
 run_https_smoke_checks() {
   echo "Running emulator HTTPS trust smoke checks..."
-  if run_java_https_smoke_checks; then
-    echo "Verified emulator HTTPS trust through app_process."
-    return 0
-  fi
-  local java_status=$?
-  if [[ "$java_status" == "127" ]]; then
+  local java_status=0
+  local attempt
+  for attempt in $(seq 1 12); do
+    TRUST_SMOKE_LAST_OUTPUT=""
+    if run_java_https_smoke_checks; then
+      echo "Verified emulator HTTPS trust through app_process."
+      return 0
+    fi
+    java_status=$?
+    if [[ "$TRUST_SMOKE_LAST_OUTPUT" == *"UnknownHostException"* && "$attempt" -lt 12 ]]; then
+      echo "Android DNS is not ready after framework restart; retrying trust probe in 5 seconds ($attempt/12)..." >&2
+      sleep 5
+      continue
+    fi
+    break
+  done
+  if [[ "$java_status" == "127" || "$java_status" == "$TRUST_SMOKE_INFRA_FAILURE" ]]; then
+    echo "App-process trust probe infrastructure was unavailable; trying an emulator shell HTTPS client." >&2
     if run_shell_https_smoke_checks; then
       echo "Verified emulator HTTPS trust through shell HTTPS client."
       return 0
@@ -163,6 +204,12 @@ run_https_smoke_checks() {
   fi
   fail "Emulator HTTPS trust smoke check failed"
 }
+
+if [[ "${1:-}" == "--compile-smoke-only" ]]; then
+  compile_java_https_smoke_probe
+  echo "Android HTTPS trust probe compilation passed."
+  exit 0
+fi
 
 if [[ ! -x "$ADB" ]]; then
   fail "adb not found at $ADB. Set ADB=/path/to/adb."

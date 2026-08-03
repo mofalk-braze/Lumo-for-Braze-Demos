@@ -25,7 +25,7 @@ class DemoApplication : Application() {
             val builder = BrazeConfig.Builder()
                 .setApiKey(apiKey)
                 .setCustomEndpoint(endpoint)
-                .setSessionTimeout(60)
+                .setSessionTimeout(BuildConfig.BRAZE_SESSION_TIMEOUT_SECONDS)
                 .setGreatNetworkDataFlushInterval(10)
                 .setIsFirebaseMessagingServiceOnNewTokenRegistrationEnabled(true)
                 .setIsFirebaseCloudMessagingRegistrationEnabled(senderId.isNotEmpty())
@@ -35,9 +35,13 @@ class DemoApplication : Application() {
             }
 
             val configured = Braze.configure(this, builder.build())
-            Log.i(TAG, "Braze runtime configuration applied: $configured")
+            Log.i(
+                TAG,
+                "Braze runtime configuration applied: $configured " +
+                    "(sessionTimeout=${BuildConfig.BRAZE_SESSION_TIMEOUT_SECONDS}s)",
+            )
         } else {
-            Log.w(TAG, "Braze API key/endpoint missing. Add a workspace in the Lumo setup screen.")
+            Log.w(TAG, "Braze API key/endpoint missing. Add a workspace in the demo setup screen.")
         }
     }
 

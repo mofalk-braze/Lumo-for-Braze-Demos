@@ -65,8 +65,25 @@ export interface AppContent {
   contentCardRail: { title: string; placement: string }
   /** Repeatable Content Card surface contract for screenshot-built apps. */
   contentCardSurfaces?: ContentCardSurface[]
+  /** Browser-only layout fixtures. Native shells render SDK-delivered cards. */
+  harnessCards?: HarnessContentCard[]
   wolt?: WoltContent
   aktionMensch?: AktionMenschContent
+  /**
+   * Packs may add product-specific content sections without changing the
+   * shared shell contract. A screen that consumes one of these extensions is
+   * responsible for narrowing or validating its shape locally.
+   */
+  [packSpecificSection: string]: unknown
+}
+
+export interface HarnessContentCard {
+  id: string
+  title: string
+  description?: string
+  imageUrl?: string
+  placement: string
+  extras: Record<string, string>
 }
 
 export const appContent: AppContent = activeAppContent

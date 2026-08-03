@@ -8,20 +8,25 @@ import UIKit
 ///
 /// Credentials come from `CredentialStore` (UserDefaults). The web setup screen
 /// manages profiles through the bridge; switching a profile re-initializes Braze.
-final class BrazeManager {
+final class BrazeManager: BrazeDelegate {
   static let shared = BrazeManager()
 
   private(set) var braze: Braze?
   private var inAppMessageUI: BrazeInAppMessageUI?
   private var cardsSubscription: Braze.Cancellable?
   private var cardsById: [String: Braze.ContentCard] = [:]
+  private var contentCards: [Braze.ContentCard] = []
   private let syncSessionId = UUID().uuidString
   private var lastIdentitySyncSignature = ""
   private var hasAppliedSdkIdentity = false
   private var currentSdkExternalId = ""
+  private(set) var activeDisplayName = UserDefaults.standard.string(forKey: "braze.demo.activeDisplayName") ?? ""
 
   /// Set by the web view controller to forward normalized cards to the web layer.
   var onContentCards: (([[String: Any]]) -> Void)?
+  /// Gives the product shell first refusal on Braze URL actions. Returning true
+  /// means the app handled the route and Braze should not open it externally.
+  var onOpenURL: ((Braze.URLContext) -> Bool)?
 
   var isConfigured: Bool { braze != nil }
   var activeExternalId: String {
@@ -98,12 +103,16 @@ final class BrazeManager {
     cardsSubscription?.cancel()
     cardsSubscription = nil
     cardsById.removeAll()
+    contentCards.removeAll()
     onContentCards?([])
     currentSdkExternalId = ""
 
     let configuration = Braze.Configuration(apiKey: profile.apiKey, endpoint: profile.endpoint)
     configuration.logger.level = .info
+    configuration.sessionTimeout = TimeInterval(Config.sessionTimeoutSeconds)
+    configuration.triggerMinimumTimeInterval = TimeInterval(Config.triggerMinimumTimeIntervalSeconds)
     let braze = Braze(configuration: configuration)
+    braze.delegate = self
     self.braze = braze
 
     let iam = BrazeInAppMessageUI()
@@ -142,11 +151,16 @@ final class BrazeManager {
   func changeUser(
     _ externalId: String,
     sync: [String: Any]? = nil,
+    displayName: String? = nil,
     authority: String = "native",
     reason: String = "manual"
   ) {
     let id = externalId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !id.isEmpty else { return }
+    if let displayName {
+      activeDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+      UserDefaults.standard.set(activeDisplayName, forKey: "braze.demo.activeDisplayName")
+    }
     let syncPayload = sync ?? syncEnvelope(authority: authority, reason: reason)
     let signature = identitySyncSignature(externalId: id, sync: syncPayload)
     if hasAppliedSdkIdentity && signature == lastIdentitySyncSignature { return }
@@ -154,6 +168,7 @@ final class BrazeManager {
     braze?.changeUser(userId: id)
     if id != currentSdkExternalId {
       cardsById.removeAll()
+      contentCards.removeAll()
       onContentCards?([])
     }
     currentSdkExternalId = id
@@ -188,7 +203,9 @@ final class BrazeManager {
 
   func setCustomAttribute(key: String, value: Any) {
     guard let user = braze?.user else { return }
-    if let num = value as? NSNumber {
+    if value is NSNull {
+      user.unsetCustomAttribute(key: key)
+    } else if let num = value as? NSNumber {
       if CFGetTypeID(num) == CFBooleanGetTypeID() {
         user.setCustomAttribute(key: key, value: num.boolValue)
       } else if CFNumberIsFloatType(num as CFNumber) {
@@ -200,6 +217,14 @@ final class BrazeManager {
       user.setCustomAttribute(key: key, value: str)
     } else if let arr = value as? [String] {
       user.setCustomAttribute(key: key, array: arr)
+    } else if let arr = value as? [[String: Any]] {
+      let nested = arr.map { dictionary in
+        Dictionary(uniqueKeysWithValues: dictionary.map { ($0.key, Optional($0.value)) })
+      }
+      user.setCustomAttribute(key: key, array: nested)
+    } else if let dictionary = value as? [String: Any] {
+      let nested = Dictionary(uniqueKeysWithValues: dictionary.map { ($0.key, Optional($0.value)) })
+      user.setCustomAttribute(key: key, dictionary: nested)
     }
     braze?.requestImmediateDataFlush()
   }
@@ -215,6 +240,15 @@ final class BrazeManager {
     braze?.logPurchase(
       productId: productId, currency: currency, price: price, quantity: quantity, properties: properties)
     braze?.requestImmediateDataFlush()
+  }
+
+  // MARK: - URL routing
+
+  @MainActor
+  func braze(_ braze: Braze, shouldOpenURL context: Braze.URLContext) -> Bool {
+    // Braze owns click analytics before this delegate decision. Returning false
+    // only suppresses the default external URL opener for routes handled in-app.
+    return !(onOpenURL?(context) ?? false)
   }
 
   // MARK: - Content Cards
@@ -233,10 +267,25 @@ final class BrazeManager {
     card.logClick(using: braze)
   }
 
+  func dismissContentCard(cardId: String) -> Bool {
+    guard let card = cardsById[cardId] else { return false }
+    card.context?.logDismissed()
+    contentCards.removeAll { $0.data.id == cardId }
+    cardsById.removeValue(forKey: cardId)
+    onContentCards?(normalizeCards(contentCards))
+    braze?.requestImmediateDataFlush()
+    return true
+  }
+
   private func handleCards(_ cards: [Braze.ContentCard]) {
+    contentCards = cards.filter { $0.control == nil && !$0.removed }
+    onContentCards?(normalizeCards(contentCards))
+  }
+
+  private func normalizeCards(_ cards: [Braze.ContentCard]) -> [[String: Any]] {
     cardsById.removeAll()
     var out: [[String: Any]] = []
-    for card in cards where card.control == nil && !card.removed {
+    for card in cards {
       let data = card.data
       let extras = stringExtras(data.extras)
       var dict: [String: Any] = [
@@ -251,7 +300,7 @@ final class BrazeManager {
       cardsById[data.id] = card
       out.append(dict)
     }
-    onContentCards?(out)
+    return out
   }
 
   /// Braze extras are typed `[String: Any]`; stringify so they are JSON-safe and

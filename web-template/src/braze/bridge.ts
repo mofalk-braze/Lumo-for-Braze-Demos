@@ -37,6 +37,8 @@ export interface ConnectionStatus {
   /** Human label for the active workspace / mode, shown in diagnostics only. */
   label: string
   externalId?: string
+  /** Presenter-facing name selected in the Control Room for the active SDK user. */
+  displayName?: string
   sync?: SyncEnvelope
   /** True when no workspace is configured yet in a native shell. */
   setupNeeded?: boolean
@@ -65,7 +67,7 @@ export interface CredentialProfile {
   active?: boolean
 }
 
-/** A real push, delivered to the web layer for a branded in-app banner. */
+/** Diagnostics-only preview payload. Real mobile push display is native/OS-owned. */
 export interface PushNotification {
   title: string
   body: string
@@ -97,6 +99,12 @@ export interface BrazeBridge {
   subscribeToContentCards(cb: (cards: NormalizedCard[]) => void): () => void
   logContentCardImpression(cardId: string): void
   logContentCardClick(cardId: string): void
+  dismissContentCard(cardId: string): void
+
+  // — Banners (native SDK-owned view registered into an app placement) —
+  mountBanner(placementId: string, rect: { x: number; y: number; width: number; height: number; viewportWidth: number }): void
+  unmountBanner(placementId: string): void
+  requestBannersRefresh(placementIds: string[]): void
 
   // — Push —
   requestPushPermission(): void
@@ -114,7 +122,7 @@ export interface BrazeBridge {
   listProfiles(): void
   subscribeToProfiles(cb: (profiles: CredentialProfile[]) => void): () => void
 
-  // — Push (a real push delivered to the web for a branded in-app banner) —
+  // — Push preview (diagnostics only; real push display stays native) —
   subscribeToPush(cb: (push: PushNotification) => void): () => void
 }
 
@@ -237,6 +245,10 @@ function createNativeBridge(): BrazeBridge {
     subscribeToContentCards: cards.subscribe,
     logContentCardImpression: (id) => post('logContentCardImpression', { cardId: id }),
     logContentCardClick: (id) => post('logContentCardClick', { cardId: id }),
+    dismissContentCard: (id) => post('dismissContentCard', { cardId: id }),
+    mountBanner: (placementId, rect) => post('mountBanner', { placementId, rect }),
+    unmountBanner: (placementId) => post('unmountBanner', { placementId }),
+    requestBannersRefresh: (placementIds) => post('requestBannersRefresh', { placementIds }),
     requestPushPermission: () => post('requestPushPermission'),
     subscribeToPushPermission: push.subscribe,
     subscribeToConnection: conn.subscribe,
@@ -265,8 +277,10 @@ function createHarnessBridge(fixtures: NormalizedCard[]): BrazeBridge {
   const identitySync = createIdentitySyncState()
   let pushState: PushPermission = 'default'
 
+  let currentCards = fixtures
+
   // Deliver fixtures on the next tick so subscribers attach first.
-  const deliverCards = () => setTimeout(() => cards.emit(fixtures), 0)
+  const deliverCards = () => setTimeout(() => cards.emit(currentCards), 0)
 
   // Legacy localStorage-backed profiles remain importable for migration/testing.
   const PKEY = 'harness.profiles'
@@ -341,6 +355,14 @@ function createHarnessBridge(fixtures: NormalizedCard[]): BrazeBridge {
     },
     logContentCardImpression: (id) => log('logContentCardImpression', { cardId: id }),
     logContentCardClick: (id) => log('logContentCardClick', { cardId: id }),
+    dismissContentCard: (id) => {
+      log('dismissContentCard', { cardId: id })
+      currentCards = currentCards.filter((card) => card.id !== id)
+      cards.emit(currentCards)
+    },
+    mountBanner: (placementId, rect) => log('mountBanner (layout-only harness)', { placementId, rect }),
+    unmountBanner: (placementId) => log('unmountBanner (layout-only harness)', { placementId }),
+    requestBannersRefresh: (placementIds) => log('requestBannersRefresh (unavailable in harness)', { placementIds }),
     requestPushPermission: () => {
       log('requestPushPermission')
       pushState = 'granted'

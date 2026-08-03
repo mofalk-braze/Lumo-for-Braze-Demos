@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "demo:cockpit": "node tools/demo-launcher.mjs",
     "demo:launcher": "node tools/demo-launcher.mjs",
     "bootstrap:check": "node tools/doctor-solcon.mjs",
     "doctor": "node tools/doctor-solcon.mjs",
@@ -13,8 +14,9 @@
     "lumo:cockpit": "node tools/demo-launcher.mjs",
     "lumo:launch:android": "node tools/demo-launcher.mjs --pack lumo-default --run",
     "validate:demo-runtime": "node tools/validate-demo-runtime.mjs",
+    "test:capabilities": "node tools/test-capabilities.mjs",
     "security:scan": "node tools/secret-scan.mjs",
     "public:check": "node tools/public-readiness-check.mjs",
-    "check:precommit": "npm run validate:demo-runtime && npm run security:scan"
+    "check:precommit": "npm run test:capabilities && npm run validate:demo-runtime && npm run security:scan"
   }
 }

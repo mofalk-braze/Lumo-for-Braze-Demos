@@ -17,6 +17,11 @@ enum Config {
   /// SDK endpoint, e.g. "sdk.iad-03.braze.com" (no scheme). Optional seed.
   static let brazeEndpoint = ""
 
+  /// SDK timing is generated from the active pack. Short demo values make
+  /// session-start IAM behavior repeatable without changing device identity.
+  static let sessionTimeoutSeconds = 60
+  static let triggerMinimumTimeIntervalSeconds = 1
+
   /// The web template served by Vite. The Simulator reaches the host's localhost.
   static let webURL = URL(string: "http://localhost:5173")!
 

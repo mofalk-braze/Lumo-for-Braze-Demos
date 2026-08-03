@@ -16,8 +16,9 @@ diagnostics through a hidden drawer.
   normalized Content Cards, Content Card clicks/impressions, launch-time push
   permission requests, and manual push permission requests route through the
   Android SDK.
-- Foreground push payloads can be forwarded into the branded demo banner;
-  background push remains native Android notification behavior.
+- Real Braze push display is native Android notification behavior in foreground,
+  background, and locked states. Diagnostics-only previews are explicitly not
+  proof of Braze push delivery.
 
 ## Lumo Setup
 
@@ -166,6 +167,20 @@ is the only normal control surface.
   the default inbox-style placement and legacy packs may still use `home_feed`.
 - Confirm the profile becomes push registered after this emulator's FCM token is generated.
 - Send a push to the same external ID/device after notification permission is granted.
+- For visible heads-up demo pushes, create/select Android notification channel
+  `braze_demo_high_v1` in the Braze push composer. Android may otherwise fall
+  back to Braze's default `com_appboy_default_notification_channel`, which can
+  post to the notification shade without appearing over the current screen.
+- If the latest push diagnostics report
+  `com_appboy_default_notification_channel`, the Braze push step is still using
+  the wrong Android channel for a heads-up/lock-screen demo. The app uses
+  `braze_demo_high_v1` as its FCM fallback channel and for foreground native
+  display, but an explicit channel selected in Braze wins for background and
+  locked delivery.
+- For lock-screen testing, put the emulator on an actual Android keyguard with
+  lock-screen notifications enabled. If no keyguard is configured, a
+  notification can wake the screen back to the last app surface even though the
+  notification has not auto-opened the app.
 
 ## Pixel 10 Smoke Test
 
@@ -176,7 +191,11 @@ Run on `Pixel_10_Pro` and check:
 - Horizontal rails scroll without page-level horizontal overflow.
 - Keyboard entry in Setup remains usable.
 - Hidden debug drawer opens with a long press and dismisses cleanly.
-- A foreground push renders through the branded demo banner.
+- A real Braze push received while the app is foregrounded renders as a native
+  Android notification.
+- A real Braze push received while the app is backgrounded or locked remains a
+  native Android notification until the user taps it; the tap deeplink then
+  routes the WebView.
 
 ## FCM Troubleshooting
 
@@ -245,7 +264,7 @@ Do not commit:
 - Keystores
 - Prospect-private screenshots or brand assets
 
-The shared Lumo `android-shell/app/google-services.json` is committed
+The shared demo-shell `android-shell/app/google-services.json` is committed
 because it is Firebase client app config for `com.braze.demoshell`, not a
 service-account credential. Real local SDK values are read from
 `local.properties`, ignored pack `secrets.properties`, or Control Room session

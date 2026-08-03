@@ -29,6 +29,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
   func application(
     _ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]
   ) -> Bool {
+    if (window?.rootViewController as? WebViewController)?.handleInternalRoute(
+      url.absoluteString, source: "ios_url"
+    ) == true {
+      return true
+    }
+
     guard url.scheme == "braze-demo", url.host == "command",
       let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
       let encoded = components.queryItems?.first(where: { $0.name == "payload" })?.value,
@@ -80,6 +86,20 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    let content = response.notification.request.content
+    let info = content.userInfo
+    let uri = (info["uri"] as? String) ?? ((info["ab"] as? [String: Any])?["uri"] as? String)
+    postLauncherTelemetry(
+      type: "push_opened",
+      label: "iOS native push opened",
+      status: "success",
+      payload: [
+        "title": content.title,
+        "bodyPresent": !content.body.isEmpty,
+        "deeplink": uri ?? "",
+        "displayMode": "native_opened",
+        "signedBuildRequired": true,
+      ])
     if let braze = BrazeManager.shared.braze,
       braze.notifications.handleUserNotification(
         response: response, withCompletionHandler: completionHandler)
@@ -89,29 +109,28 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     completionHandler()
   }
 
-  /// When true, a REAL push arriving while the app is foreground is rendered as a
-  /// BRANDED in-app banner by the web layer (active brand's logo) — the honest way
-  /// to get a branded push icon without per-brand native builds. Set false to show
-  /// iOS's native banner (generic app icon) instead.
-  private let brandedForegroundPush = true
-
-  /// Foreground presentation — "push inside the app" (not just the lock screen).
+  /// Foreground presentation for real APNs/Braze push. Keep this native so a
+  /// real push behaves like the OS notification users already understand.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    guard brandedForegroundPush else {
-      completionHandler([.banner, .sound, .list])
-      return
-    }
-    // Real push → render branded in-app banner in the web layer, suppress native.
     let content = notification.request.content
     let info = content.userInfo
     let uri = (info["uri"] as? String) ?? ((info["ab"] as? [String: Any])?["uri"] as? String)
-    (window?.rootViewController as? WebViewController)?
-      .deliverForegroundPush(title: content.title, body: content.body, uri: uri)
-    completionHandler([])
+    postLauncherTelemetry(
+      type: "push_received",
+      label: "iOS foreground push presented natively",
+      status: "success",
+      payload: [
+        "title": content.title,
+        "bodyPresent": !content.body.isEmpty,
+        "deeplink": uri ?? "",
+        "displayMode": "native_foreground",
+        "signedBuildRequired": true,
+      ])
+    completionHandler([.banner, .sound, .list])
   }
 
   private func requestNotificationsOnLaunch(_ application: UIApplication) {

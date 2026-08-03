@@ -27,7 +27,7 @@ export function ContentCardSlot({
   titleClassName?: string
   listClassName?: string
 }) {
-  const { cardsForPlacement, clickCard, impressCard } = useBraze()
+  const { cardsForPlacement, clickCard, impressCard, dismissCard } = useBraze()
   const cards = limited(cardsForPlacement(surface.placement), surface.maxCards)
 
   if (cards.length === 0 && surface.emptyBehavior === 'hide') return null
@@ -46,6 +46,7 @@ export function ContentCardSlot({
               variant={surface.variant}
               onClick={clickCard}
               onImpression={impressCard}
+              onDismiss={dismissCard}
             />
           ))}
         </div>
@@ -61,7 +62,7 @@ export function ContentCardInbox({
   placement?: string
   maxCards?: number
 }) {
-  const { cardsForPlacement, clickCard, impressCard } = useBraze()
+  const { cardsForPlacement, clickCard, impressCard, dismissCard } = useBraze()
   const cards = limited(cardsForPlacement(placement), maxCards)
 
   if (cards.length === 0) return <ContentCardEmptyState />
@@ -75,6 +76,7 @@ export function ContentCardInbox({
           variant="inbox"
           onClick={clickCard}
           onImpression={impressCard}
+          onDismiss={dismissCard}
         />
       ))}
     </>
