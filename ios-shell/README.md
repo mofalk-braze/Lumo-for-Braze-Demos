@@ -40,6 +40,13 @@ xcrun simctl install booted ./DerivedData/Build/Products/Debug-iphonesimulator/B
 xcrun simctl launch --console booted com.braze.masquerade   # --console shows bridge logs
 ```
 
+Run the durable Swift credential and web-ready identity contracts from the repo
+root on macOS:
+
+```sh
+npm run test:ios-contracts
+```
+
 ## Add Braze credentials (to go live)
 
 Credentials are **not** committed: `Sources/Config.swift` is git-ignored. On a
@@ -50,10 +57,22 @@ or an explicit local profile):
 cp Config.example.swift Sources/Config.swift   # then fill in, or leave empty
 ```
 
-The preferred path is the **Braze Demo Control Room**. Native/web setup screens
-are fallback diagnostics only. With creds set, bridge calls hit the real
-**app-channel** install; IAMs render natively; Content Cards flow into the demo
-surfaces.
+The preferred path is the **Braze Demo Control Room**. The launcher host remains
+the sole state, credential, orchestration, and SDK-command authority; Control
+Room is its administrative client. The paired Presenter Remote may request only
+known personas and pinned controls and never receives credentials or raw
+payloads. Native/web setup screens are fallback diagnostics only. With creds
+set, bridge calls hit the real **app-channel** install; IAMs render natively;
+Content Cards flow into the demo surfaces.
+
+At launch, the shell reconciles the generated `Config.swift` workspace through
+a deterministic `generated:<pack-id>` profile and a one-way seed fingerprint.
+When the generated pack, configuration, or SDK workspace values change, that
+profile is updated and selected while unrelated saved profiles remain intact.
+If a changed generated context has no complete SDK credentials, the shell
+clears the implicit active selection and waits for an explicit saved-profile
+choice instead of silently keeping the prior workspace. The fingerprint, not a
+second copy of the credential values, is stored as the migration marker.
 
 ## Enable real push (pending SolCon signing path)
 
@@ -99,16 +118,31 @@ The app icon shown in the push is this build's icon → brand it per app
   `window.__brazeBridge.receive(action, payload)` via `evaluateJavaScript`
   (`ready`, `connection`, `contentCards`, `pushPermission`, `navigate`).
 - Handshake: web posts `webReady` once mounted → native replies `ready` +
-  `connection` including runtime id/hash/source diagnostics, then the web sends
-  attributes and CC refresh through the bridge.
+  `connection` including runtime id, runtime hash, source diagnostics, and
+  command correlation, then the web sends attributes and CC refresh through the
+  bridge. `configHash` remains the public configuration fingerprint;
+  `runtimeHash` v2 covers active configuration, active pack assets, and the
+  private pack app surface when present.
 
 ## Notes / gotchas (baked in)
 
 - `Info.plist` allows http to localhost (`NSAllowsLocalNetworking`) for the dev server.
 - iOS uses Vite at `http://localhost:5173` in development until bundled iOS
   web assets are added.
+- Android's Diagnostics-only `DEV OVERRIDE` is not applicable to iOS because
+  this shell already uses the development server. The Android bundled-mode
+  rehearsal and handoff requirement therefore does not apply to this shell.
 - WKWebView main-frame load failures are logged and sent through connection
   diagnostics.
+- Source readiness is real render proof: `WKNavigationDelegate.didFinish` and
+  JavaScript `webReady` must agree on the same canonical URL and navigation
+  generation, and the `webReady` protocol/runtime id/config hash/runtime hash
+  must match the generated `Config` runtime. A mismatch fails the generation;
+  a load failure or source mismatch also reports `renderConfirmed: false`.
+  Successful terminal telemetry preserves launcher and execution correlation.
+- Runtime telemetry includes `sdkConfigured` plus a one-way, platform-scoped
+  credential-context fingerprint. Presenter readiness rejects a missing or
+  mismatched proof without exposing the SDK key or endpoint.
 - WKWebView loads with `.reloadIgnoringLocalCacheData` so a fresh web build is always used.
 - Simulator installs preserve app data by default, so the Braze SDK device ID
   should remain stable across repeated launch flows unless the app data or

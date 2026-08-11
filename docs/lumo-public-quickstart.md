@@ -110,5 +110,8 @@ npm run public:check
 cd web-template && npm run build
 ```
 
+On macOS, run `npm run test:ios-contracts` when the handoff includes iOS
+credential or bridge/runtime-identity changes, then run the iOS simulator build.
+
 `git status --short --ignored` should show `.demo-packs/` as ignored, not as
 untracked files.

@@ -8,6 +8,16 @@ diagnostics through a hidden drawer.
 ## What This Proves
 
 - The active demo renders from packaged Android assets at `file:///android_asset/demo/index.html`.
+- The bundled `demo/demo-runtime.json` is Android's canonical runtime identity.
+  Missing, malformed, non-v2, incomplete-source metadata, or a noncanonical
+  Android bundled URL fails readiness closed;
+  `BuildConfig` values remain visible diagnostic context, not a readiness
+  fallback.
+- Source readiness is real render proof: main-frame completion and JavaScript
+  `webReady` must agree on the same canonical document generation, and the
+  `webReady` protocol/runtime id/config hash/runtime hash must match the
+  canonical packaged manifest. A URL or runtime handshake alone does not mark
+  the source ready, and an identity mismatch fails the generation.
 - The same web bridge contract works on Android via `window.brazeBridge` and on
   iOS via `window.webkit.messageHandlers.brazeBridge`.
 - Workspace profiles use the shared JSON shape:
@@ -81,8 +91,9 @@ user; FCM registration tokens are not shared or committed.
     from the Control Room.
 
 The Gradle build copies `../web-template/dist` into generated Android assets
-under `demo/`. If `dist/index.html` is missing, `assembleDebug` fails with a
-setup message instead of producing a blank WebView.
+under `demo/`. Generated and packaged assets contain only the active pack. If
+`dist/index.html` is missing, `assembleDebug` fails with a setup message instead
+of producing a blank WebView.
 
 ## Demo Pack Launcher
 
@@ -92,22 +103,53 @@ From the repo root, start the host-side launcher:
 npm run demo:launcher
 ```
 
-Open the printed local URL, choose a demo pack, then use the control room to
-build, launch, fire SDK actions, trigger Braze-created messages, and watch the
-live event ledger. The launcher:
+Open the printed local URL, choose a demo pack, then use the Control Room to
+build, launch, author controls, trigger Braze-created messages, and inspect full
+telemetry. Open its paired Presenter Remote for the active persona, readiness,
+up to seven pinned controls, pre-approved variants, and latest execution result.
+Presenter Remote never exposes raw payloads, credentials, pack switching,
+custom REST, or raw logs.
+
+The launcher host is the sole state, orchestration, credential, and SDK-command
+authority. The CLI, Control Room, and Presenter Remote delegate to that process.
+The launcher:
 
 - Generates the active web demo config from `demo-packs/<pack-id>/demo-pack.json`.
-- Generates ignored Android seed config from `demo-packs/<pack-id>/secrets.properties`
-  while preserving existing local Braze/Firebase values when a pack has no secrets.
+- Generates `configHash` as the public configuration fingerprint and
+  `runtimeHash` v2 from active configuration, active assets, and the private
+  pack app surface when present.
+- Generates ignored Android seed config from `demo-packs/<pack-id>/secrets.properties`.
+  It retains machine/callback settings, but clears generated SDK key, endpoint,
+  and FCM sender values when the selected pack does not provide them; credentials
+  never bleed across packs.
 - Writes a local Android telemetry callback URL so the emulator can POST
   structured events back to the launcher at `http://10.0.2.2:<port>`.
-- Runs the web build.
-- Starts the configured AVD with a writable system partition. The default is
+- Runs at most one web build and one Gradle build per launcher job, reusing
+  unchanged output when its inputs match.
+- Reuses one healthy expected AVD and cold-boots it only when none is running.
+  A wrong, multiple, or offline device fails closed. The default is
   `BRAZE_DEMO_ANDROID_AVD` or `Braze_Demo_API_36`.
-- Applies the Zscaler trust pattern when the Zscaler root exists in the macOS
-  System keychain.
-- Installs and launches the Android shell while preserving app data and Braze
-  SDK device identity by default.
+- Probes cached Zscaler system and Conscrypt trust during normal `auto` runs.
+  Healthy trust requires no restart; restoring only the volatile Conscrypt mount
+  restarts Android's framework once and then re-proves boot, Swipe/keyguard,
+  and unlocked-user health. First-time or broken persistent trust requires
+  explicit repair.
+- Compares local and installed APK hashes, skips an identical install, or runs
+  one `adb install -r` with the prebuilt APK.
+- Force-stops the target package immediately after device selection, before
+  boot/trust preparation, so a failed run cannot leave an old app visible.
+- Enforces and verifies shown, private, silent, non-minimal lock-screen
+  notification settings while retaining non-secure Swipe keyguard behavior. It
+  also enables and verifies the expected AVD's exposed tap-to-wake setting;
+  physical double-tap gesture proof remains a manual smoke check.
+- Performs one foreground network-clock check, then lets the persistent
+  launcher authority own and reuse one non-detached watcher for the selected
+  emulator. A one-shot CLI run keeps that coverage through readiness and stops
+  it before exit. Native runtime preparation remains one correlated command,
+  and launch preserves app data and Braze SDK device identity by default.
+- Reports correlated source success only after the requested document has both
+  completed main-frame navigation and emitted `webReady`; load failure or a
+  source mismatch fails the transition instead of reusing stale evidence.
 
 Normal launcher runs intentionally do not uninstall the app, because uninstalling
 clears SDK storage and can create another Braze device for the same external
@@ -127,8 +169,7 @@ node tools/demo-launcher.mjs --pack example-retail --run
 
 All demo packs share the Firebase Android client app at
 `android-shell/app/google-services.json`. SDK credentials and active user setup
-belong in the Control Room. A saved `webURL` is now an explicit advanced local
-source override and is shown in diagnostics when active.
+belong to the host launcher and are administered through the Control Room.
 
 REST API keys are only read by the host launcher from a session entry,
 `BRAZE_REST_API_KEY_<PACK_ID>`, or `BRAZE_REST_API_KEY`. Legacy
@@ -144,7 +185,8 @@ optional trigger properties.
 
 Long-press the demo WebView content to open the Android debug drawer. It shows:
 
-- Active demo id, name, config hash, source mode, source URL, and override state.
+- Active demo id, name, config hash, runtime hash, source mode, source URL, and
+  override state.
 - Active workspace profile, endpoint, and external ID.
 - Last reported Braze SDK device ID in the Control Room Diagnostics view.
 - Push permission state.
@@ -153,8 +195,9 @@ Long-press the demo WebView content to open the Android debug drawer. It shows:
 - Buttons for IAM trigger event, Content Card refresh, notification permission,
   active profile selection, and recent native logs.
 
-Keep this drawer for Android diagnostics and emergency recovery. The Control Room
-is the only normal control surface.
+Keep this drawer for Android diagnostics and emergency recovery. Use the Control
+Room for administration and Presenter Remote for the approved live-story
+controls; neither client bypasses the launcher authority.
 
 ## Braze Dashboard Checks
 
@@ -178,9 +221,13 @@ is the only normal control surface.
   display, but an explicit channel selected in Braze wins for background and
   locked delivery.
 - For lock-screen testing, put the emulator on an actual Android keyguard with
-  lock-screen notifications enabled. If no keyguard is configured, a
-  notification can wake the screen back to the last app surface even though the
-  notification has not auto-opened the app.
+  lock-screen notifications enabled. Use a non-secure Swipe lock, not None. If
+  no keyguard is configured, a notification can wake the screen back to the last
+  app surface even though the notification has not auto-opened the app.
+- If the AVD still has a PIN, password, or pattern, migrate it once through
+  `Settings > Security & privacy > Device unlock > Screen lock`: authenticate,
+  then select Swipe. The launcher never stores, hardcodes, guesses, or types the
+  credential.
 
 ## Pixel 10 Smoke Test
 
@@ -218,13 +265,16 @@ Run on `Pixel_10_Pro` and check:
   android-shell/tools/run-demo-emulator.sh
   ```
 
-  The wrapper extracts the Zscaler root from the macOS System keychain, installs
-  it into the emulator system CA store, reapplies the runtime Conscrypt APEX
-  bind mount required by newer Android images, runs Android-side HTTPS smoke
-  checks for Braze image media and Firebase endpoints, then installs and
-  launches the app. If you fully quit/reboot the emulator, rerun the wrapper
-  before testing FCM again. Alternative fallbacks are a different
-  network/hotspot or disabling VPN/TLS-inspection tools.
+  A normal wrapper run uses `TRUST_MODE=auto`: healthy prepared system and
+  Conscrypt trust require no restart. If only the volatile Conscrypt mount is
+  missing, `auto` restores it, restarts Android's framework once, then repeats
+  the full boot, Swipe/keyguard, and unlocked-user checks without rebooting or
+  disabling verity. If it asks for persistent repair, run once with
+  `TRUST_MODE=repair`; that path repeats the same health checks after repair.
+  Then return to the normal launcher. `TRUST_MODE=skip` deliberately leaves
+  trust unchanged.
+  Alternative fallbacks are a different network/hotspot or disabling
+  VPN/TLS-inspection tools.
 
 For the usual local demo loop, use the wrapper:
 
@@ -232,13 +282,38 @@ For the usual local demo loop, use the wrapper:
 android-shell/tools/run-demo-emulator.sh
 ```
 
-It starts `Braze_Demo_API_36` with a writable system partition, Pixel 10 Pro
-skin, and rootable Google APIs image; applies the Zscaler trust pattern when the
-root CA exists in the macOS System keychain; installs the debug APK; and
-launches the app. Override the AVD only with a rootable Google APIs image:
+It reuses a healthy `Braze_Demo_API_36` or starts it once with a writable system
+partition, Pixel 10 Pro skin, and rootable Google APIs image. It checks trust,
+uses an explicit prebuilt `APK_PATH` only when `INSTALL_APP=1`, performs one
+foreground network-clock check, and launches without clearing app data. The
+wrapper never detaches a watcher. A persistent Control Room launcher owns the
+single continuous watcher, reuses or replaces it by emulator serial, and stops
+it on shutdown. The launcher sets install inputs after comparing APK hashes;
+the wrapper does not invoke Gradle. Override the AVD only with a rootable Google
+APIs image:
 
 ```sh
 BRAZE_DEMO_ANDROID_AVD=Braze_Demo_API_36 android-shell/tools/run-demo-emulator.sh
+```
+
+For a deliberate one-time trust repair:
+
+```sh
+TRUST_MODE=repair android-shell/tools/run-demo-emulator.sh
+```
+
+## Diagnostics-Only Live Web
+
+After one healthy bundled deployment, Diagnostics can point Android at the
+launcher's local Vite server for a fast UI-only loop. The app and Control Room
+show `DEV OVERRIDE` while this source is active. Only a validated local origin
+is accepted, and the override does not change the active pack or SDK identity.
+
+Return to packaged `file:///android_asset/demo/index.html` before rehearsal or
+handoff. The normal command remains the bundled proof:
+
+```sh
+node tools/demo-launcher.mjs --pack example-retail --run
 ```
 
 If an older `Braze_Demo_API_36` was created with the wrong hardware profile,
@@ -247,6 +322,20 @@ recreate only that AVD once:
 ```sh
 RECREATE_AVD=1 android-shell/tools/provision-demo-avd.sh
 ```
+
+## Validation
+
+For Android source or launch-flow changes, run the render-state unit tests and
+compile gate before device QA:
+
+```sh
+cd android-shell
+./gradlew :app:testDebugUnitTest :app:compileDebugKotlin
+```
+
+The host-side `npm run test:capabilities` suite separately covers emulator
+runner fail-closed behavior, launcher/operator logic, Presenter Remote, and
+HTTP request/session boundaries.
 
 ## Repo Hygiene
 

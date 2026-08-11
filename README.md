@@ -1,9 +1,9 @@
 # Lumo Braze Demo Shells
 
 Local-first demo tooling for Braze app demos. A demo pack generates a shared
-web runtime and native shell metadata, then the Control Room applies packs,
-launches Android/iOS, triggers SDK actions, and sends safe host-side Braze REST
-requests.
+web runtime and native shell metadata. One launcher host process owns state,
+orchestration, credentials, SDK commands, builds, and device launch while its
+local clients provide focused operating views.
 
 ## Architecture
 
@@ -12,13 +12,14 @@ requests.
 - `.demo-packs/` is the ignored local workspace for Claude-created, imported, or
   customer-specific packs.
 - `web-template/` renders the product demo UI. It does not contain presenter
-  controls; all real demo controls live in the Control Room.
+  controls.
 - `android-shell/` packages the built web app as Android assets and owns the
   Braze Android SDK bridge.
 - `ios-shell/` hosts the web template in `WKWebView` during development and owns
   the Braze Swift SDK bridge.
-- `tools/demo-launcher.mjs` starts the local Control Room, applies packs, runs
-  builds, launches devices, and keeps REST API keys host-only.
+- `tools/demo-launcher.mjs` is the sole host authority. It starts the Control
+  Room and paired Presenter Remote, applies packs, runs builds, launches
+  devices, executes SDK commands, and keeps REST API keys host-only.
 
 ## Lumo First Run
 
@@ -32,8 +33,14 @@ npm run lumo:cockpit
 ```
 
 Open the Control Room URL printed by the launcher, choose `Lumo`, and launch
-Android or iOS. Detailed setup and troubleshooting live in
-`docs/lumo-public-quickstart.md`.
+Android or iOS. Use the Control Room for setup, authoring, telemetry, and
+diagnostics. Open Presenter Remote from the Control Room for a compact, paired
+view of the active persona, readiness, and up to seven pinned story controls.
+Collapsed Story Controls remain in the Control Room as fallback. Browser
+extension packaging is deferred until three rehearsals show repeated window
+focus or placement friction; any later side-panel wrapper remains a thin client
+of the launcher rather than a new authority.
+Detailed setup and troubleshooting live in `docs/lumo-public-quickstart.md`.
 
 ## Diagnostics
 
@@ -85,6 +92,12 @@ npm run check:precommit
 npm run public:check
 cd web-template && npm run build
 ```
+
+`check:precommit` runs focused launcher/operator/HTTP-boundary, pack,
+Presenter Remote, and emulator-runner tests before runtime validation and the
+secret scan. Android native changes also run
+`./gradlew :app:testDebugUnitTest` for render-generation behavior. On macOS,
+iOS native contract changes run `npm run test:ios-contracts`.
 
 For native changes, also run the relevant Android Gradle build and/or iOS
 `xcodegen generate` plus simulator build.
