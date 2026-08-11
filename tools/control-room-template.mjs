@@ -204,6 +204,14 @@ export function launcherHtml() {
     .chip.warning, .tag.warning { background: #fff1df; color: var(--warn); }
     .chip.error, .tag.error { background: #ffe6df; color: var(--danger); }
     .chip.success, .tag.success { background: #ddf7f2; color: var(--success); }
+    .dev-override {
+      border: 2px solid var(--orange);
+      background: linear-gradient(135deg, #fff3df, #fffaf2);
+      box-shadow: 0 0 0 4px rgba(255,122,26,0.12), var(--shadow);
+    }
+    .dev-override h2 { color: #6f2e00; }
+    .dev-override-copy { color: #6f2e00; font-weight: 700; }
+    .chip.dev { background: var(--orange); color: #170900; }
     .identity-status { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
     .readiness { display: grid; gap: 10px; }
     .ready-row {
@@ -376,6 +384,34 @@ export function launcherHtml() {
       padding: 12px;
     }
     .rest-advanced summary { margin-bottom: 10px; }
+    .story-controls-fallback > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      cursor: pointer;
+      list-style: none;
+      font-weight: 800;
+      color: var(--brand-dark);
+    }
+    .story-controls-fallback > summary::-webkit-details-marker { display: none; }
+    .story-controls-fallback > summary::after {
+      content: 'Expand';
+      flex: 0 0 auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: var(--muted);
+      background: var(--surface-subtle);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+    .story-controls-fallback[open] > summary::after { content: 'Collapse'; }
+    .story-controls-fallback[open] > summary {
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
     .empty { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 18px; color: var(--muted); background: var(--surface-subtle); }
     .split { display: grid; grid-template-columns: minmax(310px, 470px) minmax(0, 1fr); gap: 18px; align-items: start; }
     .template-workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr); gap: 18px; align-items: start; }
@@ -468,6 +504,7 @@ export function launcherHtml() {
           <p id="pageSubtitle">Set up the demo, pin the actions that fit your story, and keep the latest activity visible.</p>
         </div>
         <div class="status-row">
+          ${buttonHtml({ id: 'presenterRemote', kind: 'primary', icon: 'panel-right-open', label: 'Presenter Remote' })}
           ${buttonHtml({ id: 'presentationToggle', kind: 'secondary', icon: 'presentation', label: 'Present' })}
           <span id="topStatus"></span>
         </div>
@@ -565,16 +602,19 @@ export function launcherHtml() {
             <div class="readiness" id="readiness"></div>
           </section>
 
-          <section class="panel span-4 row-span-2">
+          <details class="panel span-4 row-span-2 story-controls-fallback">
+            <summary>
+              <span>Story Controls · Control Room fallback</span>
+            </summary>
             <div class="panel-head">
               <div>
                 <h2>Story Controls</h2>
-                <p>Pinned or ready controls for the current live story.</p>
+                <p>Pinned or ready controls remain here as a fallback. Use Presenter Remote for the live story.</p>
               </div>
               ${buttonHtml({ kind: 'ghost compact presentation-hide', icon: 'settings', label: 'Manage', attrs: 'data-view-jump="templates" data-template-filter-jump="story"' })}
             </div>
             <div class="control-grid" id="storyControls"></div>
-          </section>
+          </details>
 
           <section class="panel span-8 presentation-hide cockpit-rest-panel">
             <div class="panel-head">
@@ -776,6 +816,20 @@ export function launcherHtml() {
 
       <section class="view" id="view-diagnostics">
         <div class="grid">
+          <section class="panel span-12 dev-override" id="liveWebPanel">
+            <div class="panel-head">
+              <div>
+                <h2>Android Live Web · DEV OVERRIDE</h2>
+                <p class="dev-override-copy">Diagnostics only. This temporarily renders the Android shell from the local Vite server; bundled mode remains required for rehearsal and handoff.</p>
+              </div>
+              <span class="chip" id="liveWebStatus">Stopped</span>
+            </div>
+            <p id="liveWebDetail">Launch the bundled Android app before enabling the override.</p>
+            <div class="button-group" style="margin-top:14px">
+              ${buttonHtml({ id: 'liveWebStart', kind: 'orange', icon: 'code-xml', label: 'Enable DEV OVERRIDE' })}
+              ${buttonHtml({ id: 'liveWebStop', kind: 'secondary', icon: 'package-check', label: 'Restore bundled mode' })}
+            </div>
+          </section>
           <section class="panel span-6">
             <div class="panel-head">
               <div>
@@ -1022,6 +1076,8 @@ export function launcherHtml() {
     const expectedSourceForPlatform = () => {
       const runtime = state.data && state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
       const expected = runtime.expectedSources || {}
+      const liveWeb = state.data && state.data.development ? state.data.development.liveWeb : null
+      if (selectedPlatform() === 'android' && liveWeb && liveWeb.enabled) return liveWeb.deviceUrl || ''
       return expected[selectedPlatform()] || ''
     }
     const activeRuntimeManifest = () => state.data && state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
@@ -1031,7 +1087,9 @@ export function launcherHtml() {
       const platform = selectedPlatform()
       if (!device) return 'Launch the selected app and wait for native runtime telemetry.'
       if (device.id && runtime.id && device.id !== runtime.id) return platform + ' reported pack ' + device.id + ', expected ' + runtime.id + '.'
-      if (device.configHash && runtime.configHash && device.configHash !== runtime.configHash) return platform + ' reported hash ' + device.configHash + ', expected ' + runtime.configHash + '.'
+      const reportedHash = device.runtimeHash || device.configHash
+      const expectedHash = runtime.runtimeHash || runtime.configHash
+      if (reportedHash && expectedHash && reportedHash !== expectedHash) return platform + ' reported runtime hash ' + reportedHash + ', expected ' + expectedHash + '.'
       const expectedSource = expectedSourceForPlatform()
       if (expectedSource && device.sourceUrl && device.sourceUrl !== expectedSource) return platform + ' reported source ' + device.sourceUrl + ', expected ' + expectedSource + '.'
       const applied = appliedExternalId()
@@ -1132,6 +1190,13 @@ export function launcherHtml() {
         if (el(id)) el(id).disabled = state.busy || !selected
       })
       if (el('templateUnlock')) el('templateUnlock').disabled = state.busy || !locked
+      const liveWeb = state.data && state.data.development ? state.data.development.liveWeb : null
+      const liveActive = Boolean(liveWeb && liveWeb.enabled)
+      const liveHazard = Boolean(liveWeb && liveWeb.overrideMayBeActive)
+      const liveWorking = Boolean(liveWeb && ['starting', 'server_ready', 'switching', 'clearing'].includes(liveWeb.status))
+      const liveError = Boolean(liveWeb && liveWeb.status === 'error')
+      if (el('liveWebStart')) el('liveWebStart').disabled = state.busy || selectedPlatform() !== 'android' || liveActive || liveWorking
+      if (el('liveWebStop')) el('liveWebStop').disabled = state.busy || (!liveHazard && !liveActive && !liveWorking && !liveError && !liveWeb?.pid)
       document.querySelectorAll('[data-execute]').forEach((button) => {
         const control = allControls().find((item) => item.id === button.dataset.execute)
         const reason = controlBlockReason(control)
@@ -1290,7 +1355,10 @@ export function launcherHtml() {
       const profile = state.data.active.profile
       const runtime = state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
       const blockers = readinessChecks().filter((item) => item.level === 'error').length
+      const liveWeb = state.data.development && state.data.development.liveWeb ? state.data.development.liveWeb : null
+      const showDevOverride = liveWeb && (liveWeb.enabled || liveWeb.overrideMayBeActive || ['starting', 'server_ready', 'switching', 'clearing', 'error'].includes(liveWeb.status))
       el('topStatus').innerHTML = [
+        showDevOverride ? '<span class="chip dev">DEV OVERRIDE · ' + esc(String(liveWeb.status || 'active').toUpperCase()) + '</span>' : '',
         '<span class="chip ' + (state.busy ? 'warn' : blockers ? 'error' : 'success') + '">' + (state.busy ? 'Working' : blockers ? blockers + ' blocker' + (blockers > 1 ? 's' : '') : 'Ready') + '</span>',
         '<span class="chip ' + (state.live === 'connected' || state.live === 'polling' ? 'success' : 'warn') + '">' + (state.live === 'connected' ? 'Live' : state.live === 'polling' ? 'Live polling' : 'Live reconnecting') + '</span>',
         '<span class="chip">' + esc(profile.packName || runtime.name || profile.packId || 'demo') + '</span>',
@@ -1698,8 +1766,28 @@ export function launcherHtml() {
     function renderDiagnostics() {
       const runtime = state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
       el('runtimeDetails').textContent = fmt(runtime)
+      const liveWeb = state.data.development && state.data.development.liveWeb ? state.data.development.liveWeb : { status: 'stopped' }
+      const liveActive = Boolean(liveWeb.enabled)
+      const liveHazard = Boolean(liveWeb.overrideMayBeActive)
+      const liveWorking = ['starting', 'server_ready', 'switching', 'clearing'].includes(liveWeb.status)
+      const liveError = liveWeb.status === 'error'
+      el('liveWebPanel').classList.toggle('dev-override', liveActive || liveHazard || liveWorking || liveError)
+      el('liveWebStatus').className = 'chip ' + (liveActive ? 'dev' : liveError ? 'error' : liveWorking ? 'warn' : 'success')
+      el('liveWebStatus').textContent = liveActive ? 'DEV OVERRIDE ACTIVE' : liveError ? 'Needs attention' : liveWorking ? liveWeb.status.replace('_', ' ') : 'Bundled mode'
+      el('liveWebDetail').textContent = selectedPlatform() !== 'android'
+        ? 'Unavailable for iOS. Switch to Android to use this diagnostics-only development loop.'
+        : liveError
+          ? liveWeb.error || 'The development override could not be confirmed.'
+          : liveActive
+            ? 'Android confirmed ' + (liveWeb.deviceUrl || 'the local Vite source') + '. Do not use this mode for rehearsal or handoff.'
+            : liveWorking
+              ? 'The launcher is changing the Android render source and waiting for correlated native confirmation.'
+              : 'Bundled Android source is active. Enable only while iterating on web UI.'
+      el('liveWebStart').disabled = state.busy || selectedPlatform() !== 'android' || liveActive || liveWorking
+      el('liveWebStop').disabled = state.busy || (!liveHazard && !liveActive && !liveWorking && !liveError && !liveWeb.pid)
       const diagnostics = {
         selectedPlatform: state.data.active.platform,
+        timeGuard: state.data.development && state.data.development.timeGuard ? state.data.development.timeGuard : null,
         deviceRuntime: state.data.active.runtime && state.data.active.runtime.device ? state.data.active.runtime.device : null,
         warnings: state.data.active.runtime && state.data.active.runtime.warnings ? state.data.active.runtime.warnings : [],
         restCredential: {
@@ -2126,6 +2214,21 @@ export function launcherHtml() {
       state.presentation = !state.presentation
       render()
     })
+    el('presenterRemote').addEventListener('click', () => {
+      try {
+        const presenterUrl = state.data && state.data.operator ? state.data.operator.presenterUrl : ''
+        if (!presenterUrl) throw new Error('Presenter Remote is not available from this launcher.')
+        const popup = window.open(
+          presenterUrl,
+          'braze-demo-presenter',
+          'popup,width=400,height=620,resizable=yes,scrollbars=yes',
+        )
+        if (!popup) throw new Error('The browser blocked the Presenter Remote window. Allow pop-ups for this loopback page.')
+        popup.focus()
+      } catch (error) {
+        alert(error.message || String(error))
+      }
+    })
     el('saveActive').addEventListener('click', async () => {
       try {
         setBusy(true)
@@ -2144,6 +2247,30 @@ export function launcherHtml() {
     })
     el('applyUser').addEventListener('click', applyUser)
     el('createApplyUser').addEventListener('click', createAndApplyUser)
+    el('liveWebStart').addEventListener('click', async () => {
+      try {
+        setBusy(true)
+        state.data = await request('/api/development/live-web/start', {})
+        render()
+      } catch (error) {
+        alert(error.message || String(error))
+        await load()
+      } finally {
+        setBusy(false)
+      }
+    })
+    el('liveWebStop').addEventListener('click', async () => {
+      try {
+        setBusy(true)
+        state.data = await request('/api/development/live-web/stop', {})
+        render()
+      } catch (error) {
+        alert(error.message || String(error))
+        await load()
+      } finally {
+        setBusy(false)
+      }
+    })
     el('apply').addEventListener('click', async () => {
       try {
         setBusy(true)

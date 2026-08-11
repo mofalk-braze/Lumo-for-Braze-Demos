@@ -16,6 +16,7 @@ const android = fs.readFileSync(path.join(repoRoot, 'android-shell/app/src/main/
 const ios = fs.readFileSync(path.join(repoRoot, 'ios-shell/Sources/WebViewController.swift'), 'utf8')
 const iosManager = fs.readFileSync(path.join(repoRoot, 'ios-shell/Sources/BrazeManager.swift'), 'utf8')
 const web = fs.readFileSync(path.join(repoRoot, 'web-template/src/components/NativeBannerSlot.tsx'), 'utf8')
+const webSync = fs.readFileSync(path.join(repoRoot, 'web-template/src/braze/sync.ts'), 'utf8')
 assert.match(android, /BannerView\(this, placementId\)/)
 assert.match(android, /requestBannersRefresh/)
 assert.match(android, /BrazeNotificationUtils\.activeNotificationFactory\.createNotification\(payload\)/)
@@ -26,6 +27,8 @@ assert.match(iosManager, /setCustomAttribute\(key: key, dictionary: nested\)/)
 assert.match(iosManager, /configuration\.sessionTimeout/)
 assert.match(web, /mountBanner/)
 assert.doesNotMatch(web, /ContentCard/)
+assert.match(webSync, /runtimeHash: string/)
+assert.match(webSync, /runtimeHash: activeRuntimeManifest\.runtimeHash/)
 
 const trustInstaller = path.join(repoRoot, 'android-shell/tools/install-zscaler-system-ca.sh')
 const trustProbe = spawnSync(trustInstaller, ['--compile-smoke-only'], {
@@ -59,6 +62,22 @@ assert.match(controlRoom, /stopLivePolling\(\)/)
 assert.doesNotMatch(controlRoom, /connectLiveUpdates\(\) \{\s+startLivePolling\(\)/)
 assert.doesNotMatch(controlRoom, /job\.status === 'running'\) setTimeout\(load/)
 const appSurface = fs.readFileSync(path.join(repoRoot, 'web-template/src/App.tsx'), 'utf8')
+const packSurfaceRegistry = fs.readFileSync(path.join(repoRoot, 'web-template/src/screens/packSurfaceRegistry.ts'), 'utf8')
+const localPackSurface = path.join(repoRoot, 'web-template/src/screens/local-pack/pack-app.tsx')
 assert.match(appSurface, /lastNavigationRouteId/)
-assert.doesNotMatch(appSurface, /screens\/charging/)
+assert.match(appSurface, /resolvePackAppSurface\(activeDemoPackId\)/)
+assert.doesNotMatch(appSurface, /screens\/local-pack/)
+assert.match(
+  packSurfaceRegistry,
+  /import\.meta\.glob<PackSurfaceModule>\('\.\/local-pack\/pack-app\.tsx'/,
+)
+assert.doesNotMatch(packSurfaceRegistry, /module\.demoPackId\s*===\s*['"]/)
+const ignoredLocalPackSurface = spawnSync('git', ['check-ignore', '--no-index', '--quiet', localPackSurface], {
+  cwd: repoRoot,
+})
+assert.equal(
+  ignoredLocalPackSurface.status,
+  0,
+  'The fixed local-pack app-surface container must remain ignored by Git.',
+)
 console.log('Runtime capability matrix and Banner adapter tests passed.')

@@ -4,9 +4,10 @@ import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { launcherHtml as controlRoomHtml } from './control-room-template.mjs'
+import { presenterRemoteHtml } from './presenter-remote-template.mjs'
 import {
   androidShellDir,
   applyDemoPack,
@@ -30,7 +31,27 @@ const designSystemDir =
   path.join(repoRoot, 'Braze Design System (Collaborative)')
 const jobs = new Map()
 const statePath = path.join(launcherStateDir, 'state.json')
+const serverInfoPath = path.join(launcherStateDir, 'server.json')
+const authorityLockPath = path.join(launcherStateDir, 'owner.lock')
+const buildCachePath = path.join(launcherStateDir, 'build-cache.json')
 const sseClients = new Set()
+const operatorSseClients = new Set()
+const operatorExecutions = new Map()
+const operatorRequests = new Map()
+const operatorExecutionSequences = new Map()
+const operatorChildExecutions = new Map()
+let operatorExecutionCreationOrder = 0
+const launcherInstanceId = randomUUID()
+const operatorSessionAuthority = createOperatorSessionAuthority({ instanceId: launcherInstanceId })
+const androidSourceEvidenceByExecution = new Map()
+const iosRuntimeEvidenceByExecution = new Map()
+let activeAndroidSourceTransition = null
+let lastOperatorSnapshot = null
+let liveWebProcess = null
+let liveWebStartedAt = ''
+let liveWebStopping = null
+let liveWebTransition = null
+let launcherAuthority = null
 const sessionRestApiKeys = new Map()
 const stateBroadcastIntervalMs = 200
 let stateBroadcastTimer = null
@@ -39,6 +60,28 @@ let serverPort = Number(process.env.PORT || 4177)
 const requestBodyLimitBytes = Number(process.env.BRAZE_CONTROL_ROOM_BODY_LIMIT || 256 * 1024)
 const defaultAndroidAvd = process.env.BRAZE_DEMO_ANDROID_AVD || 'Braze_Demo_API_36'
 const trustDiagnosticsTimeoutMs = Number(process.env.BRAZE_DEMO_TRUST_DIAGNOSTICS_TIMEOUT_MS || 15_000)
+const liveWebPort = 5173
+const liveWebHostUrl = `http://127.0.0.1:${liveWebPort}`
+const liveWebDeviceUrl = `http://10.0.2.2:${liveWebPort}`
+const androidTimeSyncGuardScript = path.join(androidShellDir, 'tools/ensure-time-sync-guard.sh')
+const androidTimeSyncScript = path.join(androidShellDir, 'tools/sync-emulator-network-time.mjs')
+const androidTimeSyncLog = process.env.BRAZE_DEMO_TIME_SYNC_LOG || '/tmp/lumo-demo-time-sync.log'
+const androidTimeGuard = createOwnedChildSingleton({
+  onUnexpectedExit: ({ key, code, signal, error }) => {
+    try {
+      addLedger({
+        source: 'launcher',
+        platform: 'android',
+        type: 'time_guard',
+        label: 'Android network clock guard stopped unexpectedly',
+        status: 'error',
+        result: { serial: key, code, signal, error: error?.message || '' },
+      })
+    } catch {
+      // Shutdown or early-start failures may make the state ledger unavailable.
+    }
+  },
+})
 
 const builtInPresets = [
   {
@@ -263,6 +306,16 @@ function defaultState() {
     controlsByPack: {},
     pushReadiness: {},
     trustDiagnostics: {},
+    deviceSourceReadiness: null,
+    development: {
+      liveWeb: {
+        enabled: false,
+        overrideMayBeActive: false,
+        status: 'stopped',
+        hostUrl: liveWebHostUrl,
+        deviceUrl: liveWebDeviceUrl,
+      },
+    },
     ledger: [],
     restResponses: [],
   }
@@ -278,6 +331,7 @@ function cleanPresetForStorage(preset) {
     transport: preset.transport,
     platform: preset.platform,
     requiresPushToken: Boolean(preset.requiresPushToken),
+    presenterVariants: Array.isArray(preset.presenterVariants) ? preset.presenterVariants : undefined,
     custom: Boolean(preset.custom),
   }
 }
@@ -360,6 +414,26 @@ function readState() {
   }
   try {
     const state = { ...defaultState(), ...JSON.parse(fs.readFileSync(statePath, 'utf8')) }
+    const persistedLiveWeb = state.development?.liveWeb
+    if (persistedLiveWeb?.ownerInstanceId && persistedLiveWeb.ownerInstanceId !== launcherInstanceId) {
+      const overrideMayBeActive = Boolean(
+        persistedLiveWeb.overrideMayBeActive ||
+        persistedLiveWeb.enabled ||
+        ['switching', 'active', 'clearing', 'error'].includes(persistedLiveWeb.status),
+      )
+      state.development = {
+        ...(state.development || {}),
+        liveWeb: {
+          ...persistedLiveWeb,
+          enabled: false,
+          overrideMayBeActive,
+          status: 'error',
+          pid: null,
+          ownerInstanceId: '',
+          error: 'The launcher that owned this development server is no longer connected.',
+        },
+      }
+    }
     const hadLegacyCustomPresets = Array.isArray(state.customPresets) && state.customPresets.length > 0
     ensureControlState(state, state.activePackId)
     if (hadLegacyCustomPresets) writeState(state)
@@ -372,9 +446,405 @@ function readState() {
   }
 }
 
+function processIsAlive(pid) {
+  const value = Number(pid)
+  if (!Number.isInteger(value) || value < 1) return false
+  try {
+    process.kill(value, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
+}
+
+export function createOwnedChildSingleton({
+  startupDelayMs = 250,
+  stopTimeoutMs = 2_000,
+  delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  onUnexpectedExit = () => {},
+} = {}) {
+  let current = null
+  let stopping = null
+
+  const running = (record = current) => Boolean(record?.child && record.child.exitCode === null && !record.error)
+
+  async function stop() {
+    if (stopping) return stopping
+    const record = current
+    if (!running(record)) {
+      if (current === record) current = null
+      return
+    }
+    record.intentionalStop = true
+    stopping = new Promise((resolve) => {
+      let settled = false
+      let timer = null
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        if (current === record) current = null
+        resolve()
+      }
+      record.child.once('exit', finish)
+      try {
+        record.child.kill('SIGTERM')
+      } catch {
+        finish()
+        return
+      }
+      timer = setTimeout(() => {
+        try {
+          if (record.child.exitCode === null) record.child.kill('SIGKILL')
+        } catch {}
+        finish()
+      }, stopTimeoutMs)
+      timer.unref?.()
+    })
+    try {
+      await stopping
+    } finally {
+      stopping = null
+    }
+  }
+
+  async function ensure(key, spawnChild) {
+    if (!key) throw new Error('Owned singleton processes require a stable key.')
+    if (running() && current.key === key) {
+      return { child: current.child, key, reused: true }
+    }
+    await stop()
+    const child = spawnChild()
+    const record = { child, key, error: null, intentionalStop: false }
+    current = record
+    child.once('error', (error) => { record.error = error })
+    child.once('exit', (code, signal) => {
+      if (current === record) current = null
+      if (!record.intentionalStop) onUnexpectedExit({ key, child, code, signal, error: record.error })
+    })
+    await delay(startupDelayMs)
+    if (!running(record) || current !== record) {
+      const detail = record.error?.message || `exit ${child.exitCode ?? 'before readiness'}`
+      if (current === record) current = null
+      throw new Error(`Owned singleton process exited during startup (${detail}).`)
+    }
+    return { child, key, reused: false }
+  }
+
+  function terminateNow() {
+    const record = current
+    if (!running(record)) return
+    record.intentionalStop = true
+    try { record.child.kill('SIGTERM') } catch {}
+  }
+
+  return {
+    ensure,
+    stop,
+    terminateNow,
+    status: () => ({
+      key: current?.key || '',
+      pid: running() ? current.child.pid || null : null,
+      running: running(),
+    }),
+  }
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function authorityOwnerIsValid(owner) {
+  return Boolean(
+    owner &&
+    typeof owner.instanceId === 'string' &&
+    owner.instanceId &&
+    Number.isInteger(Number(owner.pid)) &&
+    Number(owner.pid) > 0,
+  )
+}
+
+function authorityOwnerMatches(left, right) {
+  return Boolean(
+    authorityOwnerIsValid(left) &&
+    authorityOwnerIsValid(right) &&
+    left.instanceId === right.instanceId &&
+    Number(left.pid) === Number(right.pid),
+  )
+}
+
+function authorityConflict(message) {
+  const error = new Error(message)
+  error.statusCode = 409
+  return error
+}
+
+function writeAuthorityOwner(fd, { instanceId, pid }) {
+  fs.writeFileSync(fd, `${JSON.stringify({
+    schemaVersion: 1,
+    instanceId,
+    pid,
+    acquiredAt: new Date().toISOString(),
+  }, null, 2)}\n`)
+  fs.fsyncSync(fd)
+}
+
+function openAuthorityLock(lockPath, { instanceId, pid }) {
+  const fd = fs.openSync(lockPath, 'wx', 0o600)
+  try {
+    writeAuthorityOwner(fd, { instanceId, pid })
+    return fd
+  } catch (error) {
+    try { fs.closeSync(fd) } catch {}
+    // Leave an incomplete lock in place. A later contender will fail closed
+    // instead of risking removal of a path that may no longer name this file.
+    throw error
+  }
+}
+
+function acquireAuthorityReclaimLease(lockPath, { instanceId, pid }) {
+  const reclaimPath = `${lockPath}.reclaim`
+  const token = randomUUID()
+  let fd = null
+  try {
+    fd = fs.openSync(reclaimPath, 'wx', 0o600)
+    fs.writeFileSync(fd, `${JSON.stringify({
+      schemaVersion: 1,
+      token,
+      instanceId,
+      pid,
+      acquiredAt: new Date().toISOString(),
+    }, null, 2)}\n`)
+    fs.fsyncSync(fd)
+    return { fd, reclaimPath, token }
+  } catch (error) {
+    if (fd !== null) {
+      try { fs.closeSync(fd) } catch {}
+      // As with the owner lock, an incomplete lease is safer than unlinking a
+      // path after an I/O failure. It requires explicit operator recovery.
+    }
+    if (error?.code === 'EEXIST') {
+      throw authorityConflict(
+        'Launcher authority reclamation is already in progress. Refusing to modify the owner lock.',
+      )
+    }
+    throw error
+  }
+}
+
+function releaseAuthorityReclaimLease(lease) {
+  if (!lease) return
+  try { fs.closeSync(lease.fd) } catch {}
+  const claim = readJsonFile(lease.reclaimPath)
+  if (claim?.token === lease.token) {
+    try { fs.rmSync(lease.reclaimPath, { force: true }) } catch {}
+  }
+}
+
+export function acquireAuthorityLock({
+  lockPath = authorityLockPath,
+  legacyServerInfoPath = serverInfoPath,
+  instanceId = launcherInstanceId,
+  pid = process.pid,
+  isAlive = processIsAlive,
+} = {}) {
+  if (lockPath === authorityLockPath && launcherAuthority) return launcherAuthority
+
+  const legacy = readJsonFile(legacyServerInfoPath)
+  if (legacy?.instanceId && legacy.instanceId !== instanceId && isAlive(legacy.pid)) {
+    const error = new Error(
+      `Launcher authority ${legacy.instanceId} (pid ${legacy.pid}) is already active on port ${legacy.port || 'unknown'}.`,
+    )
+    error.statusCode = 409
+    throw error
+  }
+
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+  let fd = null
+  try {
+    fd = openAuthorityLock(lockPath, { instanceId, pid })
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error
+    const observedOwner = readJsonFile(lockPath)
+    if (authorityOwnerMatches(observedOwner, { instanceId, pid })) {
+      return { fd: null, lockPath, instanceId, pid, borrowed: true }
+    }
+    if (!authorityOwnerIsValid(observedOwner)) {
+      throw authorityConflict(
+        'Launcher authority lock is unreadable or malformed. Refusing automatic reclamation.',
+      )
+    }
+    if (isAlive(observedOwner.pid)) {
+      throw authorityConflict(
+        `Launcher authority ${observedOwner.instanceId} (pid ${observedOwner.pid}) already owns demo state.`,
+      )
+    }
+
+    const reclaimLease = acquireAuthorityReclaimLease(lockPath, { instanceId, pid })
+    let quarantinePath = ''
+    try {
+      const currentOwner = readJsonFile(lockPath)
+      if (!authorityOwnerMatches(currentOwner, observedOwner)) {
+        throw authorityConflict(
+          'Launcher authority changed during stale-lock reclamation. Refusing to modify the current owner lock.',
+        )
+      }
+      if (isAlive(currentOwner.pid)) {
+        throw authorityConflict(
+          `Launcher authority ${currentOwner.instanceId} (pid ${currentOwner.pid}) became active during reclamation.`,
+        )
+      }
+
+      quarantinePath = `${lockPath}.stale.${reclaimLease.token}`
+      try {
+        fs.renameSync(lockPath, quarantinePath)
+      } catch (renameError) {
+        if (renameError?.code === 'ENOENT') {
+          throw authorityConflict(
+            'Launcher authority changed during stale-lock reclamation. Refusing an unverified takeover.',
+          )
+        }
+        throw renameError
+      }
+
+      try {
+        fd = openAuthorityLock(lockPath, { instanceId, pid })
+      } catch (openError) {
+        if (openError?.code !== 'EEXIST') throw openError
+        const replacement = readJsonFile(lockPath)
+        const detail = authorityOwnerIsValid(replacement)
+          ? `${replacement.instanceId} (pid ${replacement.pid})`
+          : 'an unreadable replacement owner'
+        throw authorityConflict(
+          `Launcher authority ${detail} claimed demo state during stale-lock reclamation.`,
+        )
+      }
+    } finally {
+      if (quarantinePath) {
+        try { fs.rmSync(quarantinePath, { force: true }) } catch {}
+      }
+      releaseAuthorityReclaimLease(reclaimLease)
+    }
+  }
+  if (fd === null) throw new Error('Unable to acquire launcher state authority.')
+  const handle = { fd, lockPath, instanceId, pid, borrowed: false }
+  if (lockPath === authorityLockPath) launcherAuthority = handle
+  return handle
+}
+
+export function releaseAuthorityLock(handle = launcherAuthority) {
+  if (!handle) return
+  if (handle.borrowed) return
+  if (handle.fd !== null && handle.fd !== undefined) {
+    try { fs.closeSync(handle.fd) } catch {}
+  }
+  const owner = readJsonFile(handle.lockPath)
+  if (owner?.instanceId === handle.instanceId && Number(owner.pid) === Number(handle.pid)) {
+    try { fs.rmSync(handle.lockPath, { force: true }) } catch {}
+  }
+  if (handle === launcherAuthority) launcherAuthority = null
+}
+
 function writeState(state) {
   ensureStateDir()
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`)
+  const body = `${JSON.stringify(state, null, 2)}\n`
+  const temporary = `${statePath}.${process.pid}.${randomUUID()}.tmp`
+  fs.writeFileSync(temporary, body, { mode: 0o600 })
+  fs.renameSync(temporary, statePath)
+}
+
+function writeServerInfo() {
+  ensureStateDir()
+  const temporary = `${serverInfoPath}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify({
+    schemaVersion: 1,
+    instanceId: launcherInstanceId,
+    pid: process.pid,
+    port: serverPort,
+    startedAt: new Date().toISOString(),
+  }, null, 2)}\n`, { mode: 0o600 })
+  fs.renameSync(temporary, serverInfoPath)
+}
+
+function removeServerInfo() {
+  try {
+    if (!fs.existsSync(serverInfoPath)) return
+    const info = JSON.parse(fs.readFileSync(serverInfoPath, 'utf8'))
+    if (info.instanceId === launcherInstanceId) fs.rmSync(serverInfoPath, { force: true })
+  } catch {
+    // Stale server discovery files are harmless and will be replaced on next start.
+  }
+}
+
+function readBuildCache() {
+  try {
+    return JSON.parse(fs.readFileSync(buildCachePath, 'utf8'))
+  } catch {
+    return { schemaVersion: 1, web: {} }
+  }
+}
+
+function writeBuildCache(cache) {
+  ensureStateDir()
+  const temporary = `${buildCachePath}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(cache, null, 2)}\n`, { mode: 0o600 })
+  fs.renameSync(temporary, buildCachePath)
+}
+
+function hashDirectoryTree(root, hash, relative = '') {
+  if (!fs.existsSync(root)) return
+  const excluded = new Set(['.git', 'node_modules', 'dist', 'build', 'DerivedData'])
+  const excludedFiles = new Set(['.DS_Store', 'npm-debug.log', 'yarn-error.log', 'pnpm-debug.log'])
+  for (const entry of fs.readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isDirectory() && excluded.has(entry.name)) continue
+    if (entry.isFile() && (excludedFiles.has(entry.name) || entry.name.endsWith('.tsbuildinfo'))) continue
+    const absolute = path.join(root, entry.name)
+    const childRelative = relative ? `${relative}/${entry.name}` : entry.name
+    if (entry.isDirectory()) hashDirectoryTree(absolute, hash, childRelative)
+    else if (entry.isFile()) {
+      hash.update(childRelative)
+      hash.update('\0')
+      hash.update(fs.readFileSync(absolute))
+      hash.update('\0')
+    }
+  }
+}
+
+export function webBuildInputHash(pack, webBuild) {
+  const hash = createHash('sha256')
+  hash.update('braze-demo-web-build/v1\0')
+  hash.update(pack.runtimeManifest?.runtimeHash || '')
+  hash.update('\0')
+  hash.update(JSON.stringify({ command: webBuild.command, args: webBuild.args }))
+  hash.update('\0')
+  hashDirectoryTree(webBuild.cwd, hash)
+  return hash.digest('hex')
+}
+
+function reusableWebBuild(pack, inputHash) {
+  const cache = readBuildCache()
+  const cached = cache.web?.[pack.id]
+  const distDir = packWebDistDir(pack)
+  const runtimePath = path.join(distDir, 'demo-runtime.json')
+  if (cached?.inputHash !== inputHash || !fs.existsSync(path.join(distDir, 'index.html')) || !fs.existsSync(runtimePath)) return false
+  try {
+    const runtime = JSON.parse(fs.readFileSync(runtimePath, 'utf8'))
+    return runtime.id === pack.id && runtime.runtimeHash === pack.runtimeManifest?.runtimeHash
+  } catch {
+    return false
+  }
+}
+
+function rememberWebBuild(pack, inputHash) {
+  const cache = readBuildCache()
+  cache.schemaVersion = 1
+  cache.web = cache.web && typeof cache.web === 'object' ? cache.web : {}
+  cache.web[pack.id] = { inputHash, runtimeHash: pack.runtimeManifest?.runtimeHash || '', builtAt: new Date().toISOString() }
+  writeBuildCache(cache)
 }
 
 function updateState(mutator) {
@@ -386,6 +856,7 @@ function updateState(mutator) {
   state.restResponses = (state.restResponses || []).slice(0, 40)
   writeState(state)
   broadcastState()
+  broadcastOperatorState()
   return state
 }
 
@@ -421,6 +892,52 @@ function broadcastState() {
     return
   }
   stateBroadcastTimer = setTimeout(flushStateBroadcast, delay)
+}
+
+function broadcastOperatorState() {
+  if (!operatorSseClients.size) return
+  let snapshot
+  try {
+    snapshot = operatorSnapshot()
+  } catch {
+    return
+  }
+  if (lastOperatorSnapshot?.snapshotVersion === snapshot.snapshotVersion) return
+  const previous = lastOperatorSnapshot
+  lastOperatorSnapshot = snapshot
+  for (const client of operatorSseClients) {
+    try {
+      if (!previous) {
+        writeSse(client, 'snapshot', snapshot)
+      } else {
+        writeSse(client, 'delta', {
+          launcherInstanceId,
+          baseVersion: previous.snapshotVersion,
+          snapshotVersion: snapshot.snapshotVersion,
+          patch: {
+            active: snapshot.active,
+            readiness: snapshot.readiness,
+            personas: snapshot.personas,
+            controls: snapshot.controls,
+            latestExecution: snapshot.latestExecution,
+          },
+        })
+      }
+    } catch {
+      operatorSseClients.delete(client)
+    }
+  }
+}
+
+function broadcastOperatorExecution(execution) {
+  for (const client of operatorSseClients) {
+    try {
+      writeSse(client, 'execution', execution)
+    } catch {
+      operatorSseClients.delete(client)
+    }
+  }
+  broadcastOperatorState()
 }
 
 function publicJobUpdate(job) {
@@ -476,17 +993,50 @@ function streamState(req, res) {
   })
 }
 
-function sendJson(res, status, body) {
+function streamOperatorState(req, res) {
+  requireOperatorSession(req)
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  })
+  res.write(': connected\n\n')
+  operatorSseClients.add(res)
+  const snapshot = operatorSnapshot()
+  lastOperatorSnapshot = snapshot
+  writeSse(res, 'snapshot', snapshot)
+  const keepAlive = setInterval(() => {
+    try {
+      const current = operatorSnapshot()
+      writeSse(res, 'heartbeat', {
+        launcherInstanceId,
+        snapshotVersion: current.snapshotVersion,
+        ts: new Date().toISOString(),
+      })
+    } catch {
+      clearInterval(keepAlive)
+      operatorSseClients.delete(res)
+    }
+  }, 5_000)
+  req.on('close', () => {
+    clearInterval(keepAlive)
+    operatorSseClients.delete(res)
+  })
+}
+
+function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
+    ...headers,
   })
   res.end(payload)
 }
 
-function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
-  res.writeHead(status, { 'content-type': contentType })
+function sendText(res, status, body, contentType = 'text/plain; charset=utf-8', headers = {}) {
+  res.writeHead(status, { 'content-type': contentType, ...headers })
   res.end(body)
 }
 
@@ -521,6 +1071,105 @@ function readBody(req) {
   })
 }
 
+function allowedBrowserOrigins(port = serverPort) {
+  return new Set([
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ])
+}
+
+export function assertRequestBoundary(req, url, port = serverPort) {
+  const host = String(req.headers.host || '').toLowerCase()
+  const allowedHosts = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+  ])
+  if (url.pathname === '/api/device-events') allowedHosts.add(`10.0.2.2:${port}`)
+  if (!allowedHosts.has(host)) {
+    const error = new Error('Invalid launcher Host header.')
+    error.statusCode = 403
+    throw error
+  }
+  const origin = String(req.headers.origin || '')
+  if (origin && !allowedBrowserOrigins(port).has(origin)) {
+    const error = new Error('Cross-origin launcher request blocked.')
+    error.statusCode = 403
+    throw error
+  }
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method || '') && url.pathname !== '/api/device-events') {
+    const contentType = String(req.headers['content-type'] || '')
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+      const error = new Error('Launcher mutations require application/json.')
+      error.statusCode = 415
+      throw error
+    }
+  }
+}
+
+function cookieValue(req, name) {
+  const raw = String(req.headers.cookie || '')
+  for (const pair of raw.split(';')) {
+    const [key, ...parts] = pair.trim().split('=')
+    if (key === name) return decodeURIComponent(parts.join('='))
+  }
+  return ''
+}
+
+export function createOperatorSessionAuthority({
+  pairingToken = randomUUID(),
+  instanceId = launcherInstanceId,
+  createSessionId = randomUUID,
+} = {}) {
+  let currentPairingToken = String(pairingToken)
+  const sessions = new Set()
+  return {
+    pairingToken: () => currentPairingToken,
+    require(req) {
+      const session = cookieValue(req, 'braze_demo_operator')
+      if (!session || !sessions.has(session)) {
+        const error = new Error('Presenter Remote session is not paired with this launcher.')
+        error.statusCode = 401
+        throw error
+      }
+      return session
+    },
+    pair(body, req) {
+      const existingSession = cookieValue(req, 'braze_demo_operator')
+      if (existingSession && sessions.has(existingSession)) {
+        return {
+          headers: { 'cache-control': 'no-store' },
+          body: { paired: true, launcherInstanceId: instanceId, reused: true },
+        }
+      }
+      const token = String(body?.token || '')
+      if (token.length !== currentPairingToken.length || token !== currentPairingToken) {
+        const error = new Error('Presenter Remote pairing token is invalid or has already been used.')
+        error.statusCode = 401
+        throw error
+      }
+      currentPairingToken = randomUUID()
+      const session = String(createSessionId())
+      sessions.add(session)
+      return {
+        headers: {
+          'set-cookie': `braze_demo_operator=${encodeURIComponent(session)}; HttpOnly; SameSite=Strict; Path=/api/operator/v1; Max-Age=14400`,
+          'cache-control': 'no-store',
+        },
+        body: { paired: true, launcherInstanceId: instanceId },
+      }
+    },
+  }
+}
+
+function requireOperatorSession(req) {
+  return operatorSessionAuthority.require(req)
+}
+
+function pairOperatorSession(body, req) {
+  return operatorSessionAuthority.pair(body, req)
+}
+
 function canListen(port) {
   return new Promise((resolve) => {
     const probe = net.createServer()
@@ -548,31 +1197,105 @@ async function findAvailablePort(startPort, { strict = false, attempts = 20 } = 
   throw new Error(`No available launcher port found from ${startPort} to ${startPort + attempts}.`)
 }
 
-function controlRoomIsListening(port) {
-  return new Promise((resolve) => {
-    const request = http.get({ host: '127.0.0.1', port, path: '/api/state', timeout: 750 }, (response) => {
-      response.resume()
-      resolve(response.statusCode === 200)
+function readLauncherServerInfo() {
+  try {
+    const info = JSON.parse(fs.readFileSync(serverInfoPath, 'utf8'))
+    return info && Number.isInteger(Number(info.port)) ? info : null
+  } catch {
+    return null
+  }
+}
+
+function launcherJsonRequest(port, requestPath, { method = 'GET', body = null, timeout = 2_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body === null ? '' : JSON.stringify(body)
+    const request = http.request({
+      host: '127.0.0.1',
+      port,
+      path: requestPath,
+      method,
+      timeout,
+      headers: {
+        accept: 'application/json',
+        ...(body === null ? {} : {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+        }),
+      },
+    }, (response) => {
+      let raw = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => { raw += chunk })
+      response.on('end', () => {
+        let parsed = {}
+        try { parsed = raw ? JSON.parse(raw) : {} } catch {}
+        if ((response.statusCode || 500) >= 400) {
+          const error = new Error(parsed.error || `Launcher returned HTTP ${response.statusCode}.`)
+          error.statusCode = response.statusCode
+          error.details = parsed.details
+          reject(error)
+        } else resolve(parsed)
+      })
     })
-    request.once('timeout', () => {
-      request.destroy()
-      resolve(false)
-    })
-    request.once('error', () => resolve(false))
+    request.once('timeout', () => request.destroy(new Error('Launcher request timed out.')))
+    request.once('error', reject)
+    if (payload) request.write(payload)
+    request.end()
   })
+}
+
+async function launcherHealth(port) {
+  if (!Number.isInteger(Number(port)) || Number(port) < 1) return null
+  try {
+    const health = await launcherJsonRequest(Number(port), '/api/health', { timeout: 900 })
+    return health?.ok ? health : null
+  } catch {
+    return null
+  }
+}
+
+async function waitForDelegatedJob(port, jobId) {
+  if (!jobId) throw new Error('Existing launcher did not return a job id.')
+  while (true) {
+    const job = await launcherJsonRequest(port, `/api/jobs/${encodeURIComponent(jobId)}`, { timeout: 5_000 })
+    if (job.status !== 'running') return job
+    await sleep(500)
+  }
 }
 
 function listenControlRoomServer(port, { announce = false } = {}) {
   return new Promise((resolve, reject) => {
+    let authority
+    try {
+      authority = acquireAuthorityLock()
+    } catch (error) {
+      reject(error)
+      return
+    }
     const server = http.createServer((req, res) => {
       handleRequest(req, res)
     })
-    server.once('error', reject)
-    server.listen(port, '127.0.0.1', () => {
-      server.removeListener('error', reject)
+    server.launcherAuthority = authority
+    const onListenError = (error) => {
+      releaseAuthorityLock(authority)
+      reject(error)
+    }
+    server.once('error', onListenError)
+    server.listen(port, '127.0.0.1', async () => {
+      server.removeListener('error', onListenError)
+      try {
+        await stopLegacyAndroidTimeGuards(null, androidTimeGuard.status().pid)
+        writeServerInfo()
+      } catch (error) {
+        server.close()
+        releaseAuthorityLock(authority)
+        reject(error)
+        return
+      }
       if (announce) {
         const serverUrl = `http://127.0.0.1:${port}`
         console.log(`Braze Demo Control Room running at ${serverUrl}`)
+        console.log(`Presenter Remote: ${serverUrl}/presenter#pair=${operatorSessionAuthority.pairingToken()}`)
         console.log(`Android telemetry callback: ${launcherCallbackUrl()}`)
         console.log('Press Ctrl+C to stop.')
       }
@@ -581,12 +1304,18 @@ function listenControlRoomServer(port, { announce = false } = {}) {
   })
 }
 
-function closeServer(server) {
+async function closeServer(server) {
+  await Promise.all([
+    stopLiveWebProcess(),
+    androidTimeGuard.stop(),
+  ])
   return new Promise((resolve, reject) => {
     let settled = false
     const finish = (error) => {
       if (settled) return
       settled = true
+      removeServerInfo()
+      releaseAuthorityLock(server.launcherAuthority)
       if (error) reject(error)
       else resolve()
     }
@@ -641,21 +1370,240 @@ function runCapture(command, args, options = {}) {
   })
 }
 
+function setLiveWebState(patch) {
+  updateState((state) => {
+    state.development = state.development && typeof state.development === 'object' ? state.development : {}
+    const current = state.development.liveWeb && typeof state.development.liveWeb === 'object'
+      ? state.development.liveWeb
+      : {}
+    state.development.liveWeb = {
+      hostUrl: liveWebHostUrl,
+      deviceUrl: liveWebDeviceUrl,
+      ...current,
+      ...patch,
+      ownerInstanceId: patch.ownerInstanceId === undefined ? launcherInstanceId : patch.ownerInstanceId,
+    }
+  })
+}
+
+function probeHttp(url, timeoutMs = 750) {
+  return new Promise((resolve) => {
+    const request = http.get(url, { timeout: timeoutMs }, (response) => {
+      response.resume()
+      resolve((response.statusCode || 500) < 500)
+    })
+    request.once('timeout', () => {
+      request.destroy()
+      resolve(false)
+    })
+    request.once('error', () => resolve(false))
+  })
+}
+
+async function waitForLiveWebServer(timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!liveWebProcess || liveWebProcess.exitCode !== null) break
+    if (await probeHttp(liveWebHostUrl)) return
+    await sleep(150)
+  }
+  throw new Error('Vite did not become ready on the fixed development port 5173.')
+}
+
+async function startLiveWebProcess() {
+  if (liveWebProcess && liveWebProcess.exitCode === null) {
+    await waitForLiveWebServer()
+    return liveWebProcess
+  }
+  if (!(await canListen(liveWebPort))) {
+    throw new Error('Port 5173 is already in use by a process this launcher does not own. Stop it before enabling Android live-web mode.')
+  }
+  const viteEntry = path.join(webTemplateDir, 'node_modules/vite/bin/vite.js')
+  if (!fs.existsSync(viteEntry)) {
+    throw new Error('Vite is not installed in web-template. Run the repository bootstrap before enabling live-web mode.')
+  }
+
+  liveWebStartedAt = new Date().toISOString()
+  setLiveWebState({
+    enabled: false,
+    overrideMayBeActive: false,
+    status: 'starting',
+    startedAt: liveWebStartedAt,
+    confirmedAt: '',
+    error: '',
+    pid: null,
+  })
+  const child = spawn(process.execPath, [viteEntry, '--host', '127.0.0.1', '--port', String(liveWebPort), '--strictPort'], {
+    cwd: webTemplateDir,
+    env: { ...process.env },
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  liveWebProcess = child
+  let logTail = ''
+  const capture = (data) => {
+    logTail = `${logTail}${data.toString()}`.slice(-4_000)
+  }
+  child.stdout.on('data', capture)
+  child.stderr.on('data', capture)
+  child.once('error', (error) => {
+    if (liveWebProcess !== child || liveWebStopping) return
+    liveWebProcess = null
+    const hazard = currentLiveWebHazard()
+    setLiveWebState({
+      enabled: false,
+      overrideMayBeActive: hazard.mayBeActive,
+      status: 'error',
+      pid: null,
+      error: error.message || String(error),
+      logTail,
+    })
+  })
+  child.once('exit', (code, signal) => {
+    if (liveWebProcess !== child) return
+    liveWebProcess = null
+    if (liveWebStopping) return
+    setLiveWebState({
+      enabled: false,
+      overrideMayBeActive: currentLiveWebHazard().mayBeActive,
+      status: 'error',
+      pid: null,
+      error: `Owned Vite process stopped unexpectedly (${signal || `exit ${code}`}).`,
+      logTail,
+    })
+  })
+  try {
+    await waitForLiveWebServer()
+    setLiveWebState({ status: 'server_ready', pid: child.pid, error: '', logTail })
+    return child
+  } catch (error) {
+    await stopLiveWebProcess({ preserveStatus: true })
+    setLiveWebState({
+      enabled: false,
+      overrideMayBeActive: currentLiveWebHazard().mayBeActive,
+      status: 'error',
+      pid: null,
+      error: `${error.message}${logTail ? `\n${logTail}` : ''}`,
+    })
+    throw error
+  }
+}
+
+export function liveWebStateAfterHostStop(
+  current = {},
+  { hazardMayBeActive = false, bundledSourceConfirmed = false } = {},
+) {
+  const preserveHazard = !bundledSourceConfirmed && Boolean(
+    hazardMayBeActive ||
+    current.overrideMayBeActive ||
+    current.enabled ||
+    ['starting', 'server_ready', 'switching', 'active', 'clearing', 'error'].includes(current.status),
+  )
+  return {
+    ...current,
+    enabled: false,
+    overrideMayBeActive: preserveHazard,
+    status: preserveHazard ? 'error' : 'stopped',
+    pid: null,
+    ownerInstanceId: '',
+    error: preserveHazard
+      ? (current.error || 'The development server stopped before correlated bundled-source proof cleared the native override hazard.')
+      : '',
+  }
+}
+
+async function stopLiveWebProcess({ preserveStatus = false, bundledSourceConfirmed = false } = {}) {
+  if (liveWebStopping) return liveWebStopping
+  const stateBeforeStop = readState()
+  const liveWebBeforeStop = stateBeforeStop.development?.liveWeb || {}
+  const hazardBeforeStop = currentLiveWebHazard(stateBeforeStop)
+  const persistStoppedState = () => {
+    if (preserveStatus) return
+    setLiveWebState(liveWebStateAfterHostStop(liveWebBeforeStop, {
+      hazardMayBeActive: hazardBeforeStop.mayBeActive,
+      bundledSourceConfirmed,
+    }))
+  }
+  const child = liveWebProcess
+  if (!child || child.exitCode !== null) {
+    liveWebProcess = null
+    liveWebStartedAt = ''
+    persistStoppedState()
+    return
+  }
+  liveWebStopping = new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      if (liveWebProcess === child) liveWebProcess = null
+      liveWebStartedAt = ''
+      resolve()
+    }
+    child.once('exit', finish)
+    child.kill('SIGTERM')
+    setTimeout(() => {
+      if (child.exitCode === null) child.kill('SIGKILL')
+      finish()
+    }, 2_000).unref()
+  })
+  try {
+    await liveWebStopping
+  } finally {
+    liveWebStopping = null
+  }
+  persistStoppedState()
+}
+
 function pushLog(job, text) {
   if (!job) return
   appendJobLogs(job, text.split(/\r?\n/))
 }
 
 function setJobStep(job, step) {
+  const now = Date.now()
+  if (job.currentStageStartedAt && job.step) {
+    job.timings[job.step] = (job.timings[job.step] || 0) + (now - job.currentStageStartedAt)
+  }
   job.step = step
+  job.currentStageStartedAt = now
   broadcastJob(job)
 }
 
 function finishJob(job, status, step) {
+  const now = Date.now()
+  if (job.currentStageStartedAt && job.step) {
+    job.timings[job.step] = (job.timings[job.step] || 0) + (now - job.currentStageStartedAt)
+  }
   job.status = status
   job.step = step
   job.finishedAt = new Date().toISOString()
+  job.durationMs = now - new Date(job.startedAt).getTime()
+  delete job.currentStageStartedAt
+  const stages = Object.entries(job.timings)
+    .map(([name, durationMs]) => `${name}=${(durationMs / 1000).toFixed(1)}s`)
+    .join(', ')
+  job.logs.push(
+    `Timing: total=${(job.durationMs / 1000).toFixed(1)}s; launchMode=${job.launchMode}; ${stages}`,
+  )
   broadcastJob(job)
+}
+
+function jobEvidence(job) {
+  return {
+    jobId: job.id,
+    packId: job.packId,
+    platform: job.platform,
+    target: job.target,
+    status: job.status,
+    step: job.step,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    durationMs: job.durationMs,
+    timings: { ...job.timings },
+    skipped: [...job.skipped],
+    launchMode: job.launchMode,
+  }
 }
 
 function sleep(ms) {
@@ -757,6 +1705,30 @@ function packProfile(pack, secrets, state = readState()) {
   }
 }
 
+export function sdkCredentialContextFingerprint(pack, runtime, platform) {
+  const apiKey = String(pack.secrets?.['braze.apiKey'] || '').trim()
+  const endpoint = String(pack.secrets?.['braze.endpoint'] || '').trim()
+  if (!apiKey || !endpoint) return ''
+  if (platform !== 'android' && platform !== 'ios') return ''
+  return createHash('sha256')
+    .update([
+      `${platform}-sdk-credential-context/v1`,
+      String(pack.id || '').trim() || 'default',
+      String(runtime?.configHash || '').trim(),
+      apiKey,
+      endpoint,
+    ].join('\0'))
+    .digest('hex')
+}
+
+export function androidSdkCredentialContextFingerprint(pack, runtime) {
+  return sdkCredentialContextFingerprint(pack, runtime, 'android')
+}
+
+export function iosSdkCredentialContextFingerprint(pack, runtime) {
+  return sdkCredentialContextFingerprint(pack, runtime, 'ios')
+}
+
 function credentialPayload(packId) {
   const pack = getDemoPack(packId)
   const secrets = pack.secrets || {}
@@ -838,16 +1810,26 @@ function publicPack(pack) {
   return rest
 }
 
+export function selectFreshRuntimeManifest(generated, computed) {
+  if (
+    generated?.id === computed?.id &&
+    generated?.configHash === computed?.configHash &&
+    generated?.runtimeHash === computed?.runtimeHash
+  ) return generated
+  return computed
+}
+
 function runtimeForPack(pack) {
+  const computed = createRuntimeManifest(pack)
   if (fs.existsSync(generatedRuntimeManifestPath)) {
     try {
       const manifest = JSON.parse(fs.readFileSync(generatedRuntimeManifestPath, 'utf8'))
-      if (manifest.id === pack.id) return manifest
+      return selectFreshRuntimeManifest(manifest, computed)
     } catch {
       // Fall through to a computed manifest for display.
     }
   }
-  return createRuntimeManifest(pack)
+  return computed
 }
 
 function runtimeWarnings(manifest, state = readState()) {
@@ -862,13 +1844,328 @@ function runtimeWarnings(manifest, state = readState()) {
   if (deviceRuntime && deviceRuntime.id && deviceRuntime.id !== manifest.id) {
     warnings.push(`${deviceRuntime.platform} reported pack ${deviceRuntime.id}, expected ${manifest.id}.`)
   }
-  if (deviceRuntime && deviceRuntime.configHash && deviceRuntime.configHash !== manifest.configHash) {
-    warnings.push(`${deviceRuntime.platform} reported hash ${deviceRuntime.configHash}, expected ${manifest.configHash}.`)
+  const expectedHash = manifest.runtimeHash || manifest.configHash
+  const reportedHash = deviceRuntime?.runtimeHash || deviceRuntime?.configHash
+  if (deviceRuntime && reportedHash && reportedHash !== expectedHash) {
+    warnings.push(`${deviceRuntime.platform} reported runtime hash ${reportedHash}, expected ${expectedHash}.`)
   }
   if (deviceRuntime && deviceRuntime.externalId && state.activeExternalId && deviceRuntime.externalId !== state.activeExternalId) {
     warnings.push(`${deviceRuntime.platform} reported user ${deviceRuntime.externalId}, expected ${state.activeExternalId}.`)
   }
   return warnings
+}
+
+export function operatorPersonas(pack, state = readState()) {
+  const seen = new Set()
+  const defaultExternalId = String(pack.android?.defaultExternalId || pack.brand?.demoUser?.externalId || '')
+  const defaultDisplayName = String(pack.brand?.demoUser?.firstName || pack.brand?.demoUser?.displayName || '')
+  const defaultPersona = defaultExternalId
+    ? [{
+        id: `pack_default_${createHash('sha256').update(`${pack.id}:${defaultExternalId}`).digest('hex').slice(0, 12)}`,
+        label: defaultDisplayName || 'Default persona',
+        description: 'Default named persona for this demo pack.',
+        type: 'change_user',
+        payload: { externalId: defaultExternalId, displayName: defaultDisplayName },
+      }]
+    : []
+  return [
+    ...defaultPersona,
+    ...(Array.isArray(pack.launcher?.presets) ? pack.launcher.presets : [])
+      .filter((preset) => preset.type === 'change_user'),
+  ]
+    .map((preset) => ({
+      id: String(preset.id || ''),
+      label: String(preset.label || preset.payload?.displayName || preset.payload?.externalId || ''),
+      description: String(preset.description || ''),
+      externalId: String(preset.payload?.externalId || ''),
+      displayName: String(preset.payload?.displayName || ''),
+    }))
+    .filter((persona) => persona.id && persona.externalId)
+    .filter((persona) => {
+      if (seen.has(persona.externalId)) return false
+      seen.add(persona.externalId)
+      return true
+    })
+}
+
+export function activeOperatorPersona(pack, state, personas = operatorPersonas(pack, state)) {
+  const externalId = state.activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId
+  const matched = personas.find((persona) => persona.externalId === externalId)
+  if (matched) return { id: matched.id, label: matched.label, description: matched.description, approved: true }
+  return {
+    id: `active:${createHash('sha256').update(externalId).digest('hex').slice(0, 12)}`,
+    label: 'Unapproved active user',
+    description: 'Select one of the named demo personas before presenting.',
+    approved: false,
+  }
+}
+
+export function isCurrentLauncherEvidence(evidence, instanceId = launcherInstanceId) {
+  return Boolean(evidence && evidence.observedByLauncherInstanceId === instanceId)
+}
+
+export function withLauncherObservation(evidence, instanceId = launcherInstanceId, observedAt = new Date().toISOString()) {
+  if (!evidence) return null
+  return {
+    ...evidence,
+    observedByLauncherInstanceId: instanceId,
+    observedAt,
+  }
+}
+
+export function runtimeEvidenceIsComplete(evidence) {
+  return Boolean(
+    evidence?.id &&
+    (evidence.runtimeHash || evidence.configHash) &&
+    evidence.sourceUrl &&
+    evidence.deviceId &&
+    evidence.externalId,
+  )
+}
+
+export function liveWebHazard(state, { ownedProcessRunning = false } = {}) {
+  const liveWeb = state?.development?.liveWeb || {}
+  const nativeOverride = Boolean(state?.deviceRuntime?.platform === 'android' && state.deviceRuntime.sourceOverride)
+  const transitional = ['starting', 'server_ready', 'switching', 'clearing'].includes(liveWeb.status)
+  const recordedMayBeActive = Boolean(liveWeb.overrideMayBeActive || liveWeb.enabled)
+  const mayBeActive = Boolean(nativeOverride || recordedMayBeActive || transitional || ownedProcessRunning)
+  const confirmedActive = Boolean(
+    liveWeb.enabled &&
+    liveWeb.status === 'active' &&
+    ownedProcessRunning &&
+    nativeOverride,
+  )
+  const uncertain = Boolean(
+    (mayBeActive && !confirmedActive) ||
+    (liveWeb.status === 'error' && liveWeb.overrideMayBeActive !== false),
+  )
+  return {
+    mayBeActive,
+    confirmedActive,
+    uncertain,
+    nativeOverride,
+    transitional,
+    status: String(liveWeb.status || 'stopped'),
+  }
+}
+
+function currentLiveWebHazard(state = readState()) {
+  return liveWebHazard(state, {
+    ownedProcessRunning: Boolean(liveWebProcess && liveWebProcess.exitCode === null),
+  })
+}
+
+export function operatorBaseBlockers(pack, runtime, state = readState(), instanceId = launcherInstanceId) {
+  const blockers = []
+  const platform = state.activePlatform === 'ios' ? 'ios' : 'android'
+  const device = state.deviceRuntime
+  const personas = operatorPersonas(pack, state)
+  const activeExternalId = state.activeExternalId || pack.android?.defaultExternalId || pack.brand?.demoUser?.externalId || ''
+  const expectedHash = runtime.runtimeHash || runtime.configHash
+  const reportedHash = device?.runtimeHash || device?.configHash
+  const liveWeb = state.development?.liveWeb
+  const ownedProcessRunning = instanceId === launcherInstanceId && Boolean(liveWebProcess && liveWebProcess.exitCode === null)
+  const liveHazard = liveWebHazard(state, { ownedProcessRunning })
+  const expectedSource = liveHazard.confirmedActive && platform === 'android'
+    ? liveWeb.deviceUrl
+    : runtime.expectedSources?.[platform]
+  const add = (code, label, detail) => blockers.push({ code, label, detail })
+  const sdkCredentialsComplete = Boolean(
+    String(pack.secrets?.['braze.apiKey'] || '').trim() &&
+    String(pack.secrets?.['braze.endpoint'] || '').trim(),
+  )
+
+  const activeJob = Array.from(jobs.values()).find((job) => job.status === 'running')
+  if (activeJob) add('launcher_busy', 'Launcher is working', activeJob.step || 'Preparing the selected runtime.')
+  if (!sdkCredentialsComplete) {
+    add(
+      'sdk_credentials_missing',
+      'Selected-pack SDK credentials missing',
+      'Configure a Braze SDK API key and endpoint for the active demo pack before presenting.',
+    )
+  }
+  if (!personas.some((persona) => persona.externalId === activeExternalId)) {
+    add('persona_unapproved', 'Unapproved active user', 'Select one of the named demo personas before presenting.')
+  }
+  if (!device) add('device_missing', 'No runtime evidence', 'Launch the selected app and wait for native runtime telemetry.')
+  else {
+    if (!isCurrentLauncherEvidence(device, instanceId)) {
+      add('device_evidence_stale', 'Runtime evidence is stale', 'Wait for native runtime telemetry observed by this launcher instance.')
+    }
+    if (device.platform !== platform) add('platform_mismatch', 'Wrong platform', `Device reported ${device.platform || 'unknown'}, expected ${platform}.`)
+    if (device.id !== runtime.id) add('pack_mismatch', 'Wrong pack', `Device reported ${device.id || 'none'}, expected ${runtime.id}.`)
+    if (!reportedHash || reportedHash !== expectedHash) {
+      add('runtime_hash_mismatch', 'Stale runtime', `Device runtime hash ${reportedHash || 'missing'} does not match ${expectedHash}.`)
+    }
+    if (expectedSource && device.sourceUrl !== expectedSource) {
+      add('source_mismatch', 'Wrong render source', `Device reported ${device.sourceUrl || 'none'}, expected ${expectedSource}.`)
+    }
+    if (activeExternalId && device.externalId !== activeExternalId) {
+      add('identity_mismatch', 'Wrong persona', 'The native app has not applied the selected named persona.')
+    }
+    if (sdkCredentialsComplete) {
+      const expectedCredentialContext = sdkCredentialContextFingerprint(pack, runtime, platform)
+      const platformLabel = platform === 'android' ? 'Android' : 'iOS'
+      if (device.sdkConfigured !== true || !device.sdkCredentialContextFingerprint) {
+        add(
+          'sdk_credential_context_missing',
+          `${platformLabel} SDK workspace is not confirmed`,
+          'Relaunch the selected pack and wait for its current SDK credential context telemetry.',
+        )
+      } else if (device.sdkCredentialContextFingerprint !== expectedCredentialContext) {
+        add(
+          'sdk_credential_context_mismatch',
+          `${platformLabel} SDK workspace mismatch`,
+          'The running app is configured for a different SDK workspace context. Re-apply and relaunch the selected pack.',
+        )
+      }
+    }
+  }
+  if (platform === 'android') {
+    if (liveHazard.uncertain) {
+      add('live_web_uncertain', 'Development source is uncertain', 'Restore and confirm the bundled Android source before continuing.')
+    }
+  }
+  if (platform === 'android' || platform === 'ios') {
+    const source = state.deviceSourceReadiness
+    const sourceHash = source?.runtimeHash || source?.configHash
+    const expectedOverride = platform === 'android' ? liveHazard.confirmedActive : false
+    if (
+      !isCurrentLauncherEvidence(source, instanceId) ||
+      source?.platform !== platform ||
+      source?.renderConfirmed !== true ||
+      source?.id !== runtime.id ||
+      sourceHash !== expectedHash ||
+      source?.sourceUrl !== expectedSource ||
+      source?.sourceOverride !== expectedOverride
+    ) {
+      add('source_not_confirmed', 'Render source is not confirmed', `Wait for ${platform === 'android' ? 'Android' : 'iOS'} to render and confirm ${expectedSource || 'the expected source'}.`)
+    }
+  }
+  if (platform === 'android') {
+    const trust = latestActiveTrustDiagnostics(state, instanceId)
+    if (!trust?.ready) add('trust_not_ready', 'HTTPS trust not ready', trust?.error || 'Run Android trust preparation and diagnostics.')
+  }
+  return blockers
+}
+
+function operatorVariants(preset) {
+  const variants = Array.isArray(preset.presenterVariants) ? preset.presenterVariants : []
+  return variants.slice(0, 12).map((variant) => ({
+    id: String(variant.id || ''),
+    label: String(variant.label || variant.name || variant.id || 'Variant'),
+    description: String(variant.description || ''),
+    isDefault: Boolean(variant.isDefault || variant.default),
+  })).filter((variant) => variant.id)
+}
+
+function controlBlockReason(preset, state, baseBlockers) {
+  if (baseBlockers.length) return baseBlockers[0].detail
+  if (preset.validation && preset.validation.ok === false) return preset.validation.errors?.join(' ') || 'Control validation failed.'
+  const platform = state.activePlatform === 'ios' ? 'ios' : 'android'
+  if (preset.platform && preset.platform !== 'host' && preset.platform !== platform) {
+    return `This control is approved for ${preset.platform}, not ${platform}.`
+  }
+  const { pack, secrets } = activePackAndSecrets(state)
+  if (sourceForPreset(preset) === 'braze_rest' && !restCredentialStatus(pack, secrets).configured) {
+    return 'Braze REST credentials are not available in this launcher session.'
+  }
+  if (preset.requiresPushToken) {
+    return pushReadinessBlockReason(latestActivePushReadiness(state), {
+      platform,
+      externalId: state.activeExternalId || '',
+    }) || ''
+  }
+  return ''
+}
+
+export function presenterControlPresets(pack, state) {
+  const controlState = controlStateForPack(state, pack.id)
+  return controlState.pinned
+    .map((id) => findControlById(pack, state, id))
+    .filter(Boolean)
+    .filter((preset) => preset.type !== 'change_user' && !controlState.hidden.includes(preset.id))
+    .slice(0, 7)
+}
+
+function operatorControls(pack, state, baseBlockers) {
+  return presenterControlPresets(pack, state)
+    .map((preset) => {
+      const resolved = withPresetMeta(preset, state)
+      const blockReason = controlBlockReason(resolved, state, baseBlockers)
+      return {
+        id: resolved.id,
+        label: resolved.label,
+        description: resolved.description || '',
+        disabled: Boolean(blockReason),
+        blockReason,
+        variants: operatorVariants(resolved),
+      }
+    })
+}
+
+export function operatorExecutionMatchesContext(execution, context) {
+  return Boolean(
+    execution &&
+    execution.packId === context.packId &&
+    execution.runtimeHash === context.runtimeHash &&
+    execution.platform === context.platform &&
+    execution.personaId === context.personaId,
+  )
+}
+
+export function selectLatestOperatorExecution(executions, context) {
+  return Array.from(executions || [])
+    .filter((execution) => operatorExecutionMatchesContext(execution, context))
+    .sort((a, b) => {
+      const orderDifference = Number(b.createdOrder || 0) - Number(a.createdOrder || 0)
+      if (orderDifference) return orderDifference
+      const createdDifference = String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+      if (createdDifference) return createdDifference
+      return String(b.executionId || '').localeCompare(String(a.executionId || ''))
+    })[0] || null
+}
+
+function latestOperatorExecution(context) {
+  return selectLatestOperatorExecution(operatorExecutions.values(), context)
+}
+
+function operatorSnapshot() {
+  const state = readState()
+  const { pack } = activePackAndSecrets(state)
+  const runtime = runtimeForPack(pack)
+  const personas = operatorPersonas(pack, state)
+  const blockers = operatorBaseBlockers(pack, runtime, state)
+  const activePersona = activeOperatorPersona(pack, state, personas)
+  const executionContext = {
+    packId: pack.id,
+    runtimeHash: runtime.runtimeHash || runtime.configHash,
+    platform: state.activePlatform === 'ios' ? 'ios' : 'android',
+    personaId: activePersona.id,
+  }
+  const content = {
+    apiVersion: 'operator/v1',
+    launcherInstanceId,
+    staleAfterMs: 12_000,
+    active: {
+      pack: { id: pack.id, name: pack.name },
+      platform: state.activePlatform === 'ios' ? 'ios' : 'android',
+      runtime: { configHash: runtime.configHash, runtimeHash: runtime.runtimeHash || runtime.configHash },
+      persona: activePersona,
+    },
+    readiness: {
+      status: blockers.length ? 'blocked' : 'ready',
+      summary: blockers.length ? blockers[0].detail : 'Pack, credentials, runtime, source, identity, and trust are verified.',
+      blockers: blockers.slice(0, 5),
+    },
+    personas: personas.map(({ id, label, description }) => ({ id, label, description })),
+    controls: operatorControls(pack, state, blockers),
+    latestExecution: latestOperatorExecution(executionContext),
+  }
+  return {
+    ...content,
+    snapshotVersion: createHash('sha256').update(JSON.stringify(content)).digest('hex').slice(0, 20),
+  }
 }
 
 function pushReadinessKey(platform, deviceId, externalId) {
@@ -879,16 +2176,108 @@ function trustDiagnosticsKey(platform, deviceId, externalId) {
   return [platform || 'unknown', deviceId || 'unknown-device', externalId || 'unknown-user'].join('|')
 }
 
-function extractPushTelemetry(platform, body = {}) {
-  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
-  const runtime = body.runtime || payload.runtime || null
-  const diagnostics = payload.diagnostics && typeof payload.diagnostics === 'object' ? payload.diagnostics : {}
-  const nestedPush = payload.push && typeof payload.push === 'object'
-    ? payload.push
-    : diagnostics.push && typeof diagnostics.push === 'object'
-      ? diagnostics.push
-      : null
-  const push = nestedPush || payload
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function firstObject(...values) {
+  return values.map(objectValue).find((value) => Object.keys(value).length) || {}
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '')
+}
+
+export function extractRuntimeTelemetry(platform, body = {}, current = {}) {
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const runtime = firstObject(body.runtime, payload.runtime, result.runtime)
+  const sync = firstObject(body.sync, payload.sync, result.sync)
+  const sourceUrl = String(firstPresent(
+    body.sourceUrl,
+    payload.sourceUrl,
+    result.sourceUrl,
+    runtime.sourceUrl,
+    current.sourceUrl,
+    '',
+  ))
+  const sourceMode = String(firstPresent(
+    body.sourceMode,
+    payload.sourceMode,
+    result.sourceMode,
+    runtime.sourceMode,
+    current.sourceMode,
+    '',
+  ))
+  const sourceOverride = firstPresent(
+    body.sourceOverride,
+    payload.sourceOverride,
+    result.sourceOverride,
+    runtime.sourceOverride,
+    current.sourceOverride,
+  )
+  const evidence = {
+    ...current,
+    platform,
+    id: String(firstPresent(runtime.id, body.id, payload.id, result.id, current.id, '')),
+    configHash: String(firstPresent(runtime.configHash, body.configHash, payload.configHash, result.configHash, current.configHash, '')),
+    runtimeHash: String(firstPresent(runtime.runtimeHash, body.runtimeHash, payload.runtimeHash, result.runtimeHash, current.runtimeHash, '')),
+    deviceId: String(firstPresent(runtime.deviceId, body.deviceId, payload.deviceId, result.deviceId, current.deviceId, '')),
+    externalId: String(firstPresent(runtime.externalId, body.externalId, payload.externalId, result.externalId, current.externalId, '')),
+    sdkConfigured: firstPresent(
+      runtime.sdkConfigured,
+      body.sdkConfigured,
+      payload.sdkConfigured,
+      result.sdkConfigured,
+      current.sdkConfigured,
+      false,
+    ) === true,
+    sdkCredentialContextFingerprint: String(firstPresent(
+      runtime.sdkCredentialContextFingerprint,
+      body.sdkCredentialContextFingerprint,
+      payload.sdkCredentialContextFingerprint,
+      result.sdkCredentialContextFingerprint,
+      current.sdkCredentialContextFingerprint,
+      '',
+    )),
+    sourceUrl,
+    sourceMode,
+    launcherInstanceId: String(firstPresent(
+      body.launcherInstanceId,
+      payload.launcherInstanceId,
+      result.launcherInstanceId,
+      sync.launcherInstanceId,
+      current.launcherInstanceId,
+      '',
+    )),
+    executionId: String(firstPresent(
+      body.executionId,
+      payload.executionId,
+      result.executionId,
+      sync.executionId,
+      current.executionId,
+      '',
+    )),
+  }
+  if (sourceOverride !== undefined) evidence.sourceOverride = Boolean(sourceOverride)
+  return evidence
+}
+
+export function extractPushTelemetry(platform, body = {}) {
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const runtime = firstObject(body.runtime, payload.runtime, result.runtime)
+  const diagnostics = firstObject(payload.diagnostics, result.diagnostics)
+  const readiness = objectValue(result.readiness)
+  const nestedPush = firstObject(
+    payload.push,
+    objectValue(payload.diagnostics).push,
+    readiness.push,
+    objectValue(result.diagnostics).push,
+    result.push,
+  )
+  const hasNestedPush = Object.keys(nestedPush).length > 0
+  const push = hasNestedPush ? nestedPush : payload
   const type = body.type || body.action || ''
   const pushType = ['fcm_token', 'apns_token', 'push_permission', 'push_readiness', 'runtime_ready'].includes(type)
   const hasMeaningfulPushState =
@@ -898,12 +2287,16 @@ function extractPushTelemetry(platform, body = {}) {
     Object.hasOwn(push, 'defaultChannelId') ||
     Object.hasOwn(push, 'highVisibilityChannelId') ||
     Object.hasOwn(push, 'lastPush')
-  if (!pushType && !nestedPush && !hasMeaningfulPushState) return null
-  if (pushType && !nestedPush && !hasMeaningfulPushState) return null
+  if (!pushType && !hasNestedPush && !hasMeaningfulPushState) return null
+  if (pushType && !hasNestedPush && !hasMeaningfulPushState) return null
 
   const externalId = String(body.externalId || push.externalId || runtime?.externalId || diagnostics.externalId || '').trim()
   const deviceId = String(push.sdkDeviceId || runtime?.deviceId || diagnostics.sdkDeviceId || body.deviceId || payload.deviceId || '').trim()
-  const status = normalizeSeverity(body.status || (push.tokenPresent ? 'success' : 'info'))
+  const status = normalizeSeverity(
+    hasNestedPush && Object.hasOwn(push, 'ready')
+      ? (push.ready ? 'success' : 'error')
+      : (body.status || (push.tokenPresent ? 'success' : 'info')),
+  )
   const tokenPresent = Boolean(push.tokenPresent)
   const permission = push.permission || payload.permission || ''
   const notificationsEnabled = Object.hasOwn(push, 'notificationsEnabled') ? push.notificationsEnabled : null
@@ -924,7 +2317,6 @@ function extractPushTelemetry(platform, body = {}) {
     ))
   )
   const ready = status === 'success' && tokenPresent && displayPossible
-  const result = body.result && typeof body.result === 'object' ? body.result : {}
   return {
     platform,
     deviceId,
@@ -955,12 +2347,12 @@ function extractPushTelemetry(platform, body = {}) {
     tokenPreview: push.tokenPreview || push.preview || payload.preview || '',
     tokenLength: push.tokenLength || payload.tokenLength || 0,
     retryScheduled: Boolean(push.retryScheduled),
-    registrationError: push.registrationError || result.error || '',
+    registrationError: push.registrationError || push.error || result.error || '',
     ts: new Date().toISOString(),
   }
 }
 
-function latestActivePushReadiness(state = readState()) {
+function latestActivePushReadiness(state = readState(), instanceId = launcherInstanceId) {
   const all = state.pushReadiness && typeof state.pushReadiness === 'object'
     ? Object.values(state.pushReadiness)
     : []
@@ -969,6 +2361,7 @@ function latestActivePushReadiness(state = readState()) {
   const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
   const matching = all
     .filter((entry) => entry && entry.platform === platform)
+    .filter((entry) => isCurrentLauncherEvidence(entry, instanceId))
     .filter((entry) => !externalId || entry.externalId === externalId)
     .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
   if (!deviceId) return matching[0] || null
@@ -1007,17 +2400,22 @@ function pushReadinessBlockReason(push, { platform = 'android', externalId = '' 
   return ''
 }
 
-function extractTrustTelemetry(platform, body = {}) {
-  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
-  const runtime = body.runtime || payload.runtime || null
-  const diagnostics = payload.diagnostics && typeof payload.diagnostics === 'object' ? payload.diagnostics : {}
-  const nestedTrust = payload.trust && typeof payload.trust === 'object'
-    ? payload.trust
-    : diagnostics.trust && typeof diagnostics.trust === 'object'
-      ? diagnostics.trust
-      : null
+export function extractTrustTelemetry(platform, body = {}) {
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const runtime = firstObject(body.runtime, payload.runtime, result.runtime)
+  const diagnostics = firstObject(payload.diagnostics, result.diagnostics)
+  const readiness = objectValue(result.readiness)
+  const nestedTrust = firstObject(
+    payload.trust,
+    objectValue(payload.diagnostics).trust,
+    readiness.trust,
+    objectValue(result.diagnostics).trust,
+    result.trust,
+  )
+  const hasNestedTrust = Object.keys(nestedTrust).length > 0
   const type = body.type || body.action || ''
-  const trust = nestedTrust || (type === 'trust_diagnostics' ? payload : null)
+  const trust = hasNestedTrust ? nestedTrust : (type === 'trust_diagnostics' ? payload : null)
   if (!trust || !Object.hasOwn(trust, 'ready')) return null
 
   const checks = Array.isArray(trust.checks) ? trust.checks : []
@@ -1044,7 +2442,7 @@ function extractTrustTelemetry(platform, body = {}) {
   }
 }
 
-function latestActiveTrustDiagnostics(state = readState()) {
+function latestActiveTrustDiagnostics(state = readState(), instanceId = launcherInstanceId) {
   const all = state.trustDiagnostics && typeof state.trustDiagnostics === 'object'
     ? Object.values(state.trustDiagnostics)
     : []
@@ -1053,9 +2451,238 @@ function latestActiveTrustDiagnostics(state = readState()) {
   const deviceId = state.deviceRuntime?.platform === platform ? state.deviceRuntime?.deviceId || '' : ''
   return all
     .filter((entry) => entry && entry.platform === platform)
+    .filter((entry) => isCurrentLauncherEvidence(entry, instanceId))
     .filter((entry) => !externalId || entry.externalId === externalId)
     .filter((entry) => !deviceId || !entry.deviceId || entry.deviceId === deviceId)
     .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))[0] || null
+}
+
+export function extractRenderSyncIdentity(body = {}) {
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const sync = firstObject(body.sync, payload.sync, result.sync)
+  const timestamp = Number(sync.timestamp)
+  return {
+    protocol: String(sync.protocol || ''),
+    sessionId: String(sync.sessionId || ''),
+    runtimeId: String(sync.runtimeId || ''),
+    configHash: String(sync.configHash || ''),
+    runtimeHash: String(sync.runtimeHash || ''),
+    timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null,
+  }
+}
+
+export function renderSyncIdentityMatchesRuntime(sync, runtime) {
+  return Boolean(
+    sync?.protocol === 'braze-demo-sync/v1' &&
+    sync?.runtimeId && sync.runtimeId === runtime?.id &&
+    sync?.configHash && sync.configHash === runtime?.configHash &&
+    sync?.runtimeHash && sync.runtimeHash === runtime?.runtimeHash
+  )
+}
+
+export function extractAndroidSourceReadiness(platform, body = {}) {
+  if (platform !== 'android' || body.type !== 'demo_source_ready') return null
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const runtime = extractRuntimeTelemetry(platform, body, {})
+  if (!runtimeEvidenceIsComplete(runtime)) return null
+  const status = normalizeSeverity(body.status || (result.renderConfirmed === true ? 'success' : 'error'))
+  const syncIdentity = extractRenderSyncIdentity(body)
+  const syncIdentityValid = renderSyncIdentityMatchesRuntime(syncIdentity, runtime)
+  const effectiveStatus = status === 'success' && !syncIdentityValid ? 'error' : status
+  const renderGeneration = Number(firstPresent(result.renderGeneration, payload.renderGeneration, body.renderGeneration))
+  return {
+    ...runtime,
+    syncIdentity,
+    syncIdentityValid,
+    renderConfirmed: effectiveStatus === 'success' && result.renderConfirmed === true,
+    renderGeneration: Number.isFinite(renderGeneration) ? renderGeneration : null,
+    status: effectiveStatus,
+    error: String(result.error || payload.error || (!syncIdentityValid ? 'Render sync identity did not match the reported native runtime.' : '')),
+    ts: new Date().toISOString(),
+  }
+}
+
+export function extractIosRenderReadiness(platform, body = {}) {
+  if (platform !== 'ios' || body.type !== 'runtime_ready') return null
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  const runtime = extractRuntimeTelemetry(platform, body, {})
+  if (!runtimeEvidenceIsComplete(runtime)) return null
+  const renderConfirmed = firstPresent(result.renderConfirmed, payload.renderConfirmed, body.renderConfirmed) === true
+  const status = normalizeSeverity(body.status || (renderConfirmed ? 'success' : 'error'))
+  const syncIdentity = extractRenderSyncIdentity(body)
+  const syncIdentityValid = renderSyncIdentityMatchesRuntime(syncIdentity, runtime)
+  const effectiveStatus = status === 'success' && !syncIdentityValid ? 'error' : status
+  const renderGeneration = Number(firstPresent(result.renderGeneration, payload.renderGeneration, body.renderGeneration))
+  return {
+    ...runtime,
+    syncIdentity,
+    syncIdentityValid,
+    renderConfirmed: effectiveStatus === 'success' && renderConfirmed,
+    renderGeneration: Number.isFinite(renderGeneration) ? renderGeneration : null,
+    status: effectiveStatus,
+    error: String(result.error || payload.error || (!syncIdentityValid ? 'Render sync identity did not match the reported native runtime.' : '')),
+    ts: new Date().toISOString(),
+  }
+}
+
+export function iosRuntimeEvidenceMatchesExpectation(runtime, expectation) {
+  if (!runtime || !expectation) return false
+  const runtimeHash = runtime.runtimeHash || runtime.configHash
+  return Boolean(
+    runtime.platform === 'ios' &&
+    runtime.launcherInstanceId === expectation.launcherInstanceId &&
+    runtime.executionId === expectation.executionId &&
+    runtime.id === expectation.expectedPackId &&
+    runtimeHash === expectation.expectedRuntimeHash &&
+    runtime.sourceUrl === expectation.expectedSource &&
+    runtime.sourceOverride === false &&
+    runtime.externalId === expectation.expectedExternalId
+  )
+}
+
+export function iosRenderReadinessMatchesExpectation(render, expectation) {
+  if (!render || !expectation) return false
+  const runtimeHash = render.runtimeHash || render.configHash
+  return Boolean(
+    render.platform === 'ios' &&
+    render.launcherInstanceId === expectation.launcherInstanceId &&
+    render.executionId === expectation.executionId &&
+    render.renderConfirmed === true &&
+    render.status === 'success' &&
+    render.id === expectation.expectedPackId &&
+    runtimeHash === expectation.expectedRuntimeHash &&
+    render.sourceUrl === expectation.expectedSource &&
+    render.sourceOverride === false
+  )
+}
+
+export function androidSourceReadinessMatchesExpectation(source, expectation) {
+  if (!source || !expectation) return false
+  const sourceHash = source.runtimeHash || source.configHash
+  return Boolean(
+    source.platform === 'android' &&
+    source.launcherInstanceId === expectation.launcherInstanceId &&
+    source.executionId === expectation.executionId &&
+    source.id === expectation.expectedPackId &&
+    sourceHash === expectation.expectedRuntimeHash &&
+    source.sourceUrl === expectation.expectedSource &&
+    source.sourceOverride === expectation.expectedOverride
+  )
+}
+
+export function shouldReplaceAndroidSourceEvidence(existing, incoming) {
+  if (!existing) return true
+  if (!incoming) return false
+  const previousGeneration = Number(existing.renderGeneration)
+  const incomingGeneration = Number(incoming.renderGeneration)
+  if (Number.isFinite(previousGeneration) && Number.isFinite(incomingGeneration)) {
+    if (incomingGeneration < previousGeneration) return false
+    if (incomingGeneration === previousGeneration && existing.renderConfirmed === true && incoming.renderConfirmed !== true) return false
+  }
+  return true
+}
+
+export function shouldReplaceIosRenderEvidence(existing, incoming) {
+  if (!existing) return true
+  if (!incoming || incoming.platform !== 'ios') return false
+  if (existing.platform !== 'ios') return true
+  if (
+    existing.launcherInstanceId &&
+    incoming.launcherInstanceId &&
+    existing.launcherInstanceId !== incoming.launcherInstanceId
+  ) return true
+
+  const previousHash = existing.runtimeHash || existing.configHash
+  const incomingHash = incoming.runtimeHash || incoming.configHash
+  if (
+    existing.id !== incoming.id ||
+    previousHash !== incomingHash ||
+    existing.deviceId !== incoming.deviceId ||
+    existing.sourceUrl !== incoming.sourceUrl
+  ) return true
+
+  const previousEpoch = Number(existing.syncIdentity?.timestamp)
+  const incomingEpoch = Number(incoming.syncIdentity?.timestamp)
+  const epochsAreOrdered = Number.isFinite(previousEpoch) && previousEpoch > 0 &&
+    Number.isFinite(incomingEpoch) && incomingEpoch > 0
+  if (epochsAreOrdered) {
+    if (incomingEpoch < previousEpoch) return false
+    if (incomingEpoch > previousEpoch) return true
+  } else {
+    const previousSession = String(existing.syncIdentity?.sessionId || '')
+    const incomingSession = String(incoming.syncIdentity?.sessionId || '')
+    if (previousSession && incomingSession && previousSession !== incomingSession) {
+      // Without an ordered webReady timestamp, prefer a known failure over an
+      // ambiguously ordered success. A failure may always replace success.
+      if (existing.renderConfirmed !== true && incoming.renderConfirmed === true) return false
+      return true
+    }
+  }
+
+  const previousGeneration = Number(existing.renderGeneration)
+  const incomingGeneration = Number(incoming.renderGeneration)
+  if (Number.isFinite(previousGeneration) && Number.isFinite(incomingGeneration)) {
+    if (incomingGeneration < previousGeneration) return false
+    if (incomingGeneration === previousGeneration && existing.renderConfirmed === true && incoming.renderConfirmed !== true) return false
+  }
+  return true
+}
+
+function beginAndroidSourceTransition({
+  executionId,
+  expectedSource,
+  expectedOverride,
+  expectedPackId,
+  expectedRuntimeHash,
+  since = Date.now(),
+}) {
+  if (!executionId) throw new Error('Android source transitions require an execution id.')
+  if (activeAndroidSourceTransition && activeAndroidSourceTransition.executionId !== executionId) {
+    throw liveWebConflict(`Wait for Android source transition ${activeAndroidSourceTransition.executionId} to finish.`)
+  }
+  const expectation = {
+    launcherInstanceId,
+    executionId,
+    expectedSource,
+    expectedOverride: Boolean(expectedOverride),
+    expectedPackId,
+    expectedRuntimeHash,
+    since,
+  }
+  activeAndroidSourceTransition = expectation
+  androidSourceEvidenceByExecution.delete(executionId)
+  updateState((state) => { state.deviceSourceReadiness = null })
+  return expectation
+}
+
+function finishAndroidSourceTransition(executionId) {
+  if (activeAndroidSourceTransition?.executionId === executionId) activeAndroidSourceTransition = null
+  while (androidSourceEvidenceByExecution.size > 20) {
+    androidSourceEvidenceByExecution.delete(androidSourceEvidenceByExecution.keys().next().value)
+  }
+}
+
+function observeAndroidSourceReadiness(candidate, observedAt) {
+  const expectation = activeAndroidSourceTransition
+  if (
+    !candidate ||
+    !expectation ||
+    candidate.launcherInstanceId !== launcherInstanceId ||
+    candidate.executionId !== expectation.executionId
+  ) return null
+  const observed = withLauncherObservation(candidate, launcherInstanceId, observedAt)
+  const existing = androidSourceEvidenceByExecution.get(candidate.executionId)
+  if (!shouldReplaceAndroidSourceEvidence(existing, observed)) return null
+  androidSourceEvidenceByExecution.set(candidate.executionId, observed)
+  return {
+    evidence: observed,
+    promote: observed.status === 'success' &&
+      observed.renderConfirmed === true &&
+      androidSourceReadinessMatchesExpectation(observed, expectation),
+  }
 }
 
 function recordAndroidTrustTimeout(externalId, reason) {
@@ -1077,6 +2704,7 @@ function recordAndroidTrustTimeout(externalId, reason) {
     error: 'Native Android trust diagnostics did not report before launch readiness timeout.',
     ts: new Date().toISOString(),
   }
+  Object.assign(telemetry, withLauncherObservation(telemetry))
   updateState((next) => {
     if (!next.trustDiagnostics || typeof next.trustDiagnostics !== 'object') next.trustDiagnostics = {}
     next.trustDiagnostics[trustDiagnosticsKey(platform, deviceId, externalId)] = telemetry
@@ -1121,16 +2749,23 @@ async function waitForAndroidTrustDiagnostics(job, { externalId, since }) {
   throw new Error(timeout.error)
 }
 
-async function waitForDeviceRuntime(job, { platform, packId, configHash, since }) {
+async function waitForDeviceRuntime(job, { platform, packId, configHash, runtimeHash, since }) {
   setJobStep(job, `Verifying installed ${platform === 'android' ? 'Android' : 'iOS'} runtime`)
   const deadline = Date.now() + trustDiagnosticsTimeoutMs
   let lastMismatch = null
   while (Date.now() < deadline) {
     const runtime = readState().deviceRuntime
     const runtimeTs = Date.parse(runtime?.ts || '')
-    if (runtime?.platform === platform && Number.isFinite(runtimeTs) && runtimeTs >= since) {
-      if (runtime.id === packId && runtime.configHash === configHash) {
-        pushLog(job, `${platform === 'android' ? 'Android' : 'iOS'} reported the selected pack and config hash.`)
+    if (
+      runtime?.platform === platform &&
+      isCurrentLauncherEvidence(runtime) &&
+      Number.isFinite(runtimeTs) &&
+      runtimeTs >= since
+    ) {
+      const reportedHash = runtime.runtimeHash || runtime.configHash
+      const expectedHash = runtimeHash || configHash
+      if (runtime.id === packId && reportedHash === expectedHash) {
+        pushLog(job, `${platform === 'android' ? 'Android' : 'iOS'} reported the selected pack and runtime hash.`)
         return runtime
       }
       lastMismatch = runtime
@@ -1140,10 +2775,362 @@ async function waitForDeviceRuntime(job, { platform, packId, configHash, since }
   if (lastMismatch) {
     throw new Error(
       `Installed ${platform} runtime mismatch: reported ${lastMismatch.id || '(no pack id)'} ` +
-      `(${lastMismatch.configHash || 'no config hash'}), expected ${packId} (${configHash}).`,
+      `(${lastMismatch.runtimeHash || lastMismatch.configHash || 'no runtime hash'}), expected ${packId} (${runtimeHash || configHash}).`,
     )
   }
   throw new Error(`Installed ${platform} runtime did not report its pack identity before the launch readiness timeout.`)
+}
+
+function rememberCorrelatedIosRuntime(candidate, body, observedAt) {
+  if (
+    candidate?.platform !== 'ios' ||
+    body?.type !== 'demo_command' ||
+    normalizeSeverity(body?.status || '') !== 'success' ||
+    candidate.launcherInstanceId !== launcherInstanceId ||
+    !candidate.executionId ||
+    !runtimeEvidenceIsComplete(candidate)
+  ) return null
+  const observed = withLauncherObservation(candidate, launcherInstanceId, observedAt)
+  iosRuntimeEvidenceByExecution.set(candidate.executionId, observed)
+  while (iosRuntimeEvidenceByExecution.size > 20) {
+    iosRuntimeEvidenceByExecution.delete(iosRuntimeEvidenceByExecution.keys().next().value)
+  }
+  return observed
+}
+
+async function waitForCorrelatedIosRuntimeAndRender(job, {
+  packId,
+  configHash,
+  runtimeHash,
+  externalId,
+  expectedSource,
+  since,
+  executionId,
+}) {
+  setJobStep(job, 'Verifying correlated iOS runtime and render')
+  const expected = {
+    launcherInstanceId,
+    executionId,
+    expectedPackId: packId,
+    expectedRuntimeHash: runtimeHash || configHash,
+    expectedExternalId: externalId,
+    expectedSource,
+  }
+  const deadline = Date.now() + trustDiagnosticsTimeoutMs
+  let lastRuntime = null
+  let lastRender = null
+  while (Date.now() < deadline) {
+    const runtime = iosRuntimeEvidenceByExecution.get(executionId)
+    const render = readState().deviceSourceReadiness
+    const runtimeTs = Date.parse(runtime?.observedAt || runtime?.ts || '')
+    const renderTs = Date.parse(render?.observedAt || render?.ts || '')
+    if (runtime && Number.isFinite(runtimeTs) && runtimeTs >= since) lastRuntime = runtime
+    if (
+      render?.platform === 'ios' &&
+      isCurrentLauncherEvidence(render) &&
+      render.launcherInstanceId === expected.launcherInstanceId &&
+      render.executionId === expected.executionId &&
+      Number.isFinite(renderTs) &&
+      renderTs >= since
+    ) {
+      lastRender = render
+      if (render.status === 'error' || render.renderConfirmed !== true) {
+        throw new Error(render.error || 'iOS reported that the configured web source failed to render.')
+      }
+    }
+    if (
+      lastRuntime &&
+      lastRender &&
+      iosRuntimeEvidenceMatchesExpectation(lastRuntime, expected) &&
+      iosRenderReadinessMatchesExpectation(lastRender, expected)
+    ) {
+      pushLog(job, `iOS confirmed correlated runtime ${expected.expectedRuntimeHash} and rendered ${expectedSource}.`)
+      return { runtime: lastRuntime, render: lastRender }
+    }
+    await sleep(250)
+  }
+  const runtimeSummary = lastRuntime
+    ? `${lastRuntime.id || 'no pack'} (${lastRuntime.runtimeHash || lastRuntime.configHash || 'no runtime hash'}, execution ${lastRuntime.executionId || 'none'})`
+    : 'no correlated runtime telemetry'
+  const renderSummary = lastRender
+    ? `${lastRender.sourceUrl || 'no source'} (renderConfirmed ${String(lastRender.renderConfirmed)})`
+    : 'no post-launch runtime_ready render telemetry'
+  throw new Error(
+    `iOS readiness timed out: runtime reported ${runtimeSummary}; render reported ${renderSummary}. ` +
+    `Expected ${packId} (${expected.expectedRuntimeHash}) at ${expectedSource} for execution ${executionId}.`,
+  )
+}
+
+async function waitForAndroidSource({
+  expectedSource,
+  expectedOverride,
+  expectedPackId = '',
+  expectedRuntimeHash = '',
+  since,
+  executionId = '',
+  job = null,
+}) {
+  if (!executionId) throw new Error('Android source confirmation requires a correlated execution id.')
+  const expectation = activeAndroidSourceTransition
+  if (
+    !expectation ||
+    expectation.executionId !== executionId ||
+    expectation.launcherInstanceId !== launcherInstanceId
+  ) {
+    throw new Error(`Android source transition ${executionId} is not active in this launcher.`)
+  }
+  if (job) setJobStep(job, expectedOverride ? 'Confirming Android live-web source' : 'Confirming bundled Android source')
+  const deadline = Date.now() + trustDiagnosticsTimeoutMs
+  let lastEvidence = null
+  while (Date.now() < deadline) {
+    const source = androidSourceEvidenceByExecution.get(executionId)
+    const runtimeTs = Date.parse(source?.ts || '')
+    if (
+      source?.platform === 'android' &&
+      isCurrentLauncherEvidence(source) &&
+      Number.isFinite(runtimeTs) &&
+      runtimeTs >= since &&
+      source?.launcherInstanceId === launcherInstanceId &&
+      source?.executionId === executionId
+    ) {
+      lastEvidence = source
+      if (source.status === 'error' || source.renderConfirmed !== true) {
+        throw new Error(source.error || 'Android reported that the requested web source failed to render.')
+      }
+      const sourceHash = source.runtimeHash || source.configHash
+      const runtimeMatches = (!expectedPackId || source.id === expectedPackId) &&
+        (!expectedRuntimeHash || sourceHash === expectedRuntimeHash)
+      if (runtimeMatches && source.sourceUrl === expectedSource && source.sourceOverride === expectedOverride) {
+        if (job) pushLog(job, `Android confirmed ${expectedOverride ? 'live-web' : 'bundled'} source ${expectedSource}.`)
+        return source
+      }
+    }
+    await sleep(250)
+  }
+  const reported = lastEvidence
+    ? `${lastEvidence.sourceUrl || 'no source'} (override ${String(lastEvidence.sourceOverride)})`
+    : 'no correlated source telemetry'
+  throw new Error(`Android source confirmation timed out: reported ${reported}, expected ${expectedSource} (override ${expectedOverride}).`)
+}
+
+function liveWebConflict(message) {
+  const error = new Error(message)
+  error.statusCode = 409
+  return error
+}
+
+async function runLiveWebTransition(label, task) {
+  if (liveWebTransition) throw liveWebConflict(`Wait for the current live-web transition (${liveWebTransition.label}) to finish.`)
+  const transition = { label, promise: null }
+  transition.promise = Promise.resolve().then(task)
+  liveWebTransition = transition
+  try {
+    return await transition.promise
+  } finally {
+    if (liveWebTransition === transition) liveWebTransition = null
+  }
+}
+
+async function clearAndroidWebOverride({ reason = 'manual_restore', stopServer = true } = {}) {
+  const state = readState()
+  const { pack } = activePackAndSecrets(state)
+  const runtime = runtimeForPack(pack)
+  const executionId = `live_web_disable_${randomUUID()}`
+  const since = Date.now()
+  beginAndroidSourceTransition({
+    executionId,
+    expectedSource: runtime.expectedSources?.android || 'file:///android_asset/demo/index.html',
+    expectedOverride: false,
+    expectedPackId: pack.id,
+    expectedRuntimeHash: runtime.runtimeHash || runtime.configHash,
+    since,
+  })
+  setLiveWebState({
+    enabled: false,
+    overrideMayBeActive: true,
+    status: 'clearing',
+    pid: liveWebProcess?.pid || null,
+    error: '',
+  })
+  try {
+    await sendDeviceCommand({
+      action: 'clearWebSourceOverride',
+      externalId: state.activeExternalId || '',
+      launcherInstanceId,
+      executionId,
+      payload: { reason },
+    }, 'android')
+    await waitForAndroidSource({
+      expectedSource: runtime.expectedSources?.android || 'file:///android_asset/demo/index.html',
+      expectedOverride: false,
+      expectedPackId: pack.id,
+      expectedRuntimeHash: runtime.runtimeHash || runtime.configHash,
+      since,
+      executionId,
+    })
+  } finally {
+    finishAndroidSourceTransition(executionId)
+  }
+  if (stopServer) await stopLiveWebProcess({ bundledSourceConfirmed: true })
+  else setLiveWebState({
+    enabled: false,
+    overrideMayBeActive: false,
+    status: 'stopped',
+    pid: liveWebProcess?.pid || null,
+    error: '',
+  })
+  addLedger({
+    source: 'launcher',
+    platform: 'android',
+    transport: 'launcher',
+    type: 'live_web',
+    label: 'Restored bundled Android web source',
+    status: 'success',
+    payload: { launcherInstanceId, executionId, reason },
+  })
+  return publicState()
+}
+
+async function enableAndroidLiveWebInternal() {
+  const state = readState()
+  if (state.activePlatform !== 'android') throw liveWebConflict('Live-web mode is Diagnostics-only and available for Android, not iOS.')
+  const runningJob = Array.from(jobs.values()).find((job) => job.status === 'running')
+  if (runningJob) throw liveWebConflict(`Wait for launcher job ${runningJob.id} to finish before enabling live-web mode.`)
+  const { pack } = activePackAndSecrets(state)
+  const runtime = runtimeForPack(pack)
+  const device = state.deviceRuntime
+  const expectedHash = runtime.runtimeHash || runtime.configHash
+  const reportedHash = device?.runtimeHash || device?.configHash
+  if (
+    device?.platform !== 'android' ||
+    !isCurrentLauncherEvidence(device) ||
+    device.id !== pack.id ||
+    reportedHash !== expectedHash
+  ) {
+    throw liveWebConflict('Launch the selected bundled Android pack and confirm its runtime hash before enabling live-web mode.')
+  }
+  if (state.activeExternalId && device.externalId !== state.activeExternalId) {
+    throw liveWebConflict('Apply the selected Android persona before enabling live-web mode.')
+  }
+  const bundledSource = state.deviceSourceReadiness
+  const bundledSourceHash = bundledSource?.runtimeHash || bundledSource?.configHash
+  if (
+    !isCurrentLauncherEvidence(bundledSource) ||
+    bundledSource?.renderConfirmed !== true ||
+    bundledSource?.id !== pack.id ||
+    bundledSourceHash !== expectedHash ||
+    bundledSource?.sourceUrl !== (runtime.expectedSources?.android || 'file:///android_asset/demo/index.html') ||
+    bundledSource?.sourceOverride !== false
+  ) {
+    throw liveWebConflict('Confirm one healthy bundled Android render before enabling live-web mode.')
+  }
+
+  const preexistingHazard = currentLiveWebHazard()
+  if (preexistingHazard.mayBeActive) {
+    throw liveWebConflict('Restore the existing or uncertain Android development override before enabling it again.')
+  }
+
+  await startLiveWebProcess()
+  const executionId = `live_web_enable_${randomUUID()}`
+  const since = Date.now()
+  beginAndroidSourceTransition({
+    executionId,
+    expectedSource: liveWebDeviceUrl,
+    expectedOverride: true,
+    expectedPackId: pack.id,
+    expectedRuntimeHash: expectedHash,
+    since,
+  })
+  setLiveWebState({
+    enabled: false,
+    overrideMayBeActive: true,
+    status: 'switching',
+    pid: liveWebProcess?.pid || null,
+    error: '',
+  })
+  try {
+    await sendDeviceCommand({
+      action: 'setWebSourceOverride',
+      externalId: state.activeExternalId || '',
+      launcherInstanceId,
+      executionId,
+      payload: { url: liveWebHostUrl },
+    }, 'android')
+    await waitForAndroidSource({
+      expectedSource: liveWebDeviceUrl,
+      expectedOverride: true,
+      expectedPackId: pack.id,
+      expectedRuntimeHash: expectedHash,
+      since,
+      executionId,
+    })
+    const confirmedAt = new Date().toISOString()
+    setLiveWebState({
+      enabled: true,
+      overrideMayBeActive: true,
+      status: 'active',
+      pid: liveWebProcess?.pid || null,
+      startedAt: liveWebStartedAt,
+      confirmedAt,
+      error: '',
+    })
+    addLedger({
+      source: 'launcher',
+      platform: 'android',
+      transport: 'launcher',
+      type: 'live_web',
+      label: 'Enabled Android live-web development override',
+      status: 'warning',
+      payload: { hostUrl: liveWebHostUrl, deviceUrl: liveWebDeviceUrl, launcherInstanceId, executionId },
+      result: { confirmedAt },
+    })
+    return publicState()
+  } catch (error) {
+    finishAndroidSourceTransition(executionId)
+    let rollbackError = null
+    try {
+      await clearAndroidWebOverride({ reason: 'enable_rollback', stopServer: true })
+    } catch (rollbackFailure) {
+      rollbackError = rollbackFailure
+      setLiveWebState({
+        enabled: false,
+        overrideMayBeActive: true,
+        status: 'error',
+        pid: liveWebProcess?.pid || null,
+        error: `${error.message || String(error)} Rollback also failed: ${rollbackFailure.message || String(rollbackFailure)}`,
+      })
+    }
+    if (rollbackError) error.details = { ...(error.details || {}), rollbackError: rollbackError.message || String(rollbackError) }
+    throw error
+  } finally {
+    finishAndroidSourceTransition(executionId)
+  }
+}
+
+async function enableAndroidLiveWeb() {
+  return runLiveWebTransition('enable', enableAndroidLiveWebInternal)
+}
+
+async function disableAndroidLiveWeb() {
+  return runLiveWebTransition('restore bundled mode', async () => {
+    const hazard = currentLiveWebHazard()
+    if (!hazard.mayBeActive && !hazard.uncertain) {
+      await stopLiveWebProcess()
+      return publicState()
+    }
+  try {
+      return await clearAndroidWebOverride({ reason: 'manual_restore', stopServer: true })
+  } catch (error) {
+    setLiveWebState({
+      enabled: false,
+        overrideMayBeActive: true,
+      status: 'error',
+      pid: liveWebProcess?.pid || null,
+      error: error.message || String(error),
+    })
+    throw error
+  }
+  })
 }
 
 function ledgerPlatformFor(entry) {
@@ -1409,6 +3396,12 @@ function iosLauncherCallbackUrl() {
 }
 
 function createJob(packId, options = {}) {
+  const running = Array.from(jobs.values()).find((candidate) => candidate.status === 'running')
+  if (running) {
+    const error = new Error(`Launcher job ${running.id} is already running (${running.step}).`)
+    error.statusCode = 409
+    throw error
+  }
   const platform = options.platform === 'ios' ? 'ios' : 'android'
   const target = platform === 'ios' ? (options.simulator || 'booted') : resolvedAndroidAvd(options)
   const id = `job_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -1421,6 +3414,11 @@ function createJob(packId, options = {}) {
     step: 'Queued',
     startedAt: new Date().toISOString(),
     finishedAt: null,
+    durationMs: null,
+    timings: {},
+    skipped: [],
+    launchMode: 'pending',
+    currentStageStartedAt: Date.now(),
     logs: [],
   }
   jobs.set(id, job)
@@ -1445,6 +3443,7 @@ function createJob(packId, options = {}) {
         error: error.message || String(error),
         step: failedStep,
         staleInstallPossible,
+        job: jobEvidence(job),
       },
     })
   })
@@ -1453,6 +3452,26 @@ function createJob(packId, options = {}) {
 
 async function runApplyBuildLaunch(job, options = {}) {
   const platform = options.platform === 'ios' ? 'ios' : 'android'
+  const initialState = readState()
+  const initialLiveHazard = currentLiveWebHazard(initialState)
+  let deferredBundledRecovery = false
+  if (initialLiveHazard.mayBeActive) {
+    const safeRecoveryLaunch = platform === 'android' && options.run !== false && !options.applyOnly && job.packId === initialState.activePackId
+    if (!safeRecoveryLaunch) {
+      throw liveWebConflict('Restore the bundled Android source before applying, building, switching packs, or launching iOS.')
+    }
+    deferredBundledRecovery = true
+    setJobStep(job, 'Deferring bundled source recovery')
+    await stopLiveWebProcess({ preserveStatus: true })
+    setLiveWebState({
+      enabled: false,
+      overrideMayBeActive: true,
+      status: 'clearing',
+      pid: null,
+      error: 'Bundled source recovery is queued for the correlated post-launch preparation command.',
+    })
+    appendJobLogs(job, ['Deferred Android source recovery until the expected app is launched; no pre-device command was sent.'])
+  }
   setJobStep(job, 'Applying demo pack')
   const previousState = readState()
   const previousPackId = previousState.activePackId
@@ -1471,18 +3490,30 @@ async function runApplyBuildLaunch(job, options = {}) {
       state.activeDisplayName = pack.brand.demoUser.firstName || ''
     }
   })
-  appendJobLogs(job, [`Applied demo pack: ${pack.name}`])
+  const changedApplyParts = Object.entries(pack.applyChanges || {}).filter(([, changed]) => changed).map(([name]) => name)
+  if (!changedApplyParts.length) job.skipped.push('semantic pack apply')
+  appendJobLogs(job, [
+    `Applied demo pack: ${pack.name}`,
+    changedApplyParts.length ? `Changed apply outputs: ${changedApplyParts.join(', ')}` : 'Pack apply was a semantic no-op.',
+  ])
 
   if (options.applyOnly) {
     finishJob(job, 'complete', 'Applied')
-    addLedger({ source: 'launcher', type: 'job', label: `Applied ${pack.name}`, status: 'success', platform })
+    addLedger({ source: 'launcher', type: 'job', label: `Applied ${pack.name}`, status: 'success', platform, result: { job: jobEvidence(job) } })
     return
   }
 
   setJobStep(job, 'Preparing web assets')
   const webBuild = packWebBuildCommand(pack)
   if (webBuild) {
-    await runCommand(webBuild.command, webBuild.args, { cwd: webBuild.cwd }, job)
+    const inputHash = webBuildInputHash(pack, webBuild)
+    if (reusableWebBuild(pack, inputHash)) {
+      job.skipped.push('web build')
+      appendJobLogs(job, [`Reusing web build for runtime ${pack.runtimeManifest.runtimeHash}.`])
+    } else {
+      await runCommand(webBuild.command, webBuild.args, { cwd: webBuild.cwd }, job)
+      rememberWebBuild(pack, inputHash)
+    }
   } else {
     const distDir = packWebDistDir(pack)
     const indexPath = path.join(distDir, 'index.html')
@@ -1494,52 +3525,122 @@ async function runApplyBuildLaunch(job, options = {}) {
 
   if (options.run === false) {
     finishJob(job, 'complete', 'Built')
-    addLedger({ source: 'launcher', type: 'job', label: `Built ${pack.name}`, status: 'success', platform })
+    addLedger({ source: 'launcher', type: 'job', label: `Built ${pack.name}`, status: 'success', platform, result: { job: jobEvidence(job) } })
     return
   }
 
   if (platform === 'ios') {
-    await runIosBuildInstallLaunch(job, options)
+    const { launchedAt } = await runIosBuildInstallLaunch(job, options)
+    const expectedRuntime = runtimeForPack(pack)
+    const externalId = readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId
     setJobStep(job, 'Applying runtime identity')
     await applyRuntimeIdentity({
       packId: pack.id,
       platform: 'ios',
-      externalId: readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId,
+      externalId,
       displayName: readState().activeDisplayName || pack.brand.demoUser.firstName || '',
+      reason: 'launcher_ready',
+      executionId: job.id,
+    })
+    await waitForCorrelatedIosRuntimeAndRender(job, {
+      packId: expectedRuntime.id,
+      configHash: expectedRuntime.configHash,
+      runtimeHash: expectedRuntime.runtimeHash,
+      externalId,
+      expectedSource: expectedRuntime.expectedSources?.ios || 'http://localhost:5173',
+      since: launchedAt,
+      executionId: job.id,
     })
     finishJob(job, 'complete', 'Ready')
-    addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on iOS`, status: 'success', platform: 'ios' })
+    addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on iOS`, status: 'success', platform: 'ios', result: { job: jobEvidence(job) } })
     return
   }
+
+  const avd = resolvedAndroidAvd(options)
+  const serial = await expectedAndroidSerial(avd)
+  job.launchMode = serial ? 'warm' : 'cold'
 
   setJobStep(job, 'Refreshing Android package')
   await runCommand('./gradlew', [':app:validateDemoWebAssets', ':app:assembleDebug'], { cwd: androidShellDir }, job)
 
-  setJobStep(job, 'Starting emulator and installing app')
-  const env = { AVD: resolvedAndroidAvd(options) }
+  const apkPath = path.join(androidShellDir, 'app/build/outputs/apk/debug/app-debug.apk')
+  if (!fs.existsSync(apkPath)) throw new Error(`Android build did not produce ${apkPath}.`)
+  const appId = process.env.APP_ID || 'com.braze.demoshell'
+  const localApkHash = sha256File(apkPath)
+  const installedApkHash = await installedAndroidApkHash(serial, appId)
+  const installApp = !installedApkHash || installedApkHash !== localApkHash
+  if (!installApp) {
+    job.skipped.push('identical APK install')
+    appendJobLogs(job, [`Reusing installed APK ${localApkHash.slice(0, 12)}; app data remains untouched.`])
+  } else {
+    appendJobLogs(job, [installedApkHash
+      ? `APK changed (${installedApkHash.slice(0, 12)} → ${localApkHash.slice(0, 12)}); using one adb install -r.`
+      : `No installed APK hash is available; using one adb install -r for ${localApkHash.slice(0, 12)}.`])
+  }
+
+  setJobStep(job, installApp ? 'Starting emulator and refreshing app' : 'Reusing emulator and installed app')
+  const env = {
+    AVD: avd,
+    APP_ID: appId,
+    ANDROID_USER: '0',
+    APK_PATH: apkPath,
+    INSTALL_APP: installApp ? '1' : '0',
+    LAUNCH_APP: '1',
+    TRUST_MODE: 'auto',
+  }
   const runtimeWaitStartedAt = Date.now()
   await runCommand(path.join(androidShellDir, 'tools/run-demo-emulator.sh'), [], { cwd: repoRoot, env }, job)
+  const launchedSerial = await expectedAndroidSerial(avd)
+  setJobStep(job, 'Ensuring launcher-owned Android clock coverage')
+  await ensureLauncherOwnedAndroidTimeGuard(launchedSerial, job)
   const expectedRuntime = runtimeForPack(pack)
-  await waitForDeviceRuntime(job, {
-    platform: 'android',
-    packId: expectedRuntime.id,
-    configHash: expectedRuntime.configHash,
-    since: runtimeWaitStartedAt,
-  })
 
   setJobStep(job, 'Applying runtime identity')
   const externalId = readState().activeExternalId || pack.android?.defaultExternalId || pack.brand.demoUser.externalId
   const trustWaitStartedAt = Date.now()
-  await applyRuntimeIdentity({
-    packId: pack.id,
-    platform: 'android',
-    externalId,
-    displayName: readState().activeDisplayName || pack.brand.demoUser.firstName || '',
+  const expectedBundledSource = expectedRuntime.expectedSources?.android || 'file:///android_asset/demo/index.html'
+  beginAndroidSourceTransition({
+    executionId: job.id,
+    expectedSource: expectedBundledSource,
+    expectedOverride: false,
+    expectedPackId: expectedRuntime.id,
+    expectedRuntimeHash: expectedRuntime.runtimeHash || expectedRuntime.configHash,
+    since: runtimeWaitStartedAt,
   })
+  try {
+    await applyRuntimeIdentity({
+      packId: pack.id,
+      platform: 'android',
+      externalId,
+      displayName: readState().activeDisplayName || pack.brand.demoUser.firstName || '',
+      reason: deferredBundledRecovery ? 'launcher_recovery' : 'launcher_ready',
+      executionId: job.id,
+      clearWebSourceOverride: true,
+    })
+    await waitForDeviceRuntime(job, {
+      platform: 'android',
+      packId: expectedRuntime.id,
+      configHash: expectedRuntime.configHash,
+      runtimeHash: expectedRuntime.runtimeHash,
+      since: runtimeWaitStartedAt,
+    })
+    await waitForAndroidSource({
+      expectedSource: expectedBundledSource,
+      expectedOverride: false,
+      expectedPackId: expectedRuntime.id,
+      expectedRuntimeHash: expectedRuntime.runtimeHash || expectedRuntime.configHash,
+      since: runtimeWaitStartedAt,
+      executionId: job.id,
+      job,
+    })
+  } finally {
+    finishAndroidSourceTransition(job.id)
+  }
+  await stopLiveWebProcess({ bundledSourceConfirmed: true })
   await waitForAndroidTrustDiagnostics(job, { externalId, since: trustWaitStartedAt })
 
   finishJob(job, 'complete', 'Ready')
-  addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on Android`, status: 'success', platform: 'android' })
+  addLedger({ source: 'launcher', type: 'job', label: `${pack.name} ready on Android`, status: 'success', platform: 'android', result: { job: jobEvidence(job) } })
 }
 
 async function runIosBuildInstallLaunch(job, options = {}) {
@@ -1568,7 +3669,9 @@ async function runIosBuildInstallLaunch(job, options = {}) {
   setJobStep(job, 'Installing iOS app')
   await runCommand('xcrun', ['simctl', 'install', 'booted', appPath], { cwd: repoRoot }, job)
   setJobStep(job, 'Launching iOS app')
+  const launchedAt = Date.now()
   await runCommand('xcrun', ['simctl', 'launch', 'booted', 'com.braze.masquerade'], { cwd: repoRoot }, job)
+  return { launchedAt }
 }
 
 function redactSecrets(value) {
@@ -1794,8 +3897,114 @@ async function ensurePushDependentSendReady({ preset, rest, externalId }) {
   })
 }
 
+function androidAdbPath() {
+  return process.env.ADB || path.join(process.env.HOME, 'Library/Android/sdk/platform-tools/adb')
+}
+
+async function expectedAndroidSerial(avd) {
+  const adb = androidAdbPath()
+  const { stdout } = await runCapture(adb, ['devices'])
+  const rows = stdout.split(/\r?\n/).slice(1).map((line) => line.trim()).filter(Boolean)
+  if (!rows.length) return ''
+  if (rows.length > 1) throw new Error(`Expected at most one Android device, found ${rows.length}. Close unrelated devices before launching.`)
+  const [serial, status] = rows[0].split(/\s+/)
+  if (status !== 'device') throw new Error(`Android device ${serial || '(unknown)'} is ${status || 'offline'}; refusing an ambiguous launch.`)
+  if (!serial.startsWith('emulator-')) throw new Error(`Connected Android target ${serial} is not the expected demo AVD.`)
+  const result = await runCapture(adb, ['-s', serial, 'emu', 'avd', 'name'])
+  const reportedAvd = result.stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => line && line !== 'OK') || ''
+  if (reportedAvd !== avd) throw new Error(`Connected emulator is ${reportedAvd || '(unknown)'}, expected ${avd}.`)
+  return serial
+}
+
+function sha256File(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+async function installedAndroidApkHash(serial, appId) {
+  if (!serial) return ''
+  const adb = androidAdbPath()
+  const packageResult = await runCapture(adb, ['-s', serial, 'shell', 'pm', 'path', appId])
+  const apkPath = packageResult.stdout.split(/\r?\n/).find((line) => line.startsWith('package:'))?.slice('package:'.length).trim() || ''
+  if (!apkPath) return ''
+  const hashResult = await runCapture(adb, ['-s', serial, 'shell', 'sha256sum', apkPath])
+  return hashResult.stdout.trim().split(/\s+/)[0] || ''
+}
+
+async function legacyAndroidTimeGuardPids(excludedPid = null) {
+  let stdout = ''
+  try {
+    stdout = (await runCapture('ps', ['-axo', 'pid=,command='])).stdout
+  } catch {
+    return []
+  }
+  return stdout.split(/\r?\n/).map((line) => {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/)
+    if (!match) return null
+    const pid = Number(match[1])
+    const command = match[2]
+    if (pid === Number(excludedPid) || pid === process.pid) return null
+    if (!command.includes(androidTimeSyncScript) || !/(?:^|\s)--watch(?:\s|$)/.test(command)) return null
+    return pid
+  }).filter(Boolean)
+}
+
+async function stopLegacyAndroidTimeGuards(job, excludedPid = null) {
+  const pids = await legacyAndroidTimeGuardPids(excludedPid)
+  if (!pids.length) return
+  appendJobLogs(job, [`Stopping ${pids.length} detached legacy Android clock watcher${pids.length === 1 ? '' : 's'} before launcher ownership.`])
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGTERM') } catch {}
+  }
+  const deadline = Date.now() + 1_500
+  while (Date.now() < deadline && pids.some((pid) => processIsAlive(pid))) await sleep(50)
+  for (const pid of pids) {
+    if (!processIsAlive(pid)) continue
+    try { process.kill(pid, 'SIGKILL') } catch {}
+  }
+}
+
+async function ensureLauncherOwnedAndroidTimeGuard(serial, job) {
+  if (!launcherAuthority || launcherAuthority.instanceId !== launcherInstanceId) {
+    throw new Error('Android clock watching requires the active launcher state authority.')
+  }
+  const current = androidTimeGuard.status()
+  if (current.running && current.key === serial) {
+    appendJobLogs(job, [`Reusing launcher-owned Android network clock guard pid=${current.pid} for ${serial}.`])
+    return current
+  }
+  await stopLegacyAndroidTimeGuards(job, current.pid)
+  fs.mkdirSync(path.dirname(androidTimeSyncLog), { recursive: true })
+  const logFd = fs.openSync(androidTimeSyncLog, 'a', 0o600)
+  let result
+  try {
+    result = await androidTimeGuard.ensure(serial, () => spawn(
+      androidTimeSyncGuardScript,
+      ['--watch-owned', serial],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          ANDROID_SERIAL: serial,
+          ADB: androidAdbPath(),
+          BRAZE_DEMO_LAUNCHER_OWNER_PID: String(process.pid),
+          BRAZE_DEMO_LAUNCHER_INSTANCE_ID: launcherInstanceId,
+        },
+        shell: false,
+        detached: false,
+        stdio: ['ignore', logFd, logFd],
+      },
+    ))
+  } finally {
+    fs.closeSync(logFd)
+  }
+  appendJobLogs(job, [result.reused
+    ? `Reusing launcher-owned Android network clock guard pid=${result.child.pid} for ${serial}.`
+    : `Started launcher-owned Android network clock guard pid=${result.child.pid} for ${serial}.`])
+  return androidTimeGuard.status()
+}
+
 async function resolveAndroidActivity() {
-  const adb = process.env.ADB || path.join(process.env.HOME, 'Library/Android/sdk/platform-tools/adb')
+  const adb = androidAdbPath()
   const appId = process.env.APP_ID || 'com.braze.demoshell'
   const { stdout } = await runCapture(adb, ['shell', 'cmd', 'package', 'resolve-activity', '--brief', appId])
   const component = stdout.trim().split(/\r?\n/).pop()
@@ -1892,12 +4101,26 @@ function commandsForPreset(preset, externalId, payloadOverride = {}) {
   return command ? [command] : []
 }
 
+export function correlateDeviceCommands(commands = [], correlation = null) {
+  if (!correlation) return commands
+  return commands.map((command, index) => ({
+    ...command,
+    launcherInstanceId: correlation.launcherInstanceId,
+    executionId: correlation.commandExecutionIds?.[index] || correlation.executionId,
+  }))
+}
+
 async function applyRuntimeIdentity(body = {}) {
   const externalId = String(body.externalId || '').trim()
   if (!externalId) throw new Error('External user ID is required')
   const displayName = String(body.displayName || '').trim()
   const platform = body.platform === 'ios' ? 'ios' : 'android'
   const pack = body.packId ? getDemoPack(body.packId) : activePackAndSecrets().pack
+  const currentState = readState()
+  const liveHazard = currentLiveWebHazard(currentState)
+  if (liveHazard.mayBeActive && (platform === 'ios' || pack.id !== currentState.activePackId)) {
+    throw liveWebConflict('Restore the bundled Android source before switching platform or pack identity.')
+  }
 
   updateState((state) => {
     state.activePackId = pack.id
@@ -1906,12 +4129,22 @@ async function applyRuntimeIdentity(body = {}) {
     if (body.displayName !== undefined) state.activeDisplayName = displayName
   })
 
-  const commands = [
-    { action: 'changeUser', externalId, payload: { externalId, displayName } },
-    { action: 'requestContentCardsRefresh', externalId, payload: {} },
-    { action: 'requestTrustDiagnostics', externalId, payload: { reason: 'identity_apply' } },
-    { action: 'requestPushReadiness', externalId, payload: { reason: 'identity_apply' } },
-  ]
+  const executionId = String(body.executionId || randomUUID())
+  const correlation = { launcherInstanceId, executionId }
+  const commands = [{
+    action: 'prepareRuntime',
+    externalId,
+    ...correlation,
+    payload: {
+      externalId,
+      displayName,
+      reason: String(body.reason || 'identity_apply'),
+      refreshContentCards: body.refreshContentCards !== false,
+      refreshTrust: body.refreshTrust !== false,
+      refreshPush: body.refreshPush !== false,
+      clearWebSourceOverride: platform === 'android' && body.clearWebSourceOverride === true,
+    },
+  }]
   const result = []
   for (const command of commands) {
     result.push(await sendDeviceCommand(command, platform))
@@ -1928,6 +4161,8 @@ async function applyRuntimeIdentity(body = {}) {
     payload: {
       packId: pack.id,
       displayName,
+      launcherInstanceId,
+      executionId,
     },
     request: { commands },
     response: result,
@@ -2180,7 +4415,7 @@ function promoteControl(body = {}) {
   return promoted
 }
 
-async function executePresetObject(preset, payloadOverride = {}, externalIdOverride = '', platformOverride = '') {
+async function executePresetObject(preset, payloadOverride = {}, externalIdOverride = '', platformOverride = '', correlation = null) {
   const state = readState()
   const { pack } = activePackAndSecrets(state)
   const externalId = externalIdOverride || state.activeExternalId || pack.brand.demoUser.externalId
@@ -2198,7 +4433,10 @@ async function executePresetObject(preset, payloadOverride = {}, externalIdOverr
     validation: resolvedPreset.validation || null,
   }
 
-  const deviceCommands = commandsForPreset(resolvedPreset, externalId, payloadOverride)
+  const deviceCommands = correlateDeviceCommands(
+    commandsForPreset(resolvedPreset, externalId, payloadOverride),
+    correlation,
+  )
   if (deviceCommands.length) {
     const result = []
     for (const command of deviceCommands) {
@@ -2223,12 +4461,393 @@ async function executePresetObject(preset, payloadOverride = {}, externalIdOverr
   throw new Error(`Unsupported preset type: ${resolvedPreset.type}`)
 }
 
-async function executePreset(presetId, payloadOverride = {}, externalIdOverride = '', platformOverride = '') {
+async function executePreset(presetId, payloadOverride = {}, externalIdOverride = '', platformOverride = '', correlation = null) {
   const state = readState()
   const { pack } = activePackAndSecrets(state)
   const preset = packPresets(pack, state).find((item) => item.id === presetId)
   if (!preset) throw new Error(`Preset not found: ${presetId}`)
-  return executePresetObject(preset, payloadOverride, externalIdOverride, platformOverride)
+  return executePresetObject(preset, payloadOverride, externalIdOverride, platformOverride, correlation)
+}
+
+function rememberOperatorExecution(execution) {
+  operatorExecutions.set(execution.executionId, execution)
+  operatorRequests.set(execution.requestId, execution.executionId)
+  while (operatorExecutions.size > 30) {
+    const oldestId = operatorExecutions.keys().next().value
+    const oldest = operatorExecutions.get(oldestId)
+    operatorExecutions.delete(oldestId)
+    if (oldest?.requestId) operatorRequests.delete(oldest.requestId)
+    forgetOperatorExecutionSequence(oldestId)
+  }
+  broadcastOperatorExecution(execution)
+  return execution
+}
+
+export function createOperatorExecutionSequence(parentExecutionId, expectedResultCount, createId = randomUUID) {
+  const count = Number(expectedResultCount)
+  if (!parentExecutionId || !Number.isSafeInteger(count) || count < 2) return null
+  return {
+    parentExecutionId,
+    expectedResultCount: count,
+    completedResultCount: 0,
+    failedResultCount: 0,
+    children: Array.from({ length: count }, (_, index) => ({
+      executionId: String(createId()),
+      index,
+      status: 'pending',
+    })),
+  }
+}
+
+export function aggregateOperatorSequenceResult(sequence, childExecutionId, terminal) {
+  if (!sequence || !terminal || !childExecutionId) return { sequence, matched: false, changed: false }
+  const childIndex = sequence.children.findIndex((child) => child.executionId === childExecutionId)
+  if (childIndex < 0) return { sequence, matched: false, changed: false }
+  const previous = sequence.children[childIndex]
+  const nextStatus = terminal.failed ? 'failed' : 'success'
+  const resolvedStatus = previous.status === 'failed' ? 'failed' : nextStatus
+  const changed = previous.status !== resolvedStatus
+  const children = changed
+    ? sequence.children.map((child, index) => index === childIndex ? { ...child, status: resolvedStatus } : child)
+    : sequence.children
+  const completedResultCount = children.filter((child) => child.status !== 'pending').length
+  const failedResultCount = children.filter((child) => child.status === 'failed').length
+  const status = failedResultCount > 0
+    ? 'failed'
+    : (completedResultCount === sequence.expectedResultCount ? 'success' : 'pending')
+  return {
+    matched: true,
+    changed,
+    sequence: {
+      ...sequence,
+      children,
+      completedResultCount,
+      failedResultCount,
+    },
+    status,
+  }
+}
+
+export function operatorSequenceResultSummary(sequence, terminal, currentSummary = '', failureMessage = '') {
+  const progress = `${sequence.completedResultCount} of ${sequence.expectedResultCount}`
+  if (terminal.failed) {
+    return `${failureMessage || 'Native sequence command failed.'} (${progress} results received).`
+  }
+  if (sequence.failedResultCount > 0) {
+    return currentSummary || `Native sequence failed (${progress} results received).`
+  }
+  return sequence.completedResultCount === sequence.expectedResultCount
+    ? `Native sequence confirmed all ${sequence.expectedResultCount} commands.`
+    : `Native sequence confirmed ${progress} commands.`
+}
+
+function forgetOperatorExecutionSequence(parentExecutionId) {
+  const sequence = operatorExecutionSequences.get(parentExecutionId)
+  if (!sequence) return
+  for (const child of sequence.children) operatorChildExecutions.delete(child.executionId)
+  operatorExecutionSequences.delete(parentExecutionId)
+}
+
+function registerOperatorExecutionSequence(parentExecutionId, expectedResultCount) {
+  const sequence = createOperatorExecutionSequence(parentExecutionId, expectedResultCount)
+  if (!sequence) return null
+  operatorExecutionSequences.set(parentExecutionId, sequence)
+  for (const child of sequence.children) {
+    operatorChildExecutions.set(child.executionId, { parentExecutionId, index: child.index })
+  }
+  updateOperatorExecution(parentExecutionId, {
+    expectedResultCount: sequence.expectedResultCount,
+    completedResultCount: 0,
+    failedResultCount: 0,
+  })
+  return sequence
+}
+
+function currentOperatorExecutionContext(personaId = '') {
+  const state = readState()
+  const { pack } = activePackAndSecrets(state)
+  const runtime = runtimeForPack(pack)
+  return {
+    packId: pack.id,
+    runtimeHash: runtime.runtimeHash || runtime.configHash,
+    platform: state.activePlatform === 'ios' ? 'ios' : 'android',
+    personaId: personaId || activeOperatorPersona(pack, state, operatorPersonas(pack, state)).id,
+  }
+}
+
+function newOperatorExecution({ requestId, controlId, controlLabel, variantId = '', context = null }) {
+  const id = String(requestId || '')
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(id)) {
+    const error = new Error('requestId must be an opaque 8–160 character idempotency key.')
+    error.statusCode = 400
+    throw error
+  }
+  const existingId = operatorRequests.get(id)
+  if (existingId) return { execution: operatorExecutions.get(existingId), existing: true }
+  const now = new Date().toISOString()
+  const executionContext = context || currentOperatorExecutionContext()
+  const execution = {
+    launcherInstanceId,
+    executionId: randomUUID(),
+    requestId: id,
+    controlId,
+    controlLabel,
+    variantId: String(variantId || ''),
+    ...executionContext,
+    status: 'pending',
+    summary: 'Launcher accepted the approved action.',
+    createdOrder: ++operatorExecutionCreationOrder,
+    createdAt: now,
+    updatedAt: now,
+  }
+  rememberOperatorExecution(execution)
+  return { execution, existing: false }
+}
+
+function updateOperatorExecution(executionId, patch) {
+  const current = operatorExecutions.get(executionId)
+  if (!current) return null
+  const execution = {
+    ...current,
+    ...patch,
+    launcherInstanceId,
+    executionId,
+    createdOrder: current.createdOrder,
+    updatedAt: new Date().toISOString(),
+  }
+  operatorExecutions.set(executionId, execution)
+  broadcastOperatorExecution(execution)
+  return execution
+}
+
+function operatorContextError(message) {
+  const error = new Error(message)
+  error.statusCode = 409
+  return error
+}
+
+export function assertOperatorSnapshotContext(expected = {}, current = {}) {
+  const comparisons = [
+    ['launcher instance', expected.launcherInstanceId, current.launcherInstanceId],
+    ['snapshot version', String(expected.snapshotVersion ?? ''), String(current.snapshotVersion ?? '')],
+    ['pack', expected.packId, current.active?.pack?.id],
+    ['config hash', expected.configHash, current.active?.runtime?.configHash],
+    ['runtime hash', expected.runtimeHash, current.active?.runtime?.runtimeHash],
+    ['platform', expected.platform, current.active?.platform],
+    ['persona', expected.personaId, current.active?.persona?.id],
+  ]
+  for (const [label, provided, actual] of comparisons) {
+    if (!provided || provided !== actual) throw operatorContextError(`Presenter context is stale (${label} changed). Refresh and try again.`)
+  }
+  return current
+}
+
+function assertOperatorContext(expected = {}, { allowBlockedCodes = [] } = {}) {
+  const current = operatorSnapshot()
+  assertOperatorSnapshotContext(expected, current)
+  if (current.readiness.status !== 'ready') {
+    const allowed = new Set(allowBlockedCodes)
+    const state = readState()
+    const { pack } = activePackAndSecrets(state)
+    const remaining = operatorBaseBlockers(pack, runtimeForPack(pack), state)
+      .filter((blocker) => !allowed.has(blocker.code))
+    if (remaining.length) {
+      throw operatorContextError(remaining[0].detail || current.readiness.summary || 'Presenter controls are blocked by launcher readiness.')
+    }
+  }
+  return current
+}
+
+function approvedPresenterControl(controlId, state = readState()) {
+  const { pack } = activePackAndSecrets(state)
+  const approved = presenterControlPresets(pack, state).find((preset) => preset.id === controlId)
+  if (!approved) {
+    throw operatorContextError('This control is not approved for Presenter Remote.')
+  }
+  const resolved = withPresetMeta(approved, state)
+  const blockReason = controlBlockReason(resolved, state, operatorBaseBlockers(pack, runtimeForPack(pack), state))
+  if (blockReason) throw operatorContextError(blockReason)
+  return resolved
+}
+
+function approvedVariantOverride(preset, variantId) {
+  const variants = Array.isArray(preset.presenterVariants) ? preset.presenterVariants : []
+  if (!variants.length) {
+    if (variantId) throw operatorContextError('This control has no approved variants.')
+    return {}
+  }
+  const selectedId = String(variantId || '')
+  const variant = variants.find((item) => String(item.id || '') === selectedId)
+  if (!variant) throw operatorContextError('Select one of the pre-approved control variants.')
+  const override = variant.payloadOverride ?? variant.payload ?? {}
+  if (!override || typeof override !== 'object' || Array.isArray(override)) {
+    throw operatorContextError('The selected approved variant is malformed.')
+  }
+  return override
+}
+
+async function executeOperatorControl(controlId, body = {}) {
+  const requestedVariantId = String(body.variantId || '')
+  const existingId = operatorRequests.get(String(body.requestId || ''))
+  if (existingId) {
+    const existing = operatorExecutions.get(existingId)
+    if (!operatorRequestMatches(existing, controlId, requestedVariantId)) {
+      throw operatorContextError('requestId was already used for a different Presenter action or variant.')
+    }
+    return { execution: existing, snapshot: operatorSnapshot() }
+  }
+  assertOperatorContext(body.expected)
+  const state = readState()
+  const preset = approvedPresenterControl(controlId, state)
+  const payloadOverride = approvedVariantOverride(preset, requestedVariantId)
+  const { execution } = newOperatorExecution({
+    requestId: body.requestId,
+    controlId: preset.id,
+    controlLabel: preset.label,
+    variantId: requestedVariantId,
+  })
+  const activeExternalId = state.activeExternalId || ''
+  const commandCount = commandsForPreset(preset, activeExternalId, payloadOverride).length
+  const sequence = registerOperatorExecutionSequence(execution.executionId, commandCount)
+  try {
+    await executePresetObject(
+      preset,
+      payloadOverride,
+      activeExternalId,
+      state.activePlatform || '',
+      {
+        launcherInstanceId,
+        executionId: execution.executionId,
+        commandExecutionIds: sequence?.children.map((child) => child.executionId),
+      },
+    )
+    const current = operatorExecutions.get(execution.executionId)
+    if (current?.status === 'pending' && sourceForPreset(preset) === 'braze_rest') {
+      updateOperatorExecution(execution.executionId, {
+        status: 'success',
+        summary: 'Braze REST action completed and was recorded in launcher telemetry.',
+      })
+    } else if (current?.status === 'pending') {
+      updateOperatorExecution(execution.executionId, {
+        summary: sequence
+          ? `Native sequence accepted; waiting for ${sequence.expectedResultCount} correlated results.`
+          : 'Native command accepted; waiting for correlated device telemetry.',
+      })
+    }
+  } catch (error) {
+    updateOperatorExecution(execution.executionId, { status: 'failed', summary: error.message || String(error) })
+    throw error
+  }
+  return { execution: operatorExecutions.get(execution.executionId), snapshot: operatorSnapshot() }
+}
+
+export function operatorRequestMatches(existing, controlId, variantId = '') {
+  return Boolean(
+    existing &&
+    existing.controlId === controlId &&
+    String(existing.variantId || '') === String(variantId || ''),
+  )
+}
+
+async function applyOperatorPersona(personaId, body = {}) {
+  const existingId = operatorRequests.get(String(body.requestId || ''))
+  if (existingId) {
+    const existing = operatorExecutions.get(existingId)
+    if (existing?.controlId !== `persona:${personaId}`) throw operatorContextError('requestId was already used for a different Presenter action.')
+    return { execution: existing, snapshot: operatorSnapshot() }
+  }
+  assertOperatorContext(body.expected, {
+    allowBlockedCodes: [
+      'persona_unapproved',
+      'identity_mismatch',
+      'device_evidence_stale',
+      'device_missing',
+      'trust_not_ready',
+    ],
+  })
+  const state = readState()
+  const { pack } = activePackAndSecrets(state)
+  const persona = operatorPersonas(pack, state).find((item) => item.id === personaId)
+  if (!persona) throw operatorContextError('This named persona is not approved for Presenter Remote.')
+  const { execution } = newOperatorExecution({
+    requestId: body.requestId,
+    controlId: `persona:${persona.id}`,
+    controlLabel: `Apply ${persona.label}`,
+    context: currentOperatorExecutionContext(persona.id),
+  })
+  try {
+    await applyRuntimeIdentity({
+      packId: pack.id,
+      platform: state.activePlatform,
+      externalId: persona.externalId,
+      displayName: persona.displayName,
+      reason: 'presenter_persona_apply',
+      executionId: execution.executionId,
+    })
+    const current = operatorExecutions.get(execution.executionId)
+    if (current?.status === 'pending') {
+      updateOperatorExecution(execution.executionId, {
+        summary: 'Identity preparation accepted; waiting for correlated native confirmation.',
+      })
+    }
+  } catch (error) {
+    updateOperatorExecution(execution.executionId, { status: 'failed', summary: error.message || String(error) })
+    throw error
+  }
+  return { execution: operatorExecutions.get(execution.executionId), snapshot: operatorSnapshot() }
+}
+
+export function terminalOperatorTelemetry(body = {}) {
+  if (body.type !== 'demo_command') return null
+  const result = objectValue(body.result)
+  const readiness = objectValue(result.readiness)
+  const severity = normalizeSeverity(body.status || 'success')
+  return {
+    failed: severity === 'error' || Boolean(result.error) || readiness.ready === false,
+    severity,
+  }
+}
+
+function correlateOperatorTelemetry(body = {}) {
+  const terminal = terminalOperatorTelemetry(body)
+  if (!terminal) return null
+  const runtime = extractRuntimeTelemetry(body.platform === 'ios' ? 'ios' : 'android', body)
+  const reportedLauncherId = runtime.launcherInstanceId
+  const reportedExecutionId = runtime.executionId
+  if (!reportedExecutionId || reportedLauncherId !== launcherInstanceId) return null
+  const childCorrelation = operatorChildExecutions.get(reportedExecutionId)
+  const executionId = childCorrelation?.parentExecutionId || reportedExecutionId
+  if (!operatorExecutions.has(executionId)) return null
+  const current = operatorExecutions.get(executionId)
+  const payload = objectValue(body.payload)
+  const result = objectValue(body.result)
+  if (childCorrelation) {
+    const sequence = operatorExecutionSequences.get(executionId)
+    if (current?.status === 'failed' && sequence?.failedResultCount === 0) return current
+    const aggregation = aggregateOperatorSequenceResult(sequence, reportedExecutionId, terminal)
+    if (!aggregation.matched || !aggregation.changed) return current
+    operatorExecutionSequences.set(executionId, aggregation.sequence)
+    return updateOperatorExecution(executionId, {
+      status: aggregation.status,
+      expectedResultCount: aggregation.sequence.expectedResultCount,
+      completedResultCount: aggregation.sequence.completedResultCount,
+      failedResultCount: aggregation.sequence.failedResultCount,
+      summary: operatorSequenceResultSummary(
+        aggregation.sequence,
+        terminal,
+        current?.summary,
+        String(result.error || payload.error || body.label || ''),
+      ),
+    })
+  }
+  if (operatorExecutionSequences.has(executionId)) return current
+  if (current?.status === 'success' || current?.status === 'failed') return current
+  return updateOperatorExecution(executionId, {
+    status: terminal.failed ? 'failed' : 'success',
+    summary: terminal.failed
+      ? String(result.error || payload.error || body.label || 'Native execution failed.')
+      : String(body.label || body.action || body.type || 'Native execution confirmed.'),
+  })
 }
 
 function validation(errors = [], warnings = []) {
@@ -2379,11 +4998,28 @@ async function exportActiveUser(fields = []) {
   })
 }
 
+export function pathIsWithinRoot(root, target) {
+  const resolvedRoot = path.resolve(root)
+  const resolvedTarget = path.resolve(target)
+  return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`)
+}
+
 function serveDesignAsset(req, res) {
   const prefix = '/design/'
-  const relative = decodeURIComponent(new URL(req.url, 'http://localhost').pathname.slice(prefix.length))
-  const target = path.normalize(path.join(designSystemDir, relative))
-  if (!target.startsWith(designSystemDir) || !fs.existsSync(target) || fs.statSync(target).isDirectory()) {
+  let target
+  let stat
+  const root = path.resolve(designSystemDir)
+  try {
+    const relative = decodeURIComponent(new URL(req.url, 'http://localhost').pathname.slice(prefix.length))
+    target = path.resolve(root, relative)
+    const contained = pathIsWithinRoot(root, target)
+    if (!contained) throw new Error('outside design root')
+    stat = fs.statSync(target)
+  } catch {
+    sendText(res, 404, 'Not found')
+    return
+  }
+  if (!stat.isFile()) {
     sendText(res, 404, 'Not found')
     return
   }
@@ -2398,8 +5034,13 @@ function serveDesignAsset(req, res) {
           : ext === '.woff'
             ? 'font/woff'
             : 'application/octet-stream'
+  const stream = fs.createReadStream(target)
+  stream.once('error', () => {
+    if (!res.headersSent) sendText(res, 404, 'Not found')
+    else res.destroy()
+  })
   res.writeHead(200, { 'content-type': type })
-  fs.createReadStream(target).pipe(res)
+  stream.pipe(res)
 }
 
 function publicState() {
@@ -2407,6 +5048,11 @@ function publicState() {
   const { pack, secrets } = activePackAndSecrets(state)
   const runtime = runtimeForPack(pack)
   const controlState = controlStateForPack(state, pack.id)
+  const ownedLiveWebRunning = Boolean(liveWebProcess && liveWebProcess.exitCode === null)
+  const nativeOverrideWithoutServer = Boolean(state.deviceRuntime?.platform === 'android' && state.deviceRuntime?.sourceOverride && !ownedLiveWebRunning)
+  const recordedLiveWeb = state.development?.liveWeb || {}
+  const liveHazard = liveWebHazard(state, { ownedProcessRunning: ownedLiveWebRunning })
+  const timeGuardStatus = androidTimeGuard.status()
   const packs = listDemoPacks().map((item) => {
     const itemSecrets = getDemoPack(item.id).secrets || {}
     const itemRestStatus = restCredentialStatus(item, itemSecrets)
@@ -2424,6 +5070,31 @@ function publicState() {
     }
   })
   return {
+    operator: {
+      presenterUrl: `/presenter#pair=${operatorSessionAuthority.pairingToken()}`,
+      launcherInstanceId,
+    },
+    development: {
+      timeGuard: {
+        ...timeGuardStatus,
+        ownerInstanceId: timeGuardStatus.running ? launcherInstanceId : '',
+        logFile: androidTimeSyncLog,
+      },
+      liveWeb: {
+        enabled: Boolean(recordedLiveWeb.enabled && ownedLiveWebRunning),
+        overrideMayBeActive: liveHazard.mayBeActive,
+        uncertain: liveHazard.uncertain,
+        status: nativeOverrideWithoutServer ? 'error' : recordedLiveWeb.status || 'stopped',
+        hostUrl: liveWebHostUrl,
+        deviceUrl: liveWebDeviceUrl,
+        pid: ownedLiveWebRunning ? liveWebProcess.pid : null,
+        startedAt: recordedLiveWeb.startedAt || '',
+        confirmedAt: recordedLiveWeb.confirmedAt || '',
+        error: nativeOverrideWithoutServer
+          ? 'Android still reports a development source, but this launcher does not own a live server. Restore bundled mode before continuing.'
+          : recordedLiveWeb.error || '',
+      },
+    },
     active: {
       platform: state.activePlatform || 'android',
       pack: publicPack(pack),
@@ -2433,6 +5104,7 @@ function publicState() {
       runtime: {
         manifest: runtime,
         device: state.deviceRuntime || null,
+        sourceReadiness: state.deviceSourceReadiness || null,
         push: latestActivePushReadiness(state),
         trust: latestActiveTrustDiagnostics(state),
         warnings: runtimeWarnings(runtime, state),
@@ -2970,11 +5642,61 @@ function launcherHtml() {
 </html>`
 }
 
+function productionOperatorHttpSurface() {
+  return {
+    pair: (body, req) => pairOperatorSession(body, req),
+    require: (req) => requireOperatorSession(req),
+    snapshot: () => operatorSnapshot(),
+    stream: (req, res) => streamOperatorState(req, res),
+    executeControl: (controlId, body) => executeOperatorControl(controlId, body),
+    applyPersona: (personaId, body) => applyOperatorPersona(personaId, body),
+  }
+}
+
+export async function handleOperatorApiRequest(req, res, url, surface = productionOperatorHttpSurface()) {
+  if (!url.pathname.startsWith('/api/operator/v1')) return false
+  if (req.method === 'POST' && url.pathname === '/api/operator/v1/pair') {
+    const paired = await surface.pair(await readBody(req), req)
+    sendJson(res, 200, paired.body, paired.headers)
+    return true
+  }
+  if (req.method === 'GET' && url.pathname === '/api/operator/v1/snapshot') {
+    surface.require(req)
+    sendJson(res, 200, await surface.snapshot(), { 'cache-control': 'no-store' })
+    return true
+  }
+  if (req.method === 'GET' && url.pathname === '/api/operator/v1/events') {
+    surface.require(req)
+    await surface.stream(req, res)
+    return true
+  }
+  if (req.method === 'POST' && /^\/api\/operator\/v1\/controls\/[^/]+\/executions$/.test(url.pathname)) {
+    surface.require(req)
+    const controlId = decodeURIComponent(url.pathname.split('/')[5])
+    sendJson(res, 202, await surface.executeControl(controlId, await readBody(req)), { 'cache-control': 'no-store' })
+    return true
+  }
+  if (req.method === 'POST' && /^\/api\/operator\/v1\/personas\/[^/]+\/apply$/.test(url.pathname)) {
+    surface.require(req)
+    const personaId = decodeURIComponent(url.pathname.split('/')[5])
+    sendJson(res, 202, await surface.applyPersona(personaId, await readBody(req)), { 'cache-control': 'no-store' })
+    return true
+  }
+  return false
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost')
   try {
+    assertRequestBoundary(req, url)
     if (req.method === 'GET' && url.pathname === '/') {
       sendText(res, 200, controlRoomHtml(), 'text/html; charset=utf-8')
+    } else if (req.method === 'GET' && url.pathname === '/presenter') {
+      sendText(res, 200, presenterRemoteHtml(), 'text/html; charset=utf-8', {
+        'cache-control': 'no-store',
+        'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+        'x-content-type-options': 'nosniff',
+      })
     } else if (req.method === 'GET' && url.pathname === '/favicon.ico') {
       res.writeHead(204)
       res.end()
@@ -2984,8 +5706,13 @@ async function handleRequest(req, res) {
       sendJson(res, 200, listDemoPacks())
     } else if (req.method === 'GET' && url.pathname === '/api/state') {
       sendJson(res, 200, publicState())
+    } else if (req.method === 'GET' && url.pathname === '/api/health') {
+      sendJson(res, 200, { ok: true, launcherInstanceId, pid: process.pid, port: serverPort })
     } else if (req.method === 'GET' && url.pathname === '/api/events') {
       streamState(req, res)
+    } else if (url.pathname.startsWith('/api/operator/v1')) {
+      const handled = await handleOperatorApiRequest(req, res, url)
+      if (!handled) sendText(res, 404, 'Not found')
     } else if (req.method === 'GET' && url.pathname === '/api/credentials') {
       sendJson(res, 200, credentialPayload(url.searchParams.get('packId') || readState().activePackId))
     } else if (req.method === 'POST' && url.pathname === '/api/credentials') {
@@ -2993,6 +5720,11 @@ async function handleRequest(req, res) {
     } else if (req.method === 'POST' && url.pathname === '/api/active') {
       const body = await readBody(req)
       if (!body.packId) throw new Error('packId is required')
+      const currentState = readState()
+      const liveHazard = currentLiveWebHazard(currentState)
+      if (liveHazard.mayBeActive && (body.platform === 'ios' || body.packId !== currentState.activePackId)) {
+        throw liveWebConflict('Disable the Android DEV OVERRIDE in Diagnostics before switching platform or pack.')
+      }
       const pack = getDemoPack(body.packId)
       updateState((state) => {
         const previousPackId = state.activePackId
@@ -3008,11 +5740,22 @@ async function handleRequest(req, res) {
       sendJson(res, 200, publicState())
     } else if (req.method === 'POST' && url.pathname === '/api/identity/apply') {
       sendJson(res, 200, await applyRuntimeIdentity(await readBody(req)))
+    } else if (req.method === 'POST' && url.pathname === '/api/development/live-web/start') {
+      sendJson(res, 200, await enableAndroidLiveWeb())
+    } else if (req.method === 'POST' && url.pathname === '/api/development/live-web/stop') {
+      sendJson(res, 200, await disableAndroidLiveWeb())
     } else if (req.method === 'POST' && url.pathname === '/api/run') {
       const body = await readBody(req)
       if (!body.packId) throw new Error('packId is required')
+      const currentState = readState()
+      const liveHazard = currentLiveWebHazard(currentState)
+      const safeRecoveryLaunch = body.platform !== 'ios' && !body.applyOnly && body.run !== false && body.packId === currentState.activePackId
+      if (liveHazard.mayBeActive && !safeRecoveryLaunch) {
+        throw liveWebConflict('Restore bundled Android mode before apply-only, pack switching, build-only, or iOS launcher jobs.')
+      }
       sendJson(res, 202, createJob(body.packId, {
         applyOnly: Boolean(body.applyOnly),
+        run: Object.hasOwn(body, 'run') ? Boolean(body.run) : !body.applyOnly,
         avd: body.avd,
         simulator: body.simulator,
         platform: body.platform === 'ios' ? 'ios' : 'android',
@@ -3085,50 +5828,70 @@ async function handleRequest(req, res) {
     } else if (req.method === 'POST' && url.pathname === '/api/device-events') {
       const body = await readBody(req)
       const platform = body.platform === 'ios' ? 'ios' : 'android'
-      const runtime = body.runtime || body.payload?.runtime || null
-      const pushTelemetry = extractPushTelemetry(platform, body)
-      const trustTelemetry = extractTrustTelemetry(platform, body)
-      if (runtime?.id || runtime?.configHash) {
-        updateState((state) => {
-          state.deviceRuntime = {
-            platform,
-            id: runtime.id || '',
-            configHash: runtime.configHash || '',
-            deviceId: runtime.deviceId || body.deviceId || body.payload?.deviceId || '',
-            externalId: runtime.externalId || body.externalId || body.payload?.externalId || '',
-            sourceUrl: body.sourceUrl || body.payload?.sourceUrl || '',
-            push: pushTelemetry || null,
-            trust: trustTelemetry || null,
-            ts: new Date().toISOString(),
-          }
-        })
-      } else if (body.externalId) {
+      const now = new Date().toISOString()
+      const pushTelemetry = withLauncherObservation(extractPushTelemetry(platform, body), launcherInstanceId, now)
+      const trustTelemetry = withLauncherObservation(extractTrustTelemetry(platform, body), launcherInstanceId, now)
+      const androidSourceCandidate = extractAndroidSourceReadiness(platform, body)
+      const androidSourceObservation = observeAndroidSourceReadiness(androidSourceCandidate, now)
+      const stateBeforeTelemetry = readState()
+      const iosRenderCandidate = withLauncherObservation(extractIosRenderReadiness(platform, body), launcherInstanceId, now)
+      const iosRenderReadiness = shouldReplaceIosRenderEvidence(
+        stateBeforeTelemetry.deviceSourceReadiness,
+        iosRenderCandidate,
+      ) ? iosRenderCandidate : null
+      const sourceReadiness = androidSourceObservation?.promote
+        ? androidSourceObservation.evidence
+        : iosRenderReadiness
+      const currentRuntime = stateBeforeTelemetry.deviceRuntime || {}
+      const incomingRuntime = extractRuntimeTelemetry(platform, body, {})
+      const runtime = extractRuntimeTelemetry(platform, body, currentRuntime)
+      rememberCorrelatedIosRuntime(incomingRuntime, body, now)
+      const telemetryPayload = objectValue(body.payload)
+      const telemetryResult = objectValue(body.result)
+      const sourceEventAccepted = body.type !== 'demo_source_ready' || Boolean(androidSourceObservation)
+      const acceptedExternalId = sourceEventAccepted && body.externalId ? String(body.externalId) : ''
+      const hasRuntimeEvidence = sourceEventAccepted && Boolean(
+        body.runtime || telemetryPayload.runtime || telemetryResult.runtime ||
+        firstPresent(body.sourceUrl, telemetryPayload.sourceUrl, telemetryResult.sourceUrl) !== undefined ||
+        firstPresent(body.sourceMode, telemetryPayload.sourceMode, telemetryResult.sourceMode) !== undefined ||
+        firstPresent(body.sourceOverride, telemetryPayload.sourceOverride, telemetryResult.sourceOverride) !== undefined,
+      )
+      if (hasRuntimeEvidence || acceptedExternalId || pushTelemetry || trustTelemetry || sourceReadiness) {
         updateState((state) => {
           const current = state.deviceRuntime || {}
-          state.deviceRuntime = {
-            ...current,
-            platform,
-            externalId: body.externalId,
-            push: pushTelemetry || current.push || null,
-            trust: trustTelemetry || current.trust || null,
-            ts: new Date().toISOString(),
+          const currentIsFresh = isCurrentLauncherEvidence(current)
+          if (hasRuntimeEvidence && runtimeEvidenceIsComplete(incomingRuntime)) {
+            state.deviceRuntime = withLauncherObservation({
+              ...runtime,
+              push: pushTelemetry || null,
+              trust: trustTelemetry || null,
+              ts: now,
+            }, launcherInstanceId, now)
+          } else if ((hasRuntimeEvidence || acceptedExternalId) && (currentIsFresh || Object.keys(current).length)) {
+            state.deviceRuntime = {
+              ...current,
+              ...(currentIsFresh ? runtime : {}),
+              platform,
+              ...(acceptedExternalId ? { externalId: acceptedExternalId } : {}),
+              push: pushTelemetry || current.push || null,
+              trust: trustTelemetry || current.trust || null,
+              lastEventAt: now,
+            }
           }
-        })
-      }
-      if (pushTelemetry) {
-        updateState((state) => {
+          if (sourceReadiness) state.deviceSourceReadiness = sourceReadiness
+          if (pushTelemetry) {
           if (!state.pushReadiness || typeof state.pushReadiness !== 'object') state.pushReadiness = {}
           const key = pushReadinessKey(platform, pushTelemetry.deviceId, pushTelemetry.externalId)
           state.pushReadiness[key] = pushTelemetry
-        })
-      }
-      if (trustTelemetry) {
-        updateState((state) => {
+          }
+          if (trustTelemetry) {
           if (!state.trustDiagnostics || typeof state.trustDiagnostics !== 'object') state.trustDiagnostics = {}
           const key = trustDiagnosticsKey(platform, trustTelemetry.deviceId, trustTelemetry.externalId)
           state.trustDiagnostics[key] = trustTelemetry
+          }
         })
       }
+      correlateOperatorTelemetry(body)
       sendJson(res, 202, addLedger({
         source: platform,
         type: body.type || body.action || 'device_event',
@@ -3169,16 +5932,42 @@ async function runCli(args) {
     return
   }
   if (args.command === 'apply') {
-    let callbackServer = null
-    if (args.run) {
-      serverPort = args.port
-      if (!(await controlRoomIsListening(serverPort))) {
-        if (!(await canListen(serverPort))) {
-          throw new Error(`Port ${serverPort} is already in use and is not a Braze Demo Control Room. Stop that process or choose --port <port>.`)
-        }
-        callbackServer = await listenControlRoomServer(serverPort)
+    const discovered = readLauncherServerInfo()
+    const candidatePort = discovered?.port ? Number(discovered.port) : args.port
+    const healthy = await launcherHealth(candidatePort)
+    if (healthy) {
+      if (discovered?.instanceId && healthy.launcherInstanceId !== discovered.instanceId) {
+        throw new Error('Launcher discovery and health report different authority instances. Stop the conflicting process before continuing.')
       }
+      if (args.explicitPort && Number(args.port) !== Number(candidatePort)) {
+        throw new Error(`A launcher authority is already active on port ${candidatePort}; refusing a second owner on explicit port ${args.port}.`)
+      }
+      const delegated = await launcherJsonRequest(candidatePort, '/api/run', {
+        method: 'POST',
+        body: {
+          packId: args.pack,
+          applyOnly: args.applyOnly,
+          run: Boolean(args.run),
+          avd: args.avd,
+          platform: 'android',
+        },
+      })
+      const job = await waitForDelegatedJob(candidatePort, delegated.id)
+      console.log((job.logs || []).join('\n'))
+      if (job.status !== 'complete') process.exitCode = 1
+      return
     }
+    if (discovered && (processIsAlive(discovered.pid) || !(await canListen(candidatePort)))) {
+      throw new Error(
+        `Launcher state is owned by an incompatible or legacy process on port ${candidatePort}. ` +
+        'Stop that process before running a CLI job; a second state owner is never started.',
+      )
+    }
+    if (!discovered && !(await canListen(args.port))) {
+      throw new Error(`Port ${args.port} is already in use and no healthy launcher authority answered there.`)
+    }
+    serverPort = args.port
+    const callbackServer = await listenControlRoomServer(serverPort)
     try {
       const job = createJob(args.pack, {
         applyOnly: args.applyOnly,
@@ -3191,7 +5980,7 @@ async function runCli(args) {
       console.log(job.logs.join('\n'))
       if (job.status !== 'complete') process.exitCode = 1
     } finally {
-      if (callbackServer) await closeServer(callbackServer)
+      await closeServer(callbackServer)
     }
     return
   }
@@ -3201,7 +5990,34 @@ async function runCli(args) {
   await listenControlRoomServer(port, { announce: true })
 }
 
-runCli(parseArgs(process.argv.slice(2))).catch((error) => {
-  console.error(error.stack || String(error))
-  process.exitCode = 1
-})
+const isMainModule = Boolean(process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+
+if (isMainModule) {
+  let shuttingDown = false
+  const shutdown = async (signal) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    try {
+      await Promise.all([
+        stopLiveWebProcess(),
+        androidTimeGuard.stop(),
+      ])
+    } finally {
+      removeServerInfo()
+      releaseAuthorityLock()
+      process.exit(signal === 'SIGINT' ? 130 : 143)
+    }
+  }
+  process.once('SIGINT', () => { shutdown('SIGINT') })
+  process.once('SIGTERM', () => { shutdown('SIGTERM') })
+  process.once('exit', () => {
+    if (liveWebProcess && liveWebProcess.exitCode === null) liveWebProcess.kill('SIGTERM')
+    androidTimeGuard.terminateNow()
+    removeServerInfo()
+    releaseAuthorityLock()
+  })
+  runCli(parseArgs(process.argv.slice(2))).catch((error) => {
+    console.error(error.stack || String(error))
+    process.exitCode = 1
+  })
+}

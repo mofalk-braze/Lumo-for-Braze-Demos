@@ -14,7 +14,8 @@
     "lumo:cockpit": "node tools/demo-launcher.mjs",
     "lumo:launch:android": "node tools/demo-launcher.mjs --pack lumo-default --run",
     "validate:demo-runtime": "node tools/validate-demo-runtime.mjs",
-    "test:capabilities": "node tools/test-capabilities.mjs",
+    "test:ios-contracts": "node ios-shell/tools/run-contract-tests.mjs",
+    "test:capabilities": "node tools/test-capabilities.mjs && node --test tools/demo-pack-utils.test.mjs tools/presenter-remote-template.test.mjs tools/demo-launcher-operator.test.mjs tools/demo-launcher-http.test.mjs android-shell/tools/run-demo-emulator.test.mjs",
     "security:scan": "node tools/secret-scan.mjs",
     "public:check": "node tools/public-readiness-check.mjs",
     "check:precommit": "npm run test:capabilities && npm run validate:demo-runtime && npm run security:scan"
