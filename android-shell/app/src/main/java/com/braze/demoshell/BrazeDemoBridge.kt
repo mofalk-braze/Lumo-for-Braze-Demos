@@ -30,7 +30,10 @@ class BrazeDemoBridge(
         activity.recordBridgeAction(action, payload)
         when (action) {
             "webReady" -> {
-                activity.handleWebReady(payload.optJSONObject("sync"))
+                activity.handleWebReady(
+                    sync = payload.optJSONObject("sync"),
+                    sourceUrl = payload.optString("sourceUrl"),
+                )
             }
 
             "saveCredentialProfile" -> {

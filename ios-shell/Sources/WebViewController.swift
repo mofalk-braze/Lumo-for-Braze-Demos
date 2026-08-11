@@ -12,6 +12,13 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
   private var webBridgeReady = false
   private var pendingNavigationRoute: String?
   private var pendingNavigationSource = "pending"
+  private var webNavigationGeneration = 0
+  private var webPageFinished: (generation: Int, sourceURL: String)?
+  private var webBridgeRendered: (generation: Int, sourceURL: String, sync: [String: Any])?
+  private var activeWebNavigationId: ObjectIdentifier?
+  private var failedWebNavigationGeneration = -1
+  private var reportedWebNavigationGeneration = -1
+  private var pendingRenderTransition = PendingIosRenderTransition()
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -59,11 +66,28 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
   }
 
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-    reportLoadFailure(error)
+    reportLoadFailure(error, navigation: navigation)
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-    reportLoadFailure(error)
+    reportLoadFailure(error, navigation: navigation)
+  }
+
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    webNavigationGeneration += 1
+    pendingRenderTransition.bind(to: webNavigationGeneration)
+    activeWebNavigationId = navigation.map(ObjectIdentifier.init)
+    webPageFinished = nil
+    webBridgeRendered = nil
+    failedWebNavigationGeneration = -1
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    if let activeWebNavigationId, let navigation, activeWebNavigationId != ObjectIdentifier(navigation) { return }
+    if reportedWebNavigationGeneration == webNavigationGeneration { return }
+    let sourceURL = Self.canonicalWebSourceURL(webView.url?.absoluteString ?? "")
+    webPageFinished = (webNavigationGeneration, sourceURL)
+    reportRuntimeReadyIfRendered()
   }
 
   // MARK: - JS → native
@@ -88,23 +112,35 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
         ])
     switch action {
     case "webReady":
+      let sync = payload?["sync"] as? [String: Any]
+      let identityRejection = webReadyIdentityRejection(
+        reported: sync,
+        expected: WebReadyIdentity(
+          protocolName: "braze-demo-sync/v1",
+          runtimeId: Config.demoPackId,
+          configHash: Config.demoConfigHash,
+          runtimeHash: Config.demoRuntimeHash))
+      if let identityRejection {
+        reportWebReadyIdentityFailure(
+          identityRejection,
+          sourceURL: payload?["sourceUrl"] as? String ?? "",
+          sync: sync)
+        break
+      }
+
       webBridgeReady = true
+      if reportedWebNavigationGeneration != webNavigationGeneration {
+        webBridgeRendered = (
+          webNavigationGeneration,
+          Self.canonicalWebSourceURL(payload?["sourceUrl"] as? String ?? ""),
+          sync ?? [:])
+      }
       send("ready", payload: nil)
       sendConnection()
       send("profiles", payload: braze.profilesPayload())
       flushPendingNavigation()
       reportPushStatus(reason: "webReady")
-      postLauncherTelemetry(
-        type: "runtime_ready",
-        label: "iOS runtime ready",
-        status: "success",
-        payload: [
-          "sourceUrl": braze.activeWebURL.absoluteString,
-          "runtime": braze.runtimePayload(),
-          "diagnostics": deviceDiagnosticsPayload(permission: nil),
-          "sync": payload?["sync"] as? [String: Any] ?? braze.syncEnvelope(authority: "native", reason: "default"),
-        ],
-        result: braze.runtimePayload())
+      reportRuntimeReadyIfRendered()
     case "saveCredentialProfile":
       if let p = payload, let name = p["name"] as? String,
         let key = p["apiKey"] as? String, let endpoint = p["endpoint"] as? String {
@@ -258,8 +294,14 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     let payload = command["payload"] as? [String: Any] ?? [:]
     let externalId = (command["externalId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? BrazeManager.shared.activeExternalId
     let callbackUrl = command["callbackUrl"] as? String ?? ""
-    let commandSync = BrazeManager.shared.syncEnvelope(authority: "control_room", reason: "command")
-    let needsBraze = ["changeUser", "logCustomEvent", "setCustomAttribute", "logPurchase", "requestContentCardsRefresh", "requestPushReadiness"].contains(action)
+    var commandSync = BrazeManager.shared.syncEnvelope(authority: "control_room", reason: "command")
+    if let launcherInstanceId = command["launcherInstanceId"] as? String, !launcherInstanceId.isEmpty {
+      commandSync["launcherInstanceId"] = launcherInstanceId
+    }
+    if let executionId = command["executionId"] as? String, !executionId.isEmpty {
+      commandSync["executionId"] = executionId
+    }
+    let needsBraze = ["changeUser", "prepareRuntime", "prepare_runtime", "logCustomEvent", "setCustomAttribute", "logPurchase", "requestContentCardsRefresh", "requestPushReadiness"].contains(action)
     guard !needsBraze || BrazeManager.shared.isConfigured else {
       postLauncherTelemetry(
         type: "demo_command",
@@ -272,7 +314,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
       return
     }
 
-    if !externalId.isEmpty && action != "changeUser" {
+    if !externalId.isEmpty && !["changeUser", "prepareRuntime", "prepare_runtime"].contains(action) {
       BrazeManager.shared.changeUser(externalId, sync: commandSync)
       sendConnection(sync: commandSync)
     }
@@ -285,6 +327,59 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
         displayName: payload["displayName"] as? String)
       sendConnection(sync: commandSync)
       requestPushReadiness(reason: "change_user")
+    case "prepareRuntime", "prepare_runtime":
+      guard let renderCorrelation = IosRenderCorrelation(
+        launcherInstanceId: command["launcherInstanceId"] as? String ?? "",
+        executionId: command["executionId"] as? String ?? "",
+        callbackURL: callbackUrl)
+      else {
+        postCommandError(
+          "prepareRuntime requires launcher and execution correlation",
+          command: command,
+          externalId: externalId,
+          callbackUrl: callbackUrl)
+        return
+      }
+      BrazeManager.shared.changeUser(
+        externalId,
+        sync: commandSync,
+        displayName: payload["displayName"] as? String)
+      sendConnection(sync: commandSync)
+      pendingRenderTransition.begin(renderCorrelation)
+      reloadWeb()
+      if payload["refreshContentCards"] as? Bool ?? true {
+        BrazeManager.shared.requestContentCardsRefresh()
+      }
+      let reason = (payload["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "identity_apply"
+      let refreshPush = payload["refreshPush"] as? Bool ?? true
+      let complete: ([String: Any]) -> Void = { [weak self] push in
+        guard let self else { return }
+        let pushReady = push["ready"] as? Bool ?? false
+        self.postLauncherTelemetry(
+          type: "demo_command",
+          label: "Prepared iOS runtime",
+          status: "success",
+          externalId: externalId,
+          payload: command,
+          result: [
+            "runtime": BrazeManager.shared.runtimePayload(),
+            "readiness": [
+              "ready": true,
+              "pushReady": pushReady,
+              "push": push,
+            ],
+            "sourceUrl": BrazeManager.shared.activeWebURL.absoluteString,
+            "sourceOverride": BrazeManager.shared.sourceOverrideActive,
+            "sync": commandSync,
+          ],
+          callbackUrl: callbackUrl)
+      }
+      if refreshPush {
+        requestPushReadiness(reason: reason, completion: complete)
+      } else {
+        complete(["ready": false, "skipped": true, "reason": reason])
+      }
+      return
     case "logCustomEvent":
       guard let name = payload["name"] as? String, !name.isEmpty else {
         postCommandError("Missing event name", command: command, externalId: externalId, callbackUrl: callbackUrl)
@@ -319,7 +414,23 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     case "requestPushPermission":
       requestPush()
     case "requestPushReadiness":
-      requestPushReadiness(reason: payload["reason"] as? String ?? "command")
+      requestPushReadiness(reason: payload["reason"] as? String ?? "command") { [weak self] push in
+        guard let self else { return }
+        let ready = push["ready"] as? Bool ?? false
+        self.postLauncherTelemetry(
+          type: "demo_command",
+          label: "Checked iOS push readiness",
+          status: ready ? "success" : "error",
+          externalId: externalId,
+          payload: command,
+          result: [
+            "readiness": ["ready": ready, "pushReady": ready, "push": push],
+            "runtime": BrazeManager.shared.runtimePayload(),
+            "sync": commandSync,
+          ],
+          callbackUrl: callbackUrl)
+      }
+      return
     case "navigate":
       let route = (payload["route"] as? String) ?? (payload["uri"] as? String) ?? "/"
       send("navigate", rawJSON: jsonString(route))
@@ -385,7 +496,10 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     }
   }
 
-  private func requestPushReadiness(reason: String) {
+  private func requestPushReadiness(
+    reason: String,
+    completion: (([String: Any]) -> Void)? = nil
+  ) {
     UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
       let permission = Self.authorizationStatusName(settings.authorizationStatus)
       UserDefaults.standard.set(permission, forKey: PushDefaults.authorizationStatus)
@@ -403,12 +517,18 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
         } else {
           label = "APNs token not ready"
         }
+        let diagnostics = self?.deviceDiagnosticsPayload(permission: permission, reason: reason) ?? [:]
         self?.postLauncherTelemetry(
           type: "apns_token",
           label: label,
           status: status,
-          payload: self?.deviceDiagnosticsPayload(permission: permission, reason: reason) ?? [:],
+          payload: diagnostics,
           result: tokenPresent ? nil : ["error": permission == "granted" ? "Waiting for APNs registration callback" : "Push permission is not granted"])
+        var push = diagnostics["push"] as? [String: Any] ?? [:]
+        push["ready"] = tokenPresent && permission == "granted"
+        push["externalId"] = BrazeManager.shared.activeExternalId
+        push["sdkDeviceId"] = BrazeManager.shared.braze?.deviceId ?? ""
+        completion?(push)
       }
     }
   }
@@ -484,9 +604,171 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     send("push", payload: payload)
   }
 
-  private func reportLoadFailure(_ error: Error) {
+  private func reportWebReadyIdentityFailure(
+    _ error: String,
+    sourceURL: String,
+    sync: [String: Any]?
+  ) {
+    if reportedWebNavigationGeneration == webNavigationGeneration { return }
+    webBridgeReady = false
+    failedWebNavigationGeneration = webNavigationGeneration
+    webBridgeRendered = nil
+    let canonicalSourceURL = Self.canonicalWebSourceURL(
+      sourceURL.isEmpty ? webView.url?.absoluteString ?? "" : sourceURL)
+    let telemetryPayload: [String: Any] = [
+      "sourceUrl": canonicalSourceURL,
+      "renderConfirmed": false,
+      "renderGeneration": webNavigationGeneration,
+      "runtime": BrazeManager.shared.runtimePayload(),
+      "error": error,
+    ]
+    postTerminalRuntimeReady(
+      type: "runtime_ready",
+      label: "iOS webReady identity rejected",
+      status: "error",
+      payload: telemetryPayload,
+      result: ["renderConfirmed": false, "error": error],
+      sync: sync)
+  }
+
+  private func reportLoadFailure(_ error: Error, navigation: WKNavigation?) {
+    let nsError = error as NSError
+    if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+    if let activeWebNavigationId, let navigation, activeWebNavigationId != ObjectIdentifier(navigation) { return }
+    if reportedWebNavigationGeneration == webNavigationGeneration { return }
+    failedWebNavigationGeneration = webNavigationGeneration
+    webPageFinished = nil
+    webBridgeRendered = nil
     print("[webview] load failed: \(error.localizedDescription)")
     sendConnection(loadError: error.localizedDescription)
+    postTerminalRuntimeReady(
+      type: "runtime_ready",
+      label: "iOS runtime render failed",
+      status: "error",
+      payload: [
+        "sourceUrl": Self.canonicalWebSourceURL(webView.url?.absoluteString ?? ""),
+        "renderConfirmed": false,
+        "renderGeneration": webNavigationGeneration,
+        "runtime": BrazeManager.shared.runtimePayload(),
+        "error": error.localizedDescription,
+      ],
+      result: ["renderConfirmed": false, "error": error.localizedDescription],
+      sync: nil)
+  }
+
+  private func reportRuntimeReadyIfRendered() {
+    guard failedWebNavigationGeneration != webNavigationGeneration,
+      reportedWebNavigationGeneration != webNavigationGeneration,
+      let finished = webPageFinished,
+      let bridged = webBridgeRendered,
+      finished.generation == webNavigationGeneration,
+      bridged.generation == webNavigationGeneration
+    else { return }
+
+    guard !finished.sourceURL.isEmpty, finished.sourceURL == bridged.sourceURL else {
+      failedWebNavigationGeneration = webNavigationGeneration
+      let error = "WKWebView completion and webReady reported different source URLs."
+      postTerminalRuntimeReady(
+        type: "runtime_ready",
+        label: "iOS runtime render failed",
+        status: "error",
+        payload: [
+          "sourceUrl": bridged.sourceURL,
+          "renderedUrl": finished.sourceURL,
+          "renderConfirmed": false,
+          "renderGeneration": webNavigationGeneration,
+          "runtime": BrazeManager.shared.runtimePayload(),
+          "error": error,
+        ],
+        result: ["renderConfirmed": false, "error": error],
+        sync: bridged.sync)
+      return
+    }
+
+    let expectedSourceURL = Self.canonicalWebSourceURL(BrazeManager.shared.activeWebURL.absoluteString)
+    guard finished.sourceURL == expectedSourceURL else {
+      failedWebNavigationGeneration = webNavigationGeneration
+      let error = "Rendered source did not match the configured iOS web source."
+      postTerminalRuntimeReady(
+        type: "runtime_ready",
+        label: "iOS runtime render failed",
+        status: "error",
+        payload: [
+          "sourceUrl": bridged.sourceURL,
+          "renderedUrl": finished.sourceURL,
+          "expectedSourceUrl": expectedSourceURL,
+          "renderConfirmed": false,
+          "renderGeneration": webNavigationGeneration,
+          "runtime": BrazeManager.shared.runtimePayload(),
+          "error": error,
+        ],
+        result: ["renderConfirmed": false, "error": error],
+        sync: bridged.sync)
+      return
+    }
+
+    reportedWebNavigationGeneration = webNavigationGeneration
+    var result = BrazeManager.shared.runtimePayload()
+    result["sourceUrl"] = finished.sourceURL
+    result["renderedUrl"] = finished.sourceURL
+    result["sourceOverride"] = BrazeManager.shared.sourceOverrideActive
+    result["renderConfirmed"] = true
+    postTerminalRuntimeReady(
+      type: "runtime_ready",
+      label: "iOS runtime rendered",
+      status: "success",
+      payload: [
+        "sourceUrl": finished.sourceURL,
+        "renderedUrl": finished.sourceURL,
+        "sourceOverride": BrazeManager.shared.sourceOverrideActive,
+        "renderConfirmed": true,
+        "renderGeneration": webNavigationGeneration,
+        "runtime": BrazeManager.shared.runtimePayload(),
+        "diagnostics": deviceDiagnosticsPayload(permission: nil),
+      ],
+      result: result,
+      sync: bridged.sync)
+  }
+
+  private func postTerminalRuntimeReady(
+    type: String,
+    label: String,
+    status: String,
+    payload: [String: Any],
+    result: [String: Any],
+    sync: [String: Any]?
+  ) {
+    let correlation = pendingRenderTransition.finish(generation: webNavigationGeneration)
+    var correlatedPayload = payload
+    if let correlation {
+      correlatedPayload["sync"] = correlation.attaching(to: sync)
+    } else if let sync {
+      correlatedPayload["sync"] = sync
+    }
+    postLauncherTelemetry(
+      type: type,
+      label: label,
+      status: status,
+      payload: correlatedPayload,
+      result: result,
+      callbackUrl: correlation?.callbackURL ?? "",
+      launcherInstanceId: correlation?.launcherInstanceId ?? "",
+      executionId: correlation?.executionId ?? "")
+  }
+
+  private static func canonicalWebSourceURL(_ raw: String) -> String {
+    let withoutFragment = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+      .first
+      .map(String.init) ?? ""
+    guard var components = URLComponents(string: withoutFragment),
+      let scheme = components.scheme,
+      scheme.caseInsensitiveCompare("http") == .orderedSame ||
+        scheme.caseInsensitiveCompare("https") == .orderedSame
+    else { return withoutFragment }
+    components.fragment = nil
+    let canonical = components.string ?? withoutFragment
+    return components.query == nil ? canonical.trimmingCharacters(in: CharacterSet(charactersIn: "/")) : canonical
   }
 
   private func sendConnection(loadError: String? = nil, sync: [String: Any]? = nil) {
@@ -530,7 +812,9 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
     externalId: String = BrazeManager.shared.activeExternalId,
     payload: Any = [:],
     result: Any? = nil,
-    callbackUrl: String = ""
+    callbackUrl: String = "",
+    launcherInstanceId: String = "",
+    executionId: String = ""
   ) {
     let target = callbackUrl.isEmpty ? Config.launcherCallbackUrl : callbackUrl
     guard !target.isEmpty, let url = URL(string: target) else { return }
@@ -543,6 +827,26 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKScriptM
       "payload": payload,
     ]
     if let result { body["result"] = result }
+    let payloadDictionary = payload as? [String: Any]
+    let resultDictionary = result as? [String: Any]
+    let payloadSync = payloadDictionary?["sync"] as? [String: Any]
+    let resultSync = resultDictionary?["sync"] as? [String: Any]
+    let resolvedLauncherInstanceId = [
+      launcherInstanceId,
+      payloadDictionary?["launcherInstanceId"] as? String ?? "",
+      resultDictionary?["launcherInstanceId"] as? String ?? "",
+      payloadSync?["launcherInstanceId"] as? String ?? "",
+      resultSync?["launcherInstanceId"] as? String ?? "",
+    ].first(where: { !$0.isEmpty }) ?? ""
+    let resolvedExecutionId = [
+      executionId,
+      payloadDictionary?["executionId"] as? String ?? "",
+      resultDictionary?["executionId"] as? String ?? "",
+      payloadSync?["executionId"] as? String ?? "",
+      resultSync?["executionId"] as? String ?? "",
+    ].first(where: { !$0.isEmpty }) ?? ""
+    if !resolvedLauncherInstanceId.isEmpty { body["launcherInstanceId"] = resolvedLauncherInstanceId }
+    if !resolvedExecutionId.isEmpty { body["executionId"] = resolvedExecutionId }
     guard JSONSerialization.isValidJSONObject(body),
       let data = try? JSONSerialization.data(withJSONObject: body)
     else { return }

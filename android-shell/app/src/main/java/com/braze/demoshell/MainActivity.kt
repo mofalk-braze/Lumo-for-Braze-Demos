@@ -11,6 +11,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
@@ -27,6 +28,7 @@ import android.view.Window
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -81,11 +83,16 @@ class MainActivity : android.app.Activity() {
     private lateinit var bridge: BrazeDemoBridge
     private lateinit var store: CredentialStore
     private lateinit var rootLayout: FrameLayout
+    private lateinit var bundledRuntimeManifest: JSONObject
+    private var bundledRuntimeManifestValid = false
+    private var bundledRuntimeManifestError = ""
+    private val webRenderTracker = WebRenderTracker()
     private val bannerViews = mutableMapOf<String, BannerView>()
 
     private val cardsById = mutableMapOf<String, Card>()
     private val debugLog = ArrayDeque<String>()
     private var debugLogView: TextView? = null
+    private var devOverrideBadge: TextView? = null
     private var currentFcmToken: String? = null
     private var fcmTokenRequestInFlight: Boolean = false
     private var lastContentCardCount: Int = 0
@@ -96,8 +103,16 @@ class MainActivity : android.app.Activity() {
     private var lastIdentitySyncSignature: String = ""
     private var hasAppliedSdkIdentity: Boolean = false
     private var lastTrustDiagnostics: JSONObject? = null
+    private var lastTrustDiagnosticsAt: Long = 0L
+    private var trustDiagnosticsInFlight: Boolean = false
+    private val trustDiagnosticsWaiters = mutableListOf<(JSONObject) -> Unit>()
+    private var lastFcmReadiness: JSONObject? = null
+    private var lastFcmReadinessAt: Long = 0L
+    private val fcmReadinessWaiters = mutableListOf<(JSONObject) -> Unit>()
+    private var startupReadinessRequested: Boolean = false
     private var isActivityForeground: Boolean = false
     private var webBridgeReady: Boolean = false
+    private var lastWebReadySync: JSONObject? = null
     private var pendingNavigationRoute: String? = null
     private var pendingNavigationSource: String = "pending"
     private var lastPushDiagnostics: JSONObject? = null
@@ -106,10 +121,14 @@ class MainActivity : android.app.Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        bundledRuntimeManifest = readBundledRuntimeManifest()
         store = CredentialStore.get(this)
         store.seedIfEmpty()
+        if (store.consumeGeneratedSeedContextChange()) {
+            runtimePrefs().edit().remove("active_external_id").apply()
+        }
         currentSdkExternalId = activeExternalId()
-        currentDisplayName = getSharedPreferences("braze_demo_runtime", MODE_PRIVATE)
+        currentDisplayName = runtimePrefs()
             .getString("active_display_name", "")
             .orEmpty()
         bridge = BrazeDemoBridge(this)
@@ -124,7 +143,6 @@ class MainActivity : android.app.Activity() {
         configureInAppMessageNavigation()
         configureWebView()
         subscribeToBrazeUpdates()
-        refreshPushReadiness("launch")
         maybeRequestNotificationsOnLaunch()
         handleDemoCommandIntent(intent)
         if (!handleInternalDeepLinkIntent(intent)) {
@@ -138,7 +156,6 @@ class MainActivity : android.app.Activity() {
         runCatching {
             BrazeInAppMessageManager.getInstance().registerInAppMessageManager(this)
             appendLog("IAM manager registered.")
-            refreshPushReadiness("resume")
         }.onFailure {
             appendLog("IAM manager registration failed: ${it.message}")
             postLauncherTelemetry(
@@ -185,29 +202,53 @@ class MainActivity : android.app.Activity() {
                 status = if (granted) "success" else "info",
                 payload = pushDiagnosticsPayload().put("permission", if (granted) "granted" else "denied"),
             )
+            if (granted) sendFcmTokenToBraze(reason = "permission_result", attempt = 0, force = true)
             refreshDebugDrawer()
         }
     }
 
-    fun handleWebReady(sync: JSONObject? = null) {
+    fun handleWebReady(sync: JSONObject? = null, sourceUrl: String = "") {
+        val renderedSourceUrl = sourceUrl.ifBlank { webView.url.orEmpty() }
+        val identityRejection = webReadyIdentityRejection(
+            reported = sync?.let {
+                WebReadyIdentity(
+                    protocol = it.optString("protocol"),
+                    runtimeId = it.optString("runtimeId"),
+                    configHash = it.optString("configHash"),
+                    runtimeHash = it.optString("runtimeHash"),
+                )
+            },
+            expected = WebReadyIdentity(
+                protocol = SYNC_PROTOCOL,
+                runtimeId = canonicalRuntimeString("id"),
+                configHash = canonicalRuntimeString("configHash"),
+                runtimeHash = canonicalRuntimeString("runtimeHash"),
+            ),
+        )
+        if (identityRejection != null) {
+            webBridgeReady = false
+            lastWebReadySync = null
+            appendLog("Rejected webReady: $identityRejection")
+            handleWebRenderSignals(
+                webRenderTracker.onBridgeRejected(renderedSourceUrl, identityRejection),
+            )
+            return
+        }
+
         webBridgeReady = true
+        lastWebReadySync = sync
         sendToWeb("ready", JSONObject())
         sendConnectionToWeb()
         sendToWeb("profiles", store.profilesPayload())
         sendToWeb("pushPermission", pushPermissionState())
         sendCachedContentCards()
         flushPendingNavigation()
-        refreshPushReadiness("web_ready")
-        postLauncherTelemetry(
-            type = "runtime_ready",
-            label = "Android runtime ready",
-            status = "success",
-            payload = JSONObject()
-                .put("sourceUrl", activeWebUrl())
-                .put("runtime", runtimePayload())
-                .put("diagnostics", deviceDiagnosticsPayload())
-                .put("sync", sync ?: syncEnvelope(authority = "native", reason = "default")),
-            result = runtimePayload(),
+        if (!startupReadinessRequested) {
+            startupReadinessRequested = true
+            refreshPushReadiness("web_ready")
+        }
+        handleWebRenderSignals(
+            webRenderTracker.onBridgeReady(renderedSourceUrl),
         )
     }
 
@@ -245,14 +286,15 @@ class MainActivity : android.app.Activity() {
         if (id.isBlank()) return appendLog("changeUser skipped: empty external ID.")
         if (displayName != null) {
             currentDisplayName = displayName.trim()
-            getSharedPreferences("braze_demo_runtime", MODE_PRIVATE)
+            runtimePrefs()
                 .edit()
                 .putString("active_display_name", currentDisplayName)
                 .apply()
         }
         val syncPayload = sync ?: syncEnvelope(authority = authority, reason = reason)
         val identitySignature = syncSignature(id, syncPayload)
-        if (hasAppliedSdkIdentity && identitySignature == lastIdentitySyncSignature) {
+        if (hasAppliedSdkIdentity && currentSdkExternalId == id) {
+            lastIdentitySyncSignature = identitySignature
             appendLog("changeUser deduped($id)")
             sendConnectionToWeb(sync = syncPayload)
             return
@@ -266,8 +308,10 @@ class MainActivity : android.app.Activity() {
         }
         braze.changeUser(id)
         currentSdkExternalId = id
+        runtimePrefs().edit().putString("active_external_id", id).apply()
         lastIdentitySyncSignature = identitySignature
         hasAppliedSdkIdentity = true
+        currentFcmToken?.takeIf { it.isNotBlank() }?.let { braze.registeredPushToken = it }
         braze.requestImmediateDataFlush()
         appendLog("changeUser($id)")
         postLauncherTelemetry(
@@ -280,7 +324,6 @@ class MainActivity : android.app.Activity() {
                 .put("displayName", currentDisplayName)
                 .put("sync", syncPayload),
         )
-        refreshPushReadiness("change_user")
         sendConnectionToWeb(sync = syncPayload)
     }
 
@@ -489,6 +532,26 @@ class MainActivity : android.app.Activity() {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 ),
             )
+            devOverrideBadge = TextView(this@MainActivity).apply {
+                text = "DEV OVERRIDE"
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(0xFFF97316.toInt())
+                setPadding(20, 10, 20, 10)
+                elevation = 12f
+                visibility = if (isWebSourceOverrideActive()) View.VISIBLE else View.GONE
+            }
+            addView(
+                devOverrideBadge,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END,
+                ).apply {
+                    topMargin = 16
+                    marginEnd = 16
+                },
+            )
         }
     }
 
@@ -519,15 +582,41 @@ class MainActivity : android.app.Activity() {
         webView.settings.allowUniversalAccessFromFileURLs = true
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                webBridgeReady = false
+                lastWebReadySync = null
+                webRenderTracker.onPageStarted()
+                super.onPageStarted(view, url, favicon)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 appendLog("Loaded demo WebView: ${url ?: "unknown"}")
                 sendConnectionToWeb()
+                handleWebRenderSignals(webRenderTracker.onPageFinished(url.orEmpty()))
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame != true) return
-                appendLog("WebView load failed: ${error?.description ?: "unknown error"}")
-                sendConnectionToWeb(loadError = error?.description?.toString())
+                val message = error?.description?.toString() ?: "unknown error"
+                appendLog("WebView load failed: $message")
+                sendConnectionToWeb(loadError = message)
+                handleWebRenderSignals(
+                    webRenderTracker.onMainFrameFailed(request.url?.toString().orEmpty(), message),
+                )
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?,
+            ) {
+                if (request?.isForMainFrame != true) return
+                val message = "HTTP ${errorResponse?.statusCode ?: "error"} while loading the demo source"
+                appendLog("WebView load failed: $message")
+                sendConnectionToWeb(loadError = message)
+                handleWebRenderSignals(
+                    webRenderTracker.onMainFrameFailed(request.url?.toString().orEmpty(), message),
+                )
             }
         }
         webView.addJavascriptInterface(bridge, "brazeBridge")
@@ -881,7 +970,7 @@ class MainActivity : android.app.Activity() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_stat_braze_demo)
             .setColor(ContextCompat.getColor(this, R.color.braze_orange))
-            .setContentTitle(title.ifBlank { BuildConfig.DEMO_PACK_NAME })
+            .setContentTitle(title.ifBlank { runtimeString("name", BuildConfig.DEMO_PACK_NAME) })
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pendingIntent)
@@ -1019,12 +1108,60 @@ class MainActivity : android.app.Activity() {
         handleContentCards(braze.getCachedContentCards() ?: emptyList())
     }
 
-    private fun refreshPushReadiness(reason: String = "manual") {
-        refreshTrustDiagnostics("push_readiness:$reason")
-        sendFcmTokenToBraze(reason = reason, attempt = 0)
+    private fun refreshPushReadiness(
+        reason: String = "manual",
+        force: Boolean = false,
+        completion: ((JSONObject) -> Unit)? = null,
+    ) {
+        if (completion == null) {
+            refreshTrustDiagnostics("push_readiness:$reason", force = force)
+            sendFcmTokenToBraze(reason = reason, attempt = 0, force = force)
+            return
+        }
+
+        var trustResult: JSONObject? = null
+        var pushResult: JSONObject? = null
+        var completed = false
+        val maybeComplete = {
+            val trust = trustResult
+            val push = pushResult
+            if (!completed && trust != null && push != null) {
+                completed = true
+                completion(
+                    JSONObject()
+                        .put("ready", trust.optBoolean("ready") && push.optBoolean("ready"))
+                        .put("trustReady", trust.optBoolean("ready"))
+                        .put("pushReady", push.optBoolean("ready"))
+                        .put("trust", trust)
+                        .put("push", push),
+                )
+            }
+        }
+        refreshTrustDiagnostics("push_readiness:$reason", force = force) {
+            trustResult = it
+            maybeComplete()
+        }
+        sendFcmTokenToBraze(reason = reason, attempt = 0, force = force) {
+            pushResult = it
+            maybeComplete()
+        }
     }
 
-    private fun refreshTrustDiagnostics(reason: String = "manual") {
+    private fun refreshTrustDiagnostics(
+        reason: String = "manual",
+        force: Boolean = false,
+        completion: ((JSONObject) -> Unit)? = null,
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        val cached = lastTrustDiagnostics
+        if (!force && cached != null && now - lastTrustDiagnosticsAt < READINESS_CACHE_TTL_MS) {
+            completion?.invoke(JSONObject(cached.toString()).put("cached", true))
+            return
+        }
+        completion?.let(trustDiagnosticsWaiters::add)
+        if (trustDiagnosticsInFlight) return
+        trustDiagnosticsInFlight = true
+
         val checks = listOf(
             "braze_images" to "https://braze-images.com/",
             "firebase_installations" to "https://firebaseinstallations.googleapis.com/",
@@ -1067,6 +1204,8 @@ class MainActivity : android.app.Activity() {
                 .put("checks", results)
             Handler(Looper.getMainLooper()).post {
                 lastTrustDiagnostics = payload
+                lastTrustDiagnosticsAt = SystemClock.elapsedRealtime()
+                trustDiagnosticsInFlight = false
                 appendLog(if (allOk) "HTTPS trust diagnostics passed." else "HTTPS trust diagnostics failed.")
                 postLauncherTelemetry(
                     type = "trust_diagnostics",
@@ -1075,16 +1214,32 @@ class MainActivity : android.app.Activity() {
                     payload = payload,
                 )
                 refreshDebugDrawer()
+                val waiters = trustDiagnosticsWaiters.toList()
+                trustDiagnosticsWaiters.clear()
+                waiters.forEach { it(payload) }
             }
         }.start()
     }
 
-    private fun sendFcmTokenToBraze(reason: String, attempt: Int) {
-        if (fcmTokenRequestInFlight) return
-        fcmTokenRequestInFlight = true
+    private fun sendFcmTokenToBraze(
+        reason: String,
+        attempt: Int,
+        force: Boolean = false,
+        completion: ((JSONObject) -> Unit)? = null,
+    ) {
+        if (attempt == 0) {
+            val cached = lastFcmReadiness
+            if (!force && cached != null && SystemClock.elapsedRealtime() - lastFcmReadinessAt < READINESS_CACHE_TTL_MS) {
+                completion?.invoke(JSONObject(cached.toString()).put("cached", true))
+                return
+            }
+            completion?.let(fcmReadinessWaiters::add)
+            if (fcmTokenRequestInFlight) return
+            fcmTokenRequestInFlight = true
+        }
+
         runCatching {
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                fcmTokenRequestInFlight = false
                 if (!task.isSuccessful) {
                     val error = task.exception?.message ?: "unknown error"
                     val retry = attempt < FCM_TOKEN_MAX_RETRIES && error.contains("SERVICE_NOT_AVAILABLE", ignoreCase = true)
@@ -1101,36 +1256,53 @@ class MainActivity : android.app.Activity() {
                     )
                     if (retry) {
                         pushRetryHandler.postDelayed({
-                            sendFcmTokenToBraze(reason = reason, attempt = attempt + 1)
+                            sendFcmTokenToBraze(reason = reason, attempt = attempt + 1, force = true)
                         }, FCM_TOKEN_RETRY_DELAYS_MS.getOrElse(attempt) { FCM_TOKEN_RETRY_DELAYS_MS.last() })
+                    } else {
+                        finishFcmReadiness(
+                            pushDiagnosticsPayload()
+                                .put("ready", false)
+                                .put("reason", reason)
+                                .put("attempt", attempt)
+                                .put("error", error),
+                        )
                     }
                     refreshDebugDrawer()
                     return@addOnCompleteListener
                 }
                 val token = task.result.orEmpty()
-                if (token == currentFcmToken) {
-                    refreshDebugDrawer()
-                    return@addOnCompleteListener
-                }
+                val changed = token != currentFcmToken
                 currentFcmToken = token
                 brazeOrNull()?.let { braze ->
                     braze.registeredPushToken = token
                     braze.requestImmediateDataFlush()
                 }
-                appendLog("FCM token registered with Braze: ${token.take(18)}...")
-                postLauncherTelemetry(
-                    type = "fcm_token",
-                    label = "FCM token registered",
-                    status = "success",
-                    payload = pushDiagnosticsPayload()
-                        .put("preview", "${token.take(18)}...")
-                        .put("reason", reason)
-                        .put("attempt", attempt),
+                if (changed) {
+                    appendLog("FCM token registered with Braze: ${token.take(18)}...")
+                    postLauncherTelemetry(
+                        type = "fcm_token",
+                        label = "FCM token registered",
+                        status = "success",
+                        payload = pushDiagnosticsPayload()
+                            .put("preview", "${token.take(18)}...")
+                            .put("reason", reason)
+                            .put("attempt", attempt),
+                    )
+                }
+                val readiness = pushDiagnosticsPayload()
+                    .put("reason", reason)
+                    .put("attempt", attempt)
+                readiness.put(
+                    "ready",
+                    token.isNotBlank() &&
+                        readiness.optString("permission") == "granted" &&
+                        readiness.optBoolean("notificationsEnabled") &&
+                        !readiness.optBoolean("preferredChannelBlocked"),
                 )
+                finishFcmReadiness(readiness)
                 refreshDebugDrawer()
             }
         }.onFailure {
-            fcmTokenRequestInFlight = false
             appendLog("FCM unavailable: ${it.message}")
             postLauncherTelemetry(
                 type = "fcm_token",
@@ -1139,7 +1311,23 @@ class MainActivity : android.app.Activity() {
                 payload = pushDiagnosticsPayload().put("reason", reason).put("attempt", attempt),
                 result = JSONObject().put("error", it.message ?: "unknown"),
             )
+            finishFcmReadiness(
+                pushDiagnosticsPayload()
+                    .put("ready", false)
+                    .put("reason", reason)
+                    .put("attempt", attempt)
+                    .put("error", it.message ?: "unknown"),
+            )
         }
+    }
+
+    private fun finishFcmReadiness(payload: JSONObject) {
+        fcmTokenRequestInFlight = false
+        lastFcmReadiness = payload
+        lastFcmReadinessAt = SystemClock.elapsedRealtime()
+        val waiters = fcmReadinessWaiters.toList()
+        fcmReadinessWaiters.clear()
+        waiters.forEach { it(payload) }
     }
 
     private fun handleDemoCommandIntent(intent: Intent?) {
@@ -1150,16 +1338,22 @@ class MainActivity : android.app.Activity() {
             return
         }
 
+        var decodedCommand: JSONObject? = null
         runCatching {
             val raw = String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
-            executeDemoCommand(JSONObject(raw))
+            decodedCommand = JSONObject(raw)
+            executeDemoCommand(decodedCommand!!)
         }.onFailure {
             appendLog("Demo command failed: ${it.message}")
+            val command = decodedCommand
             postLauncherTelemetry(
                 type = "demo_command",
                 label = "Demo command failed",
                 status = "error",
                 result = JSONObject().put("error", it.message ?: "unknown"),
+                callbackUrl = command?.optString("callbackUrl").orEmpty(),
+                launcherInstanceId = command?.optString("launcherInstanceId").orEmpty(),
+                executionId = command?.optString("executionId").orEmpty(),
             )
         }
     }
@@ -1169,6 +1363,8 @@ class MainActivity : android.app.Activity() {
         val externalId = command.optString("externalId").ifBlank { activeExternalId() }
         val payload = command.optJSONObject("payload") ?: JSONObject()
         val callbackUrl = command.optString("callbackUrl")
+        val launcherInstanceId = command.optString("launcherInstanceId")
+        val executionId = command.optString("executionId")
         val needsBraze = action in setOf(
             "changeUser",
             "logCustomEvent",
@@ -1176,19 +1372,39 @@ class MainActivity : android.app.Activity() {
             "logPurchase",
             "requestContentCardsRefresh",
             "requestPushReadiness",
+            "prepareRuntime",
+            "prepare_runtime",
         )
         if (needsBraze && brazeOrNull() == null) {
             throw IllegalStateException("Braze is not configured for the active Android profile")
         }
 
         val commandSync = syncEnvelope(authority = "control_room", reason = "command")
+            .apply {
+                if (launcherInstanceId.isNotBlank()) put("launcherInstanceId", launcherInstanceId)
+                if (executionId.isNotBlank()) put("executionId", executionId)
+            }
 
         if (externalId.isNotBlank() && action != "changeUser") {
-            changeUser(externalId, commandSync)
+            if (action !in setOf("prepareRuntime", "prepare_runtime", "setWebSourceOverride", "clearWebSourceOverride")) {
+                changeUser(externalId, commandSync)
+            }
         }
 
+        var commandResult: Any? = JSONObject().put("sync", commandSync)
         when (action) {
             "changeUser" -> changeUser(externalId, commandSync, payload.optString("displayName"))
+            "prepareRuntime", "prepare_runtime" -> {
+                prepareRuntimeCommand(
+                    externalId = externalId,
+                    payload = payload,
+                    sync = commandSync,
+                    callbackUrl = callbackUrl,
+                    launcherInstanceId = launcherInstanceId,
+                    executionId = executionId,
+                )
+                return
+            }
             "logCustomEvent" -> {
                 val name = payload.optString("name")
                 if (name.isBlank()) throw IllegalArgumentException("Missing event name")
@@ -1207,14 +1423,60 @@ class MainActivity : android.app.Activity() {
             "logPurchase" -> logPurchase(payload)
             "requestContentCardsRefresh" -> refreshContentCards()
             "requestPushPermission" -> requestNotificationPermission()
-            "requestPushReadiness" -> refreshPushReadiness(payload.optString("reason").ifBlank { "command" })
-            "requestTrustDiagnostics" -> refreshTrustDiagnostics(payload.optString("reason").ifBlank { "command" })
+            "requestPushReadiness" -> {
+                refreshPushReadiness(payload.optString("reason").ifBlank { "command" }, force = true) { readiness ->
+                    postAsyncReadinessCommand(
+                        action = action,
+                        label = "Checked Android push readiness",
+                        externalId = externalId,
+                        readiness = readiness,
+                        callbackUrl = callbackUrl,
+                        launcherInstanceId = launcherInstanceId,
+                        executionId = executionId,
+                    )
+                }
+                return
+            }
+            "requestTrustDiagnostics" -> {
+                refreshTrustDiagnostics(payload.optString("reason").ifBlank { "command" }, force = true) { trust ->
+                    val readiness = JSONObject()
+                        .put("ready", trust.optBoolean("ready"))
+                        .put("trust", trust)
+                    postAsyncReadinessCommand(
+                        action = action,
+                        label = "Checked Android HTTPS trust",
+                        externalId = externalId,
+                        readiness = readiness,
+                        callbackUrl = callbackUrl,
+                        launcherInstanceId = launcherInstanceId,
+                        executionId = executionId,
+                    )
+                }
+                return
+            }
             "navigate" -> sendNavigation(payload.optString("route").ifBlank { payload.optString("uri") }, "control_room")
             "foregroundPush" -> showDiagnosticPushPreview(
-                title = payload.optString("title", BuildConfig.DEMO_PACK_NAME),
+                title = payload.optString("title", runtimeString("name", BuildConfig.DEMO_PACK_NAME)),
                 body = payload.optString("body"),
                 uri = payload.optString("uri").ifBlank { null },
             )
+            "setWebSourceOverride" -> {
+                commandResult = setWebSourceOverride(
+                    payload.optString("url").ifBlank { payload.optString("webURL") },
+                    callbackUrl = callbackUrl,
+                    launcherInstanceId = launcherInstanceId,
+                    executionId = executionId,
+                    action = action,
+                ).put("sync", commandSync)
+            }
+            "clearWebSourceOverride" -> {
+                commandResult = clearWebSourceOverride(
+                    callbackUrl = callbackUrl,
+                    launcherInstanceId = launcherInstanceId,
+                    executionId = executionId,
+                    action = action,
+                ).put("sync", commandSync)
+            }
             else -> throw IllegalArgumentException("Unsupported demo command action: $action")
         }
 
@@ -1224,8 +1486,315 @@ class MainActivity : android.app.Activity() {
             status = "success",
             externalId = externalId,
             payload = command,
-            result = JSONObject().put("sync", commandSync),
+            result = commandResult,
             callbackUrl = callbackUrl,
+            launcherInstanceId = launcherInstanceId,
+            executionId = executionId,
+        )
+    }
+
+    private fun postAsyncReadinessCommand(
+        action: String,
+        label: String,
+        externalId: String,
+        readiness: JSONObject,
+        callbackUrl: String,
+        launcherInstanceId: String,
+        executionId: String,
+    ) {
+        postLauncherTelemetry(
+            type = "demo_command",
+            label = label,
+            status = if (readiness.optBoolean("ready")) "success" else "error",
+            externalId = externalId,
+            payload = JSONObject().put("action", action),
+            result = JSONObject()
+                .put("runtime", runtimePayload())
+                .put("diagnostics", deviceDiagnosticsPayload())
+                .put("readiness", readiness)
+                .put("sourceUrl", activeWebUrl())
+                .put("sourceOverride", isWebSourceOverrideActive()),
+            callbackUrl = callbackUrl,
+            launcherInstanceId = launcherInstanceId,
+            executionId = executionId,
+        )
+    }
+
+    private fun prepareRuntimeCommand(
+        externalId: String,
+        payload: JSONObject,
+        sync: JSONObject,
+        callbackUrl: String,
+        launcherInstanceId: String,
+        executionId: String,
+    ) {
+        val reason = payload.optString("reason").ifBlank { "command" }
+        val displayName = payload.optString("displayName").takeIf { payload.has("displayName") }
+        val force = payload.optBoolean("force", false)
+        val refreshCards = payload.optBoolean("refreshContentCards", true)
+        val refreshTrust = payload.optBoolean("refreshTrust", true)
+        val refreshPush = payload.optBoolean("refreshPush", true)
+        val clearSourceOverride = payload.optBoolean("clearWebSourceOverride", false)
+
+        if (clearSourceOverride) {
+            clearWebSourceOverride(
+                callbackUrl = callbackUrl,
+                launcherInstanceId = launcherInstanceId,
+                executionId = executionId,
+                action = "prepareRuntime",
+            )
+        }
+        changeUser(externalId, sync, displayName, authority = "control_room", reason = reason)
+        if (refreshCards) refreshContentCards()
+        sendConnectionToWeb(sync = sync)
+
+        val complete: (JSONObject) -> Unit = { readiness ->
+            readiness.put("manifestReady", bundledRuntimeManifestValid)
+            if (!bundledRuntimeManifestValid) readiness.put("ready", false)
+            val result = JSONObject()
+                .put("runtime", runtimePayload())
+                .put("diagnostics", deviceDiagnosticsPayload())
+                .put("readiness", readiness)
+                .put("sourceUrl", activeWebUrl())
+                .put("sourceOverride", isWebSourceOverrideActive())
+                .put("sync", sync)
+            postLauncherTelemetry(
+                type = "demo_command",
+                label = "Prepared Android runtime",
+                status = if (readiness.optBoolean("ready", true)) "success" else "error",
+                externalId = externalId,
+                payload = JSONObject()
+                    .put("action", "prepareRuntime")
+                    .put("reason", reason)
+                    .put("force", force)
+                    .put("clearWebSourceOverride", clearSourceOverride),
+                result = result,
+                callbackUrl = callbackUrl,
+                launcherInstanceId = launcherInstanceId,
+                executionId = executionId,
+            )
+        }
+
+        when {
+            refreshTrust && refreshPush -> refreshPushReadiness(reason, force = force) { combined ->
+                val trustReady = combined.optBoolean("trustReady")
+                val pushReady = combined.optBoolean("pushReady")
+                complete(
+                    JSONObject()
+                        .put("ready", trustReady)
+                        .put("trustReady", trustReady)
+                        .put("pushReady", pushReady)
+                        .put("trust", combined.optJSONObject("trust"))
+                        .put("push", combined.optJSONObject("push")),
+                )
+            }
+            refreshTrust -> refreshTrustDiagnostics(reason, force = force) { trust ->
+                val trustReady = trust.optBoolean("ready")
+                complete(
+                    JSONObject()
+                        .put("ready", trustReady)
+                        .put("trustReady", trustReady)
+                        .put("pushReady", lastFcmReadiness?.optBoolean("ready") ?: false)
+                        .put("trust", trust),
+                )
+            }
+            refreshPush -> sendFcmTokenToBraze(reason, attempt = 0, force = force) { push ->
+                complete(
+                    JSONObject()
+                        .put("ready", true)
+                        .put("trustReady", lastTrustDiagnostics?.optBoolean("ready") ?: false)
+                        .put("pushReady", push.optBoolean("ready"))
+                        .put("push", push),
+                )
+            }
+            else -> complete(
+                JSONObject()
+                    .put("ready", true)
+                    .put("trustReady", lastTrustDiagnostics?.optBoolean("ready") ?: false)
+                    .put("pushReady", lastFcmReadiness?.optBoolean("ready") ?: false)
+                    .put("skipped", true),
+            )
+        }
+    }
+
+    private fun setWebSourceOverride(
+        rawUrl: String,
+        callbackUrl: String,
+        launcherInstanceId: String,
+        executionId: String,
+        action: String,
+    ): JSONObject {
+        val url = rawUrl.trim()
+        if (url.isBlank() || url == CredentialStore.DEFAULT_WEB_URL || !CredentialProfile.isAllowedLocalWebUrl(url)) {
+            throw IllegalArgumentException(
+                "Web source override must be a local http://localhost, http://127.0.0.1, or http://10.0.2.2 URL.",
+            )
+        }
+        val profile = store.activeProfile ?: throw IllegalStateException("No active Android credential profile")
+        val previousUrl = activeWebUrl()
+        store.save(profile.copy(webURL = url))
+        refreshDevOverrideBadge()
+        val targetUrl = activeWebUrl()
+        val renderConfirmed = beginWebSourceTransition(
+            expectedUrl = targetUrl,
+            expectedOverride = true,
+            callbackUrl = callbackUrl,
+            launcherInstanceId = launcherInstanceId,
+            executionId = executionId,
+            action = action,
+        )
+        if (canonicalWebSourceUrl(previousUrl) != canonicalWebSourceUrl(targetUrl)) reloadActiveWebSource()
+        return sourceStatePayload()
+            .put("renderConfirmed", renderConfirmed)
+            .put("transitionPending", !renderConfirmed)
+    }
+
+    private fun clearWebSourceOverride(
+        callbackUrl: String,
+        launcherInstanceId: String,
+        executionId: String,
+        action: String,
+    ): JSONObject {
+        val profile = store.activeProfile ?: throw IllegalStateException("No active Android credential profile")
+        val previousUrl = activeWebUrl()
+        store.save(profile.copy(webURL = ""))
+        refreshDevOverrideBadge()
+        val targetUrl = activeWebUrl()
+        val renderConfirmed = beginWebSourceTransition(
+            expectedUrl = targetUrl,
+            expectedOverride = false,
+            callbackUrl = callbackUrl,
+            launcherInstanceId = launcherInstanceId,
+            executionId = executionId,
+            action = action,
+        )
+        if (canonicalWebSourceUrl(previousUrl) != canonicalWebSourceUrl(targetUrl)) reloadActiveWebSource()
+        return sourceStatePayload()
+            .put("renderConfirmed", renderConfirmed)
+            .put("transitionPending", !renderConfirmed)
+    }
+
+    private fun beginWebSourceTransition(
+        expectedUrl: String,
+        expectedOverride: Boolean,
+        callbackUrl: String,
+        launcherInstanceId: String,
+        executionId: String,
+        action: String,
+    ): Boolean {
+        val transition = WebSourceTransition(
+            expectedUrl = expectedUrl,
+            expectedOverride = expectedOverride,
+            callbackUrl = callbackUrl,
+            launcherInstanceId = launcherInstanceId,
+            executionId = executionId,
+            action = action,
+        )
+        val signals = webRenderTracker.beginTransition(transition)
+        handleWebRenderSignals(signals)
+        return signals.any { signal ->
+            signal is WebRenderSignal.Ready && signal.transition?.executionId == executionId
+        }
+    }
+
+    private fun reloadActiveWebSource() {
+        webBridgeReady = false
+        lastWebReadySync = null
+        lastDeliveredContentCardsPayload = null
+        webView.loadUrl(activeWebUrl())
+    }
+
+    private fun refreshDevOverrideBadge() {
+        devOverrideBadge?.visibility = if (isWebSourceOverrideActive()) View.VISIBLE else View.GONE
+    }
+
+    private fun sourceStatePayload(): JSONObject =
+        JSONObject()
+            .put("sourceUrl", activeWebUrl())
+            .put("sourceOverride", isWebSourceOverrideActive())
+            .put("sourceMode", if (isWebSourceOverrideActive()) "host-dev" else "bundled-asset")
+            .put("packSourceMode", runtimeString("sourceMode", BuildConfig.DEMO_SOURCE_MODE))
+            .put("runtime", runtimePayload())
+
+    private fun handleWebRenderSignals(signals: List<WebRenderSignal>) {
+        signals.forEach { signal ->
+            when (signal) {
+                is WebRenderSignal.Ready -> {
+                    if (signal.transition == null) postRuntimeReady(signal)
+                    else postSourceReady(signal)
+                }
+                is WebRenderSignal.Failed -> postSourceFailure(signal)
+            }
+        }
+    }
+
+    private fun postRuntimeReady(signal: WebRenderSignal.Ready) {
+        val runtime = runtimePayload()
+        val sync = lastWebReadySync ?: syncEnvelope(authority = "native", reason = "default")
+        postLauncherTelemetry(
+            type = "runtime_ready",
+            label = if (bundledRuntimeManifestValid) "Android runtime rendered" else "Android runtime manifest invalid",
+            status = if (bundledRuntimeManifestValid) "success" else "error",
+            payload = JSONObject()
+                .put("sourceUrl", signal.sourceUrl)
+                .put("sourceOverride", isWebSourceOverrideActive())
+                .put("renderConfirmed", true)
+                .put("renderedUrl", signal.sourceUrl)
+                .put("renderGeneration", signal.generation)
+                .put("runtime", runtime)
+                .put("diagnostics", deviceDiagnosticsPayload())
+                .put("sync", sync),
+            result = JSONObject(runtime.toString())
+                .put("sourceUrl", signal.sourceUrl)
+                .put("sourceOverride", isWebSourceOverrideActive())
+                .put("renderConfirmed", true)
+                .put("renderedUrl", signal.sourceUrl),
+        )
+    }
+
+    private fun postSourceReady(signal: WebRenderSignal.Ready) {
+        val transition = signal.transition ?: return
+        val sync = lastWebReadySync ?: syncEnvelope(authority = "native", reason = "default")
+        val payload = sourceStatePayload()
+            .put("sourceUrl", signal.sourceUrl)
+            .put("sourceOverride", transition.expectedOverride)
+            .put("renderConfirmed", true)
+            .put("renderedUrl", signal.sourceUrl)
+            .put("renderGeneration", signal.generation)
+            .put("action", transition.action)
+            .put("sync", sync)
+        postLauncherTelemetry(
+            type = "demo_source_ready",
+            label = "Android web source rendered",
+            status = "success",
+            payload = payload,
+            result = JSONObject(payload.toString()),
+            callbackUrl = transition.callbackUrl,
+            launcherInstanceId = transition.launcherInstanceId,
+            executionId = transition.executionId,
+        )
+    }
+
+    private fun postSourceFailure(signal: WebRenderSignal.Failed) {
+        val transition = signal.transition
+        val payload = JSONObject()
+            .put("sourceUrl", signal.sourceUrl)
+            .put("sourceOverride", transition?.expectedOverride ?: isWebSourceOverrideActive())
+            .put("expectedSourceUrl", transition?.expectedUrl ?: activeWebUrl())
+            .put("renderConfirmed", false)
+            .put("renderGeneration", signal.generation)
+            .put("action", transition?.action ?: "runtime")
+            .put("runtime", runtimePayload())
+            .put("error", signal.error)
+        postLauncherTelemetry(
+            type = "demo_source_ready",
+            label = "Android web source failed",
+            status = "error",
+            payload = payload,
+            result = JSONObject(payload.toString()),
+            callbackUrl = transition?.callbackUrl.orEmpty(),
+            launcherInstanceId = transition?.launcherInstanceId.orEmpty(),
+            executionId = transition?.executionId.orEmpty(),
         )
     }
 
@@ -1237,6 +1806,8 @@ class MainActivity : android.app.Activity() {
         payload: Any? = JSONObject(),
         result: Any? = null,
         callbackUrl: String = "",
+        launcherInstanceId: String = "",
+        executionId: String = "",
     ) {
         val target = callbackUrl.ifBlank { BuildConfig.LAUNCHER_CALLBACK_URL }.trim()
         if (target.isBlank()) return
@@ -1248,6 +1819,8 @@ class MainActivity : android.app.Activity() {
             .put("externalId", externalId)
             .put("payload", payload ?: JSONObject.NULL)
         if (result != null) body.put("result", result)
+        if (launcherInstanceId.isNotBlank()) body.put("launcherInstanceId", launcherInstanceId)
+        if (executionId.isNotBlank()) body.put("executionId", executionId)
 
         Thread {
             runCatching {
@@ -1278,7 +1851,7 @@ class MainActivity : android.app.Activity() {
             setBackgroundColor(Color.WHITE)
         }
         content.addView(TextView(this).apply {
-            text = "Android Debug"
+            text = if (isWebSourceOverrideActive()) "Android Debug · DEV OVERRIDE" else "Android Debug"
             textSize = 19f
             setTextColor(0xFF111827.toInt())
             typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -1335,9 +1908,12 @@ class MainActivity : android.app.Activity() {
         val profile = store.activeProfile
         val token = currentFcmToken?.take(24)?.plus("...") ?: "pending"
         return buildString {
-            append("Demo: ${BuildConfig.DEMO_PACK_NAME} (${BuildConfig.DEMO_PACK_ID})\n")
-            append("Hash: ${BuildConfig.DEMO_CONFIG_HASH.ifBlank { "-" }}\n")
-            append("Source: ${BuildConfig.DEMO_SOURCE_MODE} -> ${activeWebUrl()}\n")
+            append("Demo: ${runtimeString("name", BuildConfig.DEMO_PACK_NAME)} (${runtimeString("id", BuildConfig.DEMO_PACK_ID)})\n")
+            append("Hash: ${runtimeString("configHash", BuildConfig.DEMO_CONFIG_HASH).ifBlank { "-" }}\n")
+            append("Runtime hash: ${runtimeString("runtimeHash", BuildConfig.DEMO_RUNTIME_HASH).ifBlank { "-" }}\n")
+            if (isWebSourceOverrideActive()) append("DEV OVERRIDE: ACTIVE — restore bundled mode before rehearsal.\n")
+            append("Source: ${if (isWebSourceOverrideActive()) "host-dev" else "bundled-asset"} -> ${activeWebUrl()}\n")
+            append("Pack source: ${runtimeString("sourceMode", BuildConfig.DEMO_SOURCE_MODE)}\n")
             append("Override: ${if (isWebSourceOverrideActive()) "active" else "off"}\n")
             append("Profile: ${profile?.name ?: "none"}\n")
             append("Endpoint: ${profile?.endpoint ?: "-"}\n")
@@ -1410,31 +1986,102 @@ class MainActivity : android.app.Activity() {
     private fun isWebSourceOverrideActive(): Boolean =
         store.activeProfile?.webURL?.takeIf { CredentialProfile.isAllowedLocalWebUrl(it) }?.isNotBlank() == true
 
-    private fun runtimePayload(): JSONObject =
+    private fun readBundledRuntimeManifest(): JSONObject =
+        runCatching {
+            val manifest = assets.open(BUNDLED_RUNTIME_MANIFEST_PATH).bufferedReader().use { reader ->
+                JSONObject(reader.readText())
+            }
+            val sources = manifest.optJSONObject("expectedSources")
+            val errors = BundledRuntimeManifestContract.errors(
+                BundledRuntimeManifestFields(
+                    schemaVersion = manifest.optInt("schemaVersion"),
+                    runtimeHashVersion = manifest.optInt("runtimeHashVersion"),
+                    id = manifest.optString("id"),
+                    configHash = manifest.optString("configHash"),
+                    runtimeHash = manifest.optString("runtimeHash"),
+                    expectedSources = mapOf(
+                        "browser" to sources?.optString("browser").orEmpty(),
+                        "android" to sources?.optString("android").orEmpty(),
+                        "ios" to sources?.optString("ios").orEmpty(),
+                    ),
+                ),
+            )
+            require(errors.isEmpty()) { errors.joinToString("; ") }
+            bundledRuntimeManifestValid = true
+            bundledRuntimeManifestError = ""
+            manifest
+        }.getOrElse { error ->
+            bundledRuntimeManifestValid = false
+            bundledRuntimeManifestError = error.message ?: "Bundled runtime manifest could not be read."
+            Log.e(TAG, "Bundled runtime manifest is invalid; runtime readiness will fail closed.", error)
+            JSONObject()
+        }
+
+    private fun buildConfigRuntimeContext(): JSONObject =
         JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", 2)
             .put("id", BuildConfig.DEMO_PACK_ID)
             .put("name", BuildConfig.DEMO_PACK_NAME)
             .put("configHash", BuildConfig.DEMO_CONFIG_HASH)
+            .put("runtimeHashVersion", 2)
+            .put("runtimeHash", BuildConfig.DEMO_RUNTIME_HASH)
             .put("generatedAt", BuildConfig.DEMO_GENERATED_AT)
             .put("sourceMode", BuildConfig.DEMO_SOURCE_MODE)
+            .put(
+                "expectedSources",
+                JSONObject()
+                    .put("browser", BuildConfig.DEMO_BROWSER_URL)
+                    .put("android", BuildConfig.DEMO_ANDROID_URL)
+                    .put("ios", BuildConfig.DEMO_IOS_URL),
+            )
+
+    private fun runtimeString(key: String, fallback: String): String =
+        if (bundledRuntimeManifestValid) bundledRuntimeManifest.optString(key).ifBlank { fallback } else fallback
+
+    private fun canonicalRuntimeString(key: String): String =
+        if (bundledRuntimeManifestValid) bundledRuntimeManifest.optString(key) else ""
+
+    private fun runtimeExpectedSources(): JSONObject =
+        if (bundledRuntimeManifestValid) {
+            bundledRuntimeManifest.optJSONObject("expectedSources") ?: JSONObject()
+        } else {
+            JSONObject()
+        }
+
+    private fun runtimePayload(): JSONObject =
+        JSONObject()
+            .put("manifestValid", bundledRuntimeManifestValid)
+            .put("manifestError", bundledRuntimeManifestError)
+            .put("schemaVersion", if (bundledRuntimeManifestValid) bundledRuntimeManifest.optInt("schemaVersion") else 0)
+            .put("id", canonicalRuntimeString("id"))
+            .put("name", canonicalRuntimeString("name"))
+            .put("configHash", canonicalRuntimeString("configHash"))
+            .put("runtimeHashVersion", if (bundledRuntimeManifestValid) bundledRuntimeManifest.optInt("runtimeHashVersion") else 0)
+            .put("runtimeHash", canonicalRuntimeString("runtimeHash"))
+            .put("generatedAt", canonicalRuntimeString("generatedAt"))
+            .put("sourceMode", if (isWebSourceOverrideActive()) "host-dev" else "bundled-asset")
+            .put("packSourceMode", canonicalRuntimeString("sourceMode"))
+            .put("sourceUrl", activeWebUrl())
+            .put("sourceOverride", isWebSourceOverrideActive())
             .put("deviceId", sdkDeviceId())
             .put("externalId", currentSdkExternalId.ifBlank { activeExternalId() })
             .put("pushPermission", pushPermissionState())
             .put("pushTokenPresent", !currentFcmToken.isNullOrBlank())
             .put("trustReady", lastTrustDiagnostics?.optBoolean("ready") ?: false)
             .put("contentCardCount", lastContentCardCount)
-            .put("expectedSources", JSONObject()
-                .put("browser", BuildConfig.DEMO_BROWSER_URL)
-                .put("android", BuildConfig.DEMO_ANDROID_URL)
-                .put("ios", BuildConfig.DEMO_IOS_URL))
+            .put("sdkConfigured", store.activeProfile?.let { it.apiKey.isNotBlank() && it.endpoint.isNotBlank() } ?: false)
+            .put("sdkCredentialContextFingerprint", store.activeSdkCredentialContextFingerprint())
+            .put("expectedSources", runtimeExpectedSources())
+            .put("buildContext", buildConfigRuntimeContext())
 
     private fun syncEnvelope(authority: String, reason: String): JSONObject =
         JSONObject()
             .put("protocol", SYNC_PROTOCOL)
             .put("sessionId", syncSessionId)
-            .put("runtimeId", BuildConfig.DEMO_PACK_ID)
-            .put("configHash", BuildConfig.DEMO_CONFIG_HASH)
+            .put("runtimeId", canonicalRuntimeString("id"))
+            .put("configHash", canonicalRuntimeString("configHash"))
+            .put("runtimeHash", canonicalRuntimeString("runtimeHash"))
+            .put("manifestValid", bundledRuntimeManifestValid)
             .put("authority", authority)
             .put("reason", reason)
             .put("timestamp", System.currentTimeMillis())
@@ -1444,14 +2091,24 @@ class MainActivity : android.app.Activity() {
             externalId,
             sync.optString("protocol", SYNC_PROTOCOL),
             sync.optString("sessionId", syncSessionId),
-            sync.optString("runtimeId", BuildConfig.DEMO_PACK_ID),
-            sync.optString("configHash", BuildConfig.DEMO_CONFIG_HASH),
+            sync.optString("runtimeId", runtimeString("id", BuildConfig.DEMO_PACK_ID)),
+            sync.optString("configHash", runtimeString("configHash", BuildConfig.DEMO_CONFIG_HASH)),
+            sync.optString("runtimeHash", runtimeString("runtimeHash", BuildConfig.DEMO_RUNTIME_HASH)),
             sync.optString("authority"),
             sync.optString("reason"),
         ).joinToString("|")
 
+    private fun runtimePrefs() = getSharedPreferences("braze_demo_runtime", MODE_PRIVATE)
+
+    /**
+     * The last identity applied on this install wins over the build-time seed, so closing and
+     * reopening the app keeps the operator's chosen persona instead of snapping back to
+     * BuildConfig.DEMO_EXTERNAL_ID. Cleared in onCreate whenever the seed takes over.
+     */
     private fun activeExternalId(): String =
-        store.activeProfile?.externalId?.takeIf { it.isNotBlank() } ?: CredentialStore.DEFAULT_EXTERNAL_ID
+        runtimePrefs().getString("active_external_id", "").orEmpty().ifBlank {
+            store.activeProfile?.externalId?.takeIf { it.isNotBlank() } ?: CredentialStore.DEFAULT_EXTERNAL_ID
+        }
 
     private fun brazeOrNull(): Braze? {
         val profile = store.activeProfile ?: return null
@@ -1654,8 +2311,10 @@ class MainActivity : android.app.Activity() {
         private const val APP_ROUTE_HOST = "route"
         private const val MAX_INTERNAL_ROUTE_LENGTH = 2048
         private const val PUSH_FOREGROUND_DEDUPE_MS = 1_000L
+        private const val READINESS_CACHE_TTL_MS = 15_000L
         private const val FCM_TOKEN_MAX_RETRIES = 4
         private const val HTTPS_DIAGNOSTIC_TIMEOUT_MS = 3_000
+        private const val BUNDLED_RUNTIME_MANIFEST_PATH = "demo/demo-runtime.json"
         private val FCM_TOKEN_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L, 20_000L)
         private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     }

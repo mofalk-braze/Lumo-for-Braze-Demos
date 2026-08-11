@@ -20,6 +20,7 @@ final class BrazeManager: BrazeDelegate {
   private var lastIdentitySyncSignature = ""
   private var hasAppliedSdkIdentity = false
   private var currentSdkExternalId = ""
+  private var configuredProfileId: String?
   private(set) var activeDisplayName = UserDefaults.standard.string(forKey: "braze.demo.activeDisplayName") ?? ""
 
   /// Set by the web view controller to forward normalized cards to the web layer.
@@ -28,9 +29,17 @@ final class BrazeManager: BrazeDelegate {
   /// means the app handled the route and Braze should not open it externally.
   var onOpenURL: ((Braze.URLContext) -> Bool)?
 
-  var isConfigured: Bool { braze != nil }
+  var isConfigured: Bool {
+    guard braze != nil,
+      let activeProfileId = CredentialStore.shared.activeProfile?.id
+    else { return false }
+    return configuredProfileId == activeProfileId
+  }
   var activeExternalId: String {
-    currentSdkExternalId.isEmpty ? (CredentialStore.shared.activeProfile?.externalId ?? "") : currentSdkExternalId
+    if !currentSdkExternalId.isEmpty { return currentSdkExternalId }
+    guard let profile = CredentialStore.shared.activeProfile else { return "" }
+    let remembered = rememberedExternalId(for: profile)
+    return remembered.isEmpty ? profile.externalId : remembered
   }
 
   /// The web demo URL for the active profile (falls back to the Config default).
@@ -47,7 +56,7 @@ final class BrazeManager: BrazeDelegate {
   }
 
   var connectionLabel: String {
-    guard let p = CredentialStore.shared.activeProfile, braze != nil else {
+    guard let p = CredentialStore.shared.activeProfile, isConfigured else {
       return "No workspace — open Setup"
     }
     return "\(p.name) · \(p.endpoint)"
@@ -66,12 +75,16 @@ final class BrazeManager: BrazeDelegate {
 
   func runtimePayload() -> [String: Any] {
     [
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "id": Config.demoPackId,
       "name": Config.demoPackName,
       "configHash": Config.demoConfigHash,
+      "runtimeHashVersion": 2,
+      "runtimeHash": Config.demoRuntimeHash,
       "generatedAt": Config.demoGeneratedAt,
       "sourceMode": Config.demoSourceMode,
+      "sdkConfigured": isConfigured,
+      "sdkCredentialContextFingerprint": CredentialStore.shared.activeSdkCredentialContextFingerprint,
       "deviceId": braze?.deviceId ?? "",
       "externalId": activeExternalId,
       "pushPermission": UserDefaults.standard.string(forKey: "braze.demo.ios.pushAuthorizationStatus") ?? "unknown",
@@ -88,7 +101,9 @@ final class BrazeManager: BrazeDelegate {
 
   @MainActor
   func configure() {
-    CredentialStore.shared.seedIfEmpty()
+    if CredentialStore.shared.reconcileGeneratedSeed() {
+      clearRememberedIdentity()
+    }
     if let profile = CredentialStore.shared.activeProfile {
       reinitialize(with: profile)
     } else {
@@ -99,13 +114,18 @@ final class BrazeManager: BrazeDelegate {
   /// (Re)create the Braze instance for a profile. Tears down any previous one.
   @MainActor
   func reinitialize(with profile: CredentialProfile) {
-    guard !profile.apiKey.isEmpty, !profile.endpoint.isEmpty else { return }
     cardsSubscription?.cancel()
     cardsSubscription = nil
     cardsById.removeAll()
     contentCards.removeAll()
     onContentCards?([])
+    braze = nil
+    inAppMessageUI = nil
+    configuredProfileId = nil
     currentSdkExternalId = ""
+    hasAppliedSdkIdentity = false
+    lastIdentitySyncSignature = ""
+    guard !profile.apiKey.isEmpty, !profile.endpoint.isEmpty else { return }
 
     let configuration = Braze.Configuration(apiKey: profile.apiKey, endpoint: profile.endpoint)
     configuration.logger.level = .info
@@ -114,6 +134,7 @@ final class BrazeManager: BrazeDelegate {
     let braze = Braze(configuration: configuration)
     braze.delegate = self
     self.braze = braze
+    configuredProfileId = profile.id
 
     let iam = BrazeInAppMessageUI()
     braze.inAppMessagePresenter = iam
@@ -123,11 +144,12 @@ final class BrazeManager: BrazeDelegate {
       self?.handleCards(cards)
     }
 
-    lastIdentitySyncSignature = ""
-    hasAppliedSdkIdentity = false
-    // Native owns the demo identity.
-    if !profile.externalId.isEmpty {
-      changeUser(profile.externalId, sync: syncEnvelope(authority: "native", reason: "profile_select"))
+    // Native owns the demo identity. A remembered identity for this profile wins over its seed.
+    let startupExternalId = rememberedExternalId(for: profile).isEmpty
+      ? profile.externalId
+      : rememberedExternalId(for: profile)
+    if !startupExternalId.isEmpty {
+      changeUser(startupExternalId, sync: syncEnvelope(authority: "native", reason: "profile_select"))
     }
     braze.requestImmediateDataFlush()
     print("[BrazeManager] Configured for \(profile.endpoint) (user \(profile.externalId)).")
@@ -172,10 +194,33 @@ final class BrazeManager: BrazeDelegate {
       onContentCards?([])
     }
     currentSdkExternalId = id
+    rememberAppliedIdentity(id)
     lastIdentitySyncSignature = signature
     hasAppliedSdkIdentity = true
     braze?.requestImmediateDataFlush()
   }
+
+  /// Remembers the last applied identity against the profile it belongs to, so relaunching keeps
+  /// the operator's chosen persona instead of snapping back to the Config.swift seed. Scoping it
+  /// to the profile id means switching or reseeding a profile still starts on that profile's user.
+  private func rememberAppliedIdentity(_ externalId: String) {
+    guard let profileId = CredentialStore.shared.activeProfile?.id else { return }
+    UserDefaults.standard.set(externalId, forKey: Self.rememberedExternalIdKey)
+    UserDefaults.standard.set(profileId, forKey: Self.rememberedProfileIdKey)
+  }
+
+  private func rememberedExternalId(for profile: CredentialProfile) -> String {
+    guard UserDefaults.standard.string(forKey: Self.rememberedProfileIdKey) == profile.id else { return "" }
+    return UserDefaults.standard.string(forKey: Self.rememberedExternalIdKey) ?? ""
+  }
+
+  private func clearRememberedIdentity() {
+    UserDefaults.standard.removeObject(forKey: Self.rememberedExternalIdKey)
+    UserDefaults.standard.removeObject(forKey: Self.rememberedProfileIdKey)
+  }
+
+  private static let rememberedExternalIdKey = "braze.demo.activeExternalId"
+  private static let rememberedProfileIdKey = "braze.demo.activeExternalIdProfileId"
 
   func syncEnvelope(authority: String, reason: String) -> [String: Any] {
     [
@@ -183,6 +228,7 @@ final class BrazeManager: BrazeDelegate {
       "sessionId": syncSessionId,
       "runtimeId": Config.demoPackId,
       "configHash": Config.demoConfigHash,
+      "runtimeHash": Config.demoRuntimeHash,
       "authority": authority,
       "reason": reason,
       "timestamp": Int(Date().timeIntervalSince1970 * 1000),
@@ -196,6 +242,7 @@ final class BrazeManager: BrazeDelegate {
       sync["sessionId"] as? String ?? syncSessionId,
       sync["runtimeId"] as? String ?? Config.demoPackId,
       sync["configHash"] as? String ?? Config.demoConfigHash,
+      sync["runtimeHash"] as? String ?? Config.demoRuntimeHash,
       sync["authority"] as? String ?? "",
       sync["reason"] as? String ?? "",
     ].joined(separator: "|")

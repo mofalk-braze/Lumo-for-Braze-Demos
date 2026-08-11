@@ -3,6 +3,7 @@ package com.braze.demoshell
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.UUID
 
 data class CredentialProfile(
@@ -91,6 +92,118 @@ data class CredentialProfile(
     }
 }
 
+data class GeneratedCredentialSeed(
+    val packId: String,
+    val packName: String,
+    val profileName: String,
+    val configHash: String,
+    val apiKey: String,
+    val endpoint: String,
+    val externalId: String,
+) {
+    val profileId: String
+        get() = "generated:${normalizedPackId()}"
+
+    fun profile(): CredentialProfile? {
+        val key = apiKey.trim()
+        val sdkEndpoint = endpoint.trim()
+        if (key.isBlank() || sdkEndpoint.isBlank()) return null
+        return CredentialProfile(
+            id = profileId,
+            name = profileName.trim().ifBlank { packName.trim().ifBlank { "Generated workspace" } },
+            apiKey = key,
+            endpoint = sdkEndpoint,
+            externalId = externalId.trim().ifBlank { CredentialStore.DEFAULT_EXTERNAL_ID },
+            webURL = "",
+        )
+    }
+
+    /** One-way generated-context marker; SharedPreferences never receives another plaintext key copy. */
+    fun fingerprint(): String = sha256(
+        listOf(
+            "android-generated-credential-seed/v1",
+            normalizedPackId(),
+            configHash.trim(),
+            apiKey.trim(),
+            endpoint.trim(),
+            externalId.trim(),
+        ),
+    )
+
+    /** Safe runtime proof that the active SDK credentials belong to this generated pack context. */
+    fun sdkCredentialContextFingerprint(profile: CredentialProfile?): String {
+        if (profile == null || profile.apiKey.isBlank() || profile.endpoint.isBlank()) return ""
+        return sha256(
+            listOf(
+                SDK_CREDENTIAL_CONTEXT_PROTOCOL,
+                normalizedPackId(),
+                configHash.trim(),
+                profile.apiKey.trim(),
+                profile.endpoint.trim(),
+            ),
+        )
+    }
+
+    private fun normalizedPackId(): String = packId.trim().ifBlank { "default" }
+
+    companion object {
+        const val SDK_CREDENTIAL_CONTEXT_PROTOCOL = "android-sdk-credential-context/v1"
+
+        fun current(): GeneratedCredentialSeed = GeneratedCredentialSeed(
+            packId = BuildConfig.DEMO_PACK_ID,
+            packName = BuildConfig.DEMO_PACK_NAME,
+            profileName = BuildConfig.DEMO_PROFILE_NAME,
+            configHash = BuildConfig.DEMO_CONFIG_HASH,
+            apiKey = BuildConfig.BRAZE_API_KEY,
+            endpoint = BuildConfig.BRAZE_ENDPOINT,
+            externalId = BuildConfig.DEMO_EXTERNAL_ID,
+        )
+
+        private fun sha256(parts: List<String>): String =
+            MessageDigest.getInstance("SHA-256")
+                .digest(parts.joinToString("\u0000").toByteArray(Charsets.UTF_8))
+                .joinToString("") { byte -> "%02x".format(byte) }
+    }
+}
+
+data class CredentialSeedReconciliation(
+    val profiles: List<CredentialProfile>,
+    val activeProfileId: String?,
+    val fingerprint: String,
+    val contextChanged: Boolean,
+)
+
+object CredentialSeedPolicy {
+    fun reconcile(
+        profiles: List<CredentialProfile>,
+        activeProfileId: String?,
+        previousFingerprint: String?,
+        seed: GeneratedCredentialSeed,
+    ): CredentialSeedReconciliation {
+        val fingerprint = seed.fingerprint()
+        val generatedProfile = seed.profile()
+        val list = profiles.toMutableList()
+        if (generatedProfile != null) {
+            val existingIndex = list.indexOfFirst { it.id == generatedProfile.id }.takeIf { it >= 0 }
+                ?: list.indexOfFirst {
+                    it.name == CredentialStore.LEGACY_SEED_NAME &&
+                        it.apiKey == generatedProfile.apiKey &&
+                        it.endpoint == generatedProfile.endpoint
+                }.takeIf { it >= 0 }
+            if (existingIndex != null) list[existingIndex] = generatedProfile else list.add(generatedProfile)
+        }
+
+        val contextChanged = previousFingerprint != fingerprint
+        val activeStillExists = activeProfileId != null && list.any { it.id == activeProfileId }
+        val nextActiveId = when {
+            contextChanged -> generatedProfile?.id
+            !activeStillExists -> generatedProfile?.id
+            else -> activeProfileId
+        }
+        return CredentialSeedReconciliation(list, nextActiveId, fingerprint, contextChanged)
+    }
+}
+
 class CredentialStore private constructor(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -115,61 +228,38 @@ class CredentialStore private constructor(context: Context) {
     val activeProfile: CredentialProfile?
         get() {
             val list = profiles
-            val id = activeProfileId
-            return list.firstOrNull { it.id == id } ?: list.firstOrNull()
+            val id = activeProfileId ?: return null
+            return list.firstOrNull { it.id == id }
         }
 
-    fun seedIfEmpty() {
-        val seed = generatedSeedProfile() ?: return
-        val marker = generatedSeedMarker(seed)
-        val previousMarker = prefs.getString(SEED_MARKER_KEY, null)
-        val list = profiles.toMutableList()
-        val existingIndex = list.indexOfFirst { it.id == seed.id }.takeIf { it >= 0 }
-            ?: list.indexOfFirst {
-                it.name == LEGACY_SEED_NAME &&
-                    it.apiKey == seed.apiKey &&
-                    it.endpoint == seed.endpoint
-            }.takeIf { it >= 0 }
-
-        if (existingIndex != null) {
-            list[existingIndex] = seed
-        } else {
-            list.add(seed)
-        }
-
-        val activeId = activeProfileId
-        val activeStillExists = activeId != null && list.any { it.id == activeId }
-        val demoChanged = previousMarker != marker
-        persist(list)
-
-        if (demoChanged || !activeStillExists) {
-            activeProfileId = seed.id
-        }
-        prefs.edit().putString(SEED_MARKER_KEY, marker).apply()
-    }
-
-    private fun generatedSeedProfile(): CredentialProfile? {
-        val apiKey = BuildConfig.BRAZE_API_KEY.trim()
-        val endpoint = BuildConfig.BRAZE_ENDPOINT.trim()
-        if (apiKey.isBlank() || endpoint.isBlank()) return null
-        return CredentialProfile(
-            id = "${GENERATED_SEED_PREFIX}${BuildConfig.DEMO_PACK_ID.ifBlank { "default" }}",
-            name = BuildConfig.DEMO_PROFILE_NAME.ifBlank { LEGACY_SEED_NAME },
-            apiKey = apiKey,
-            endpoint = endpoint,
-            externalId = BuildConfig.DEMO_EXTERNAL_ID.ifBlank { DEFAULT_EXTERNAL_ID },
-            webURL = "",
+    /**
+     * Returns true when the generated seed took over the active profile, i.e. the demo pack,
+     * config hash, or seed identity changed. Callers use this to drop any remembered runtime
+     * identity so a new pack always starts on its own seed user.
+     */
+    fun seedIfEmpty(): Boolean {
+        val outcome = CredentialSeedPolicy.reconcile(
+            profiles = profiles,
+            activeProfileId = activeProfileId,
+            previousFingerprint = prefs.getString(SEED_MARKER_KEY, null),
+            seed = GeneratedCredentialSeed.current(),
         )
+        persist(outcome.profiles)
+        activeProfileId = outcome.activeProfileId
+        val markerEditor = prefs.edit().putString(SEED_MARKER_KEY, outcome.fingerprint)
+        if (outcome.contextChanged) markerEditor.putBoolean(SEED_CONTEXT_CHANGE_PENDING_KEY, true)
+        markerEditor.apply()
+        return outcome.contextChanged
     }
 
-    private fun generatedSeedMarker(seed: CredentialProfile): String =
-        listOf(
-            BuildConfig.DEMO_PACK_ID,
-            BuildConfig.DEMO_CONFIG_HASH,
-            seed.apiKey,
-            seed.endpoint,
-            seed.externalId,
-        ).joinToString("|")
+    fun consumeGeneratedSeedContextChange(): Boolean {
+        val pending = prefs.getBoolean(SEED_CONTEXT_CHANGE_PENDING_KEY, false)
+        if (pending) prefs.edit().remove(SEED_CONTEXT_CHANGE_PENDING_KEY).apply()
+        return pending
+    }
+
+    fun activeSdkCredentialContextFingerprint(): String =
+        GeneratedCredentialSeed.current().sdkCredentialContextFingerprint(activeProfile)
 
     fun save(profile: CredentialProfile): CredentialProfile {
         val list = profiles.toMutableList()
@@ -213,8 +303,8 @@ class CredentialStore private constructor(context: Context) {
         private const val PROFILES_KEY = "braze.demo.profiles"
         private const val ACTIVE_KEY = "braze.demo.activeProfileId"
         private const val SEED_MARKER_KEY = "braze.demo.seedMarker"
-        private const val GENERATED_SEED_PREFIX = "generated:"
-        private const val LEGACY_SEED_NAME = "Seed (local.properties)"
+        private const val SEED_CONTEXT_CHANGE_PENDING_KEY = "braze.demo.seedContextChangePending"
+        internal const val LEGACY_SEED_NAME = "Seed (local.properties)"
 
         @Volatile
         private var instance: CredentialStore? = null

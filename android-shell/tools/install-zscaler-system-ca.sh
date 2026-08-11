@@ -8,6 +8,8 @@ PEM="$WORK_DIR/zscaler-root-ca.pem"
 HASHED="$WORK_DIR/zscaler-root-ca.hashed"
 TRUST_SMOKE_INFRA_FAILURE=125
 TRUST_SMOKE_LAST_OUTPUT=""
+TRUST_REPAIR="${TRUST_REPAIR:-0}"
+PROBE_ONLY=0
 
 mkdir -p "$WORK_DIR"
 
@@ -199,16 +201,24 @@ run_https_smoke_checks() {
     fi
     local shell_status=$?
     if [[ "$shell_status" == "127" ]]; then
-      fail "No emulator HTTPS smoke-check mechanism is available. Install a JDK and Android build-tools so app_process trust proof can run."
+      echo "No emulator HTTPS smoke-check mechanism is available. Install a JDK and Android build-tools so app_process trust proof can run." >&2
+      return 1
     fi
   fi
-  fail "Emulator HTTPS trust smoke check failed"
+  echo "Emulator HTTPS trust smoke check failed" >&2
+  return 1
 }
 
 if [[ "${1:-}" == "--compile-smoke-only" ]]; then
   compile_java_https_smoke_probe
   echo "Android HTTPS trust probe compilation passed."
   exit 0
+fi
+
+if [[ "${1:-}" == "--probe-only" ]]; then
+  PROBE_ONLY=1
+elif [[ -n "${1:-}" ]]; then
+  fail "Unsupported argument: ${1:-}"
 fi
 
 if [[ ! -x "$ADB" ]]; then
@@ -247,56 +257,90 @@ cp "$PEM" "$HASHED"
 echo "Using cert hash: $HASH"
 openssl x509 -in "$PEM" -noout -subject -issuer -fingerprint -sha256
 
-require_adb_root "system CA installation"
+REMOTE="/system/etc/security/cacerts/$HASH.0"
+APEX_CERT_DIR="/apex/com.android.conscrypt/cacerts"
+APEX_TMP="/data/local/tmp/lumo-conscrypt-cacerts"
+LOCAL_SHA256="$(shasum -a 256 "$HASHED" | awk '{print $1}')"
 
-REMOUNT_LOG="$WORK_DIR/adb-remount.log"
-if ! "$ADB" remount >"$REMOUNT_LOG" 2>&1; then
-  cat "$REMOUNT_LOG" >&2
-  FLASH_LOCKED="$("$ADB" shell getprop ro.boot.flash.locked 2>/dev/null | tr -d '\r' || true)"
-  if [[ "$FLASH_LOCKED" == "1" ]] || grep -qi "bootloader unlocked" "$REMOUNT_LOG"; then
-    cat >&2 <<'EOF'
-adb root works, but adb remount failed because the emulator bootloader is locked.
+remote_cert_matches() {
+  local remote="$1"
+  local remote_sha256
+  remote_sha256="$("$ADB" shell "sha256sum '$remote' 2>/dev/null" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)"
+  [[ -n "$remote_sha256" && "$remote_sha256" == "$LOCAL_SHA256" ]]
+}
 
-Unlock this AVD once, then rerun this script:
-  adb reboot bootloader
-  fastboot flashing unlock
-  fastboot reboot
+conscrypt_mount_present() {
+  "$ADB" shell "grep -F ' $APEX_CERT_DIR ' /proc/mounts" >/dev/null 2>&1
+}
 
-Unlocking an emulator bootloader may wipe that AVD's local data.
-EOF
-    exit 1
+SYSTEM_READY=0
+APEX_READY=0
+remote_cert_matches "$REMOTE" && SYSTEM_READY=1
+if "$ADB" shell "[ -d '$APEX_CERT_DIR' ]" >/dev/null 2>&1 \
+  && remote_cert_matches "$APEX_CERT_DIR/$HASH.0" \
+  && conscrypt_mount_present; then
+  APEX_READY=1
+fi
+
+if [[ "$SYSTEM_READY" == "1" && "$APEX_READY" == "1" ]]; then
+  echo "Zscaler certificate fingerprint and Conscrypt bind mount already match."
+  if run_https_smoke_checks; then
+    echo "Android trust is healthy; no remount, framework restart, or reboot required."
+    exit 0
   fi
+  if [[ "$TRUST_REPAIR" != "1" ]]; then
+    fail "Trust files are present but HTTPS proof failed. Retry with TRUST_MODE=repair from the emulator wrapper."
+  fi
+  echo "Explicit trust repair requested after a failed HTTPS proof."
+  APEX_READY=0
+fi
 
-  echo "adb remount failed; trying disable-verity then reboot/remount..."
-  "$ADB" disable-verity || true
-  "$ADB" reboot
-  wait_for_boot
-  require_adb_root "system CA remount after disable-verity"
+if [[ "$PROBE_ONLY" == "1" ]]; then
+  fail "Android trust is not ready (system=$SYSTEM_READY conscrypt=$APEX_READY)."
+fi
+
+if [[ "$SYSTEM_READY" != "1" ]]; then
+  require_adb_root "system CA installation"
+  REMOUNT_LOG="$WORK_DIR/adb-remount.log"
   if ! "$ADB" remount >"$REMOUNT_LOG" 2>&1; then
     cat "$REMOUNT_LOG" >&2
-    fail "adb remount failed after disable-verity"
+    FLASH_LOCKED="$("$ADB" shell getprop ro.boot.flash.locked 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$FLASH_LOCKED" == "1" ]] || grep -qi "bootloader unlocked" "$REMOUNT_LOG"; then
+      fail "adb remount is blocked by the emulator bootloader. Repair or reprovision only the dedicated demo AVD."
+    fi
+    if [[ "$TRUST_REPAIR" != "1" ]]; then
+      fail "adb remount requires a reboot/verity repair. Rerun explicitly with TRUST_MODE=repair."
+    fi
+    echo "Explicit repair: disabling verity and rebooting once before system CA install..."
+    "$ADB" disable-verity || true
+    "$ADB" reboot
+    wait_for_boot
+    require_adb_root "system CA remount after disable-verity"
+    if ! "$ADB" remount >"$REMOUNT_LOG" 2>&1; then
+      cat "$REMOUNT_LOG" >&2
+      fail "adb remount failed after explicit disable-verity repair"
+    fi
   fi
+  require_system_ca_writeable
+
+  echo "Installing changed certificate fingerprint to $REMOTE..."
+  "$ADB" push "$HASHED" "$REMOTE"
+  "$ADB" shell chmod 644 "$REMOTE"
+  "$ADB" shell chown root:root "$REMOTE" || true
+  "$ADB" shell 'command -v chcon >/dev/null && chcon u:object_r:system_file:s0 '"$REMOTE"' || true'
+  verify_remote_cert "$REMOTE" "system CA install"
+  remote_cert_matches "$REMOTE" || fail "System CA fingerprint did not match after install"
+else
+  verify_remote_cert "$REMOTE" "system CA install"
+  echo "System CA fingerprint already matches; skipping remount and install."
 fi
-require_system_ca_writeable
 
-REMOTE="/system/etc/security/cacerts/$HASH.0"
-echo "Installing to $REMOTE..."
-"$ADB" push "$HASHED" "$REMOTE"
-"$ADB" shell chmod 644 "$REMOTE"
-"$ADB" shell chown root:root "$REMOTE" || true
-"$ADB" shell 'command -v chcon >/dev/null && chcon u:object_r:system_file:s0 '"$REMOTE"' || true'
-verify_remote_cert "$REMOTE" "system CA install"
+if ! "$ADB" shell "[ -d '$APEX_CERT_DIR' ]" >/dev/null 2>&1; then
+  fail "Conscrypt APEX CA directory not found at $APEX_CERT_DIR"
+fi
 
-echo "Rebooting emulator so Google Play services reloads system CAs..."
-"$ADB" reboot
-wait_for_boot
-verify_remote_cert "$REMOTE" "system CA after reboot"
-
-APEX_CERT_DIR="/apex/com.android.conscrypt/cacerts"
-if "$ADB" shell "[ -d '$APEX_CERT_DIR' ]" >/dev/null 2>&1; then
-  APEX_TMP="/data/local/tmp/lumo-conscrypt-cacerts"
-
-  echo "Installing runtime Conscrypt APEX CA bind mount..."
+if [[ "$APEX_READY" != "1" ]]; then
+  echo "Restoring the volatile Conscrypt CA bind mount..."
   require_adb_root "Conscrypt APEX CA bind mount"
   "$ADB" shell "rm -rf '$APEX_TMP' && mkdir -p '$APEX_TMP' && cp '$APEX_CERT_DIR'/* '$APEX_TMP'/"
   "$ADB" push "$HASHED" "$APEX_TMP/$HASH.0"
@@ -304,20 +348,23 @@ if "$ADB" shell "[ -d '$APEX_CERT_DIR' ]" >/dev/null 2>&1; then
   "$ADB" shell "command -v chcon >/dev/null && chcon u:object_r:system_file:s0 '$APEX_TMP' '$APEX_TMP'/* || true"
   "$ADB" shell "mount --bind '$APEX_TMP' '$APEX_CERT_DIR'"
   verify_remote_cert "$APEX_CERT_DIR/$HASH.0" "Conscrypt APEX CA bind mount"
-  if ! "$ADB" shell "grep -F ' $APEX_CERT_DIR ' /proc/mounts" >/dev/null 2>&1; then
+  if ! conscrypt_mount_present; then
     fail "Conscrypt APEX bind mount was not visible in /proc/mounts"
   fi
 
-  echo "Restarting Android framework so Google Play services reloads Conscrypt CAs..."
+  echo "Restarting Android framework once so services reload the restored Conscrypt mount..."
   "$ADB" shell stop
   sleep 3
   "$ADB" shell start
   wait_for_boot
   verify_remote_cert "$APEX_CERT_DIR/$HASH.0" "Conscrypt APEX CA after framework restart"
 else
-  fail "Conscrypt APEX CA directory not found at $APEX_CERT_DIR"
+  verify_remote_cert "$APEX_CERT_DIR/$HASH.0" "Conscrypt APEX CA bind mount"
+  echo "Conscrypt CA fingerprint and bind mount already match; skipping framework restart."
 fi
 
-run_https_smoke_checks
+if ! run_https_smoke_checks; then
+  fail "Emulator HTTPS trust smoke check failed after trust preparation"
+fi
 
-echo "Done. Reinstall/relaunch the demo app and retry FCM token generation."
+echo "Done. Android trust is ready without an app reinstall or unconditional reboot."

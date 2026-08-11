@@ -227,7 +227,10 @@ function createNativeBridge(): BrazeBridge {
 
   // Tell native the web bridge is wired so it can complete the handshake
   // (native responds with 'ready' + 'connection').
-  post('webReady', { sync: identitySync.envelope('default') })
+  post('webReady', {
+    sync: identitySync.envelope('default'),
+    sourceUrl: window.location.href,
+  })
 
   return {
     kind: 'native',
