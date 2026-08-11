@@ -12,6 +12,7 @@ export const webTemplateDir = path.join(repoRoot, 'web-template')
 export const androidShellDir = path.join(repoRoot, 'android-shell')
 export const launcherStateDir = path.join(repoRoot, '.demo-launcher')
 export const generatedConfigPath = path.join(webTemplateDir, 'src/brand/activeDemoConfig.generated.ts')
+export const generatedPackSurfaceDir = path.join(webTemplateDir, 'src/screens/local-pack')
 export const generatedDemoAssetsDir = path.join(webTemplateDir, 'public/demo-assets')
 export const generatedRuntimeManifestPath = path.join(webTemplateDir, 'public/demo-runtime.json')
 export const activePackMarkerPath = path.join(androidShellDir, '.active-demo-pack')
@@ -87,7 +88,14 @@ export function writeProperties(file, values, comments = []) {
     ...Object.entries(values).map(([key, value]) => `${key}=${value ?? ''}`),
     '',
   ].join('\n')
+  return writeTextIfChanged(file, body)
+}
+
+export function writeTextIfChanged(file, body) {
+  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === body) return false
+  fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, body)
+  return true
 }
 
 export function listDemoPacks() {
@@ -211,19 +219,60 @@ export function ensureActiveWebConfig() {
 
 export function applyDemoPack(packId, { writeAndroid = true, launcherCallbackUrl = '', iosLauncherCallbackUrl = '' } = {}) {
   const pack = getDemoPack(packId)
-  syncDemoAssets(pack)
+  const appSurfaceChanged = syncPackAppSurface(pack)
+  const assetsChanged = syncDemoAssets(pack)
   cleanLegacyAndroidGeneratedAssets()
   const manifest = generateRuntimeManifest(pack)
-  generateWebConfig(pack, manifest)
-  fs.writeFileSync(activePackMarkerPath, `${pack.id}\n`)
-  if (writeAndroid) writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl })
-  writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl: iosLauncherCallbackUrl })
-  return { ...pack, runtimeManifest: manifest }
+  const webConfigChanged = generateWebConfig(pack, manifest)
+  const markerChanged = writeTextIfChanged(activePackMarkerPath, `${pack.id}\n`)
+  const androidSeedChanged = writeAndroid
+    ? writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl })
+    : false
+  const iosDefaultsChanged = writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl: iosLauncherCallbackUrl })
+  return {
+    ...pack,
+    runtimeManifest: manifest,
+    applyChanges: {
+      appSurface: appSurfaceChanged,
+      assets: assetsChanged,
+      runtimeManifest: Boolean(manifest.changed),
+      webConfig: webConfigChanged,
+      activeMarker: markerChanged,
+      androidSeed: androidSeedChanged,
+      iosDefaults: iosDefaultsChanged,
+    },
+  }
+}
+
+export function syncPackAppSurface(pack, { destinationRoot = generatedPackSurfaceDir } = {}) {
+  const source = path.join(pack.directory, 'app-source/web-template/src/screens/local-pack')
+  if (!fs.existsSync(source)) {
+    if (!fs.existsSync(destinationRoot)) return false
+    fs.rmSync(destinationRoot, { recursive: true, force: true })
+    return true
+  }
+  if (!fs.lstatSync(source).isDirectory()) {
+    throw new Error(`Pack app surface must be a directory: ${source}`)
+  }
+  if (directoriesMatchExactly(source, destinationRoot)) return false
+  fs.rmSync(destinationRoot, { recursive: true, force: true })
+  copyDir(source, destinationRoot)
+  return true
+}
+
+export function isPortableAssetEntry(name) {
+  return name !== '.DS_Store' && name !== 'Thumbs.db' && name !== '__MACOSX'
+}
+
+function compareAssetEntries(left, right) {
+  if (left.name < right.name) return -1
+  if (left.name > right.name) return 1
+  return 0
 }
 
 function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true })
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true }).filter((item) => isPortableAssetEntry(item.name))) {
     const from = path.join(src, entry.name)
     const to = path.join(dest, entry.name)
     if (entry.isDirectory()) copyDir(from, to)
@@ -231,11 +280,94 @@ function copyDir(src, dest) {
   }
 }
 
-function syncDemoAssets(pack) {
+export function directoryFingerprint(root) {
+  const hash = createHash('sha256')
+  if (!fs.existsSync(root)) return hash.update('missing').digest('hex')
+  const files = []
+  const walk = (dir, prefix = '') => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })
+      .filter((item) => isPortableAssetEntry(item.name))
+      .sort(compareAssetEntries)) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+      const absolute = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(absolute, relative)
+      else if (entry.isFile()) files.push({ absolute, relative })
+    }
+  }
+  walk(root)
+  for (const file of files) {
+    hash.update(file.relative)
+    hash.update('\0')
+    hash.update(fs.readFileSync(file.absolute))
+    hash.update('\0')
+  }
+  return hash.digest('hex')
+}
+
+function directoryShape(root, { strict = false } = {}) {
+  if (!fs.existsSync(root)) return null
+  if (!fs.lstatSync(root).isDirectory()) return strict ? ['unsupported-root'] : []
+  const entries = []
+  const walk = (dir, prefix = '') => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort(compareAssetEntries)) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (!isPortableAssetEntry(entry.name)) {
+        if (strict) entries.push(`unsupported:${relative}`)
+        continue
+      }
+      const absolute = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        entries.push(`directory:${relative}`)
+        walk(absolute, relative)
+      } else if (entry.isFile()) {
+        entries.push(`file:${relative}`)
+      } else if (strict) {
+        entries.push(`unsupported:${relative}`)
+      }
+    }
+  }
+  walk(root)
+  return entries
+}
+
+function pruneUnsupportedAssetEntries(root) {
+  if (!fs.existsSync(root) || !fs.lstatSync(root).isDirectory()) return false
+  let changed = false
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const absolute = path.join(root, entry.name)
+    if (!isPortableAssetEntry(entry.name) || (!entry.isDirectory() && !entry.isFile())) {
+      fs.rmSync(absolute, { recursive: true, force: true })
+      changed = true
+    } else if (entry.isDirectory() && pruneUnsupportedAssetEntries(absolute)) {
+      changed = true
+    }
+  }
+  return changed
+}
+
+function directoriesMatchExactly(source, destination) {
+  return (
+    JSON.stringify(directoryShape(source)) === JSON.stringify(directoryShape(destination, { strict: true })) &&
+    directoryFingerprint(source) === directoryFingerprint(destination)
+  )
+}
+
+export function syncDemoAssets(pack, { destinationRoot = generatedDemoAssetsDir } = {}) {
   const source = path.join(pack.directory, 'assets')
-  const dest = path.join(generatedDemoAssetsDir, pack.id)
+  const dest = path.join(destinationRoot, pack.id)
+  const destinationExisted = fs.existsSync(destinationRoot)
+  fs.mkdirSync(destinationRoot, { recursive: true })
+  let changed = !destinationExisted
+  for (const entry of fs.readdirSync(destinationRoot, { withFileTypes: true })) {
+    if (entry.name === pack.id) continue
+    fs.rmSync(path.join(destinationRoot, entry.name), { recursive: true, force: true })
+    changed = true
+  }
+  if (pruneUnsupportedAssetEntries(dest)) changed = true
+  if (directoriesMatchExactly(source, dest)) return changed
   fs.rmSync(dest, { recursive: true, force: true })
   if (fs.existsSync(source)) copyDir(source, dest)
+  return true
 }
 
 function cleanLegacyAndroidGeneratedAssets() {
@@ -329,16 +461,35 @@ export function demoConfigHash(pack) {
     .slice(0, 16)
 }
 
-export function createRuntimeManifest(pack) {
+export function demoRuntimeHash(pack) {
+  const assetsDir = path.join(pack.directory, 'assets')
+  const appSurfaceDir = path.join(pack.directory, 'app-source/web-template/src/screens/local-pack')
+  return createHash('sha256')
+    .update('braze-demo-runtime/v2\0')
+    .update(demoConfigHash(pack))
+    .update('\0')
+    .update(directoryFingerprint(assetsDir))
+    .update('\0')
+    .update(directoryFingerprint(appSurfaceDir))
+    .digest('hex')
+    .slice(0, 24)
+}
+
+export function createRuntimeManifest(
+  pack,
+  { generatedAt = new Date().toISOString(), runtimeHash = demoRuntimeHash(pack) } = {},
+) {
   const hash = demoConfigHash(pack)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    runtimeHashVersion: 2,
     id: pack.id,
     name: pack.name,
     description: pack.description || '',
     externalId: pack.android?.defaultExternalId || pack.brand.demoUser.externalId,
     configHash: hash,
-    generatedAt: new Date().toISOString(),
+    runtimeHash,
+    generatedAt,
     assetBase: `/demo-assets/${pack.id}`,
     sourceMode: pack.web?.distDir ? 'external-web-dist' : 'generated-demo-pack',
     webDistDir: pack.web?.distDir ? packWebDistDir(pack) : '',
@@ -350,10 +501,30 @@ export function createRuntimeManifest(pack) {
   }
 }
 
-export function generateRuntimeManifest(pack) {
-  const manifest = createRuntimeManifest(pack)
-  fs.mkdirSync(path.dirname(generatedRuntimeManifestPath), { recursive: true })
-  fs.writeFileSync(generatedRuntimeManifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+export function generateRuntimeManifest(
+  pack,
+  { outputPath = generatedRuntimeManifestPath, generatedAt = new Date().toISOString() } = {},
+) {
+  const runtimeHash = demoRuntimeHash(pack)
+  let stableGeneratedAt = generatedAt
+  if (fs.existsSync(outputPath)) {
+    try {
+      const previous = readJson(outputPath)
+      if (
+        previous.id === pack.id &&
+        previous.runtimeHash === runtimeHash &&
+        typeof previous.generatedAt === 'string' &&
+        previous.generatedAt
+      ) {
+        stableGeneratedAt = previous.generatedAt
+      }
+    } catch {
+      // Regenerate malformed or legacy runtime manifests.
+    }
+  }
+  const manifest = createRuntimeManifest(pack, { generatedAt: stableGeneratedAt, runtimeHash })
+  const changed = writeTextIfChanged(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  Object.defineProperty(manifest, 'changed', { value: changed, enumerable: false })
   return manifest
 }
 
@@ -368,26 +539,28 @@ export const activeBrandConfig: BrandConfig = ${JSON.stringify(pack.brand, null,
 export const activeAppContent: AppContent = ${JSON.stringify(pack.content, null, 2)}
 export const activeRuntimeManifest = ${JSON.stringify(manifest, null, 2)} as const
 `
-  fs.writeFileSync(generatedConfigPath, source)
+  return writeTextIfChanged(generatedConfigPath, source)
 }
 
-function writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl = '' } = {}) {
-  const existing = readProperties(androidLocalPropertiesPath)
+export function androidSeedProperties(pack, manifest, existing = {}, { launcherCallbackUrl = '' } = {}) {
   const secrets = pack.secrets ?? {}
   const android = pack.android ?? {}
   const sdkDir = secrets['sdk.dir'] || existing['sdk.dir'] || `${process.env.HOME}/Library/Android/sdk`
   const profileName = secrets['demo.profileName'] || android.defaultProfileName || pack.name
   const externalId = secrets['demo.externalId'] || android.defaultExternalId || pack.brand.demoUser.externalId
   const sessionTimeoutSeconds = android.sessionTimeoutSeconds ?? 60
-  const values = {
+  return {
     'sdk.dir': sdkDir,
-    'braze.apiKey': secrets['braze.apiKey'] || existing['braze.apiKey'] || '',
-    'braze.endpoint': secrets['braze.endpoint'] || existing['braze.endpoint'] || '',
+    // Workspace credentials are selected-pack state. Never let a pack with
+    // missing secrets silently inherit another pack's prior generated values.
+    'braze.apiKey': secrets['braze.apiKey'] || '',
+    'braze.endpoint': secrets['braze.endpoint'] || '',
     'braze.sessionTimeoutSeconds': sessionTimeoutSeconds,
-    'firebase.senderId': secrets['firebase.senderId'] || existing['firebase.senderId'] || '',
+    'firebase.senderId': secrets['firebase.senderId'] || '',
     'demo.packId': manifest.id,
     'demo.packName': manifest.name,
     'demo.configHash': manifest.configHash,
+    'demo.runtimeHash': manifest.runtimeHash,
     'demo.generatedAt': manifest.generatedAt,
     'demo.sourceMode': 'bundled-asset',
     'demo.browserUrl': manifest.expectedSources.browser,
@@ -398,6 +571,11 @@ function writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl = '' } = {
     'demo.profileName': profileName,
     'launcher.callbackUrl': launcherCallbackUrl || existing['launcher.callbackUrl'] || '',
   }
+}
+
+function writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl = '' } = {}) {
+  const existing = readProperties(androidLocalPropertiesPath)
+  const values = androidSeedProperties(pack, manifest, existing, { launcherCallbackUrl })
 
   if (fs.existsSync(androidLocalPropertiesPath)) {
     const current = fs.readFileSync(androidLocalPropertiesPath, 'utf8')
@@ -407,7 +585,7 @@ function writeAndroidSeedConfig(pack, manifest, { launcherCallbackUrl = '' } = {
     }
   }
 
-  writeProperties(androidLocalPropertiesPath, values, [
+  return writeProperties(androidLocalPropertiesPath, values, [
     `Active demo pack: ${pack.name} (${pack.id})`,
     'Secrets are local-only; do not commit this file.',
   ])
@@ -439,7 +617,7 @@ function upsertSwiftUrlLet(source, name, value) {
 }
 
 function writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl = '' } = {}) {
-  if (!fs.existsSync(iosConfigPath)) return
+  if (!fs.existsSync(iosConfigPath)) return false
   const secrets = pack.secrets ?? {}
   let source = fs.readFileSync(iosConfigPath, 'utf8')
   source = upsertSwiftLet(source, 'brazeAPIKey', secrets['braze.apiKey'] || '')
@@ -451,6 +629,7 @@ function writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl = '' } = 
   source = upsertSwiftLet(source, 'demoPackName', manifest.name)
   source = upsertSwiftLet(source, 'demoExternalId', secrets['demo.externalId'] || manifest.externalId)
   source = upsertSwiftLet(source, 'demoConfigHash', manifest.configHash)
+  source = upsertSwiftLet(source, 'demoRuntimeHash', manifest.runtimeHash)
   source = upsertSwiftLet(source, 'demoGeneratedAt', manifest.generatedAt)
   source = upsertSwiftLet(source, 'demoSourceMode', 'vite-dev-server')
   source = upsertSwiftLet(source, 'browserWebURL', manifest.expectedSources.browser)
@@ -458,5 +637,5 @@ function writeIosRuntimeDefaults(pack, manifest, { launcherCallbackUrl = '' } = 
   source = upsertSwiftLet(source, 'iosWebURL', manifest.expectedSources.ios)
   source = upsertSwiftLet(source, 'launcherCallbackUrl', launcherCallbackUrl)
   source = source.replace(/http:\/\/localhost:5174/g, manifest.expectedSources.ios)
-  fs.writeFileSync(iosConfigPath, source)
+  return writeTextIfChanged(iosConfigPath, source)
 }

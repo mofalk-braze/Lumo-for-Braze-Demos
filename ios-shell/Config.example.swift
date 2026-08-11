@@ -27,7 +27,9 @@ enum Config {
 
   static let demoPackId = "lumo-default"
   static let demoPackName = "Lumo"
+  static let demoExternalId = "lumo-demo-user"
   static let demoConfigHash = ""
+  static let demoRuntimeHash = ""
   static let demoGeneratedAt = ""
   static let demoSourceMode = "vite-dev-server"
   static let browserWebURL = "http://localhost:5173"

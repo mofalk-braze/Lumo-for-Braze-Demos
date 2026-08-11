@@ -49,6 +49,10 @@ android-shell/.active-demo-pack
 .demo-packs/
 demo-packs/*/secrets.properties
 web-template/src/brand/activeDemoConfig.generated.ts
+# Private app surface copied in from the active ignored pack's app-source/.
+# Every local pack uses this fixed container, so tracked routes and ignore rules
+# never need a customer-specific directory or identifier.
+web-template/src/screens/local-pack/
 web-template/public/demo-runtime.json
 web-template/public/demo-assets/
 android-shell/**/*.jks

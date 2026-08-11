@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import java.util.Properties
 import org.gradle.api.tasks.PathSensitivity
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -22,6 +23,16 @@ fun buildConfigString(value: String): String =
 val defaultDemoWebDist = rootProject.layout.projectDirectory.dir("../web-template/dist").asFile
 val demoWebDist = file(localValue("demo.webDist").ifBlank { defaultDemoWebDist.absolutePath })
 val generatedDemoAssets = layout.buildDirectory.dir("generated/assets/demoWeb")
+val activeDemoPackId = localValue("demo.packId").ifBlank { "lumo-default" }
+val activeDemoAssetSource = demoWebDist.resolve("demo-assets").resolve(activeDemoPackId)
+val portableJunkPatterns = listOf(
+    ".DS_Store",
+    "**/.DS_Store",
+    "Thumbs.db",
+    "**/Thumbs.db",
+    "__MACOSX/**",
+    "**/__MACOSX/**",
+)
 
 android {
     namespace = "com.braze.demoshell"
@@ -50,6 +61,7 @@ android {
         val demoPackId = localValue("demo.packId").ifBlank { "lumo-default" }
         val demoPackName = localValue("demo.packName").ifBlank { "Lumo" }
         val demoConfigHash = localValue("demo.configHash")
+        val demoRuntimeHash = localValue("demo.runtimeHash").ifBlank { demoConfigHash }
         val demoGeneratedAt = localValue("demo.generatedAt")
         val demoSourceMode = localValue("demo.sourceMode").ifBlank { "bundled-asset" }
         val demoBrowserUrl = localValue("demo.browserUrl").ifBlank { "http://localhost:5173" }
@@ -66,6 +78,7 @@ android {
         buildConfigField("String", "DEMO_PACK_ID", buildConfigString(demoPackId))
         buildConfigField("String", "DEMO_PACK_NAME", buildConfigString(demoPackName))
         buildConfigField("String", "DEMO_CONFIG_HASH", buildConfigString(demoConfigHash))
+        buildConfigField("String", "DEMO_RUNTIME_HASH", buildConfigString(demoRuntimeHash))
         buildConfigField("String", "DEMO_GENERATED_AT", buildConfigString(demoGeneratedAt))
         buildConfigField("String", "DEMO_SOURCE_MODE", buildConfigString(demoSourceMode))
         buildConfigField("String", "DEMO_BROWSER_URL", buildConfigString(demoBrowserUrl))
@@ -104,20 +117,32 @@ android {
     }
 }
 
-val copyDemoWebAssets by tasks.registering(Copy::class) {
+val copyDemoWebAssets by tasks.registering(Sync::class) {
     inputs.property("demoWebDistPath", demoWebDist.absolutePath)
-    inputs.property("demoPackId", localValue("demo.packId"))
+    inputs.property("demoPackId", activeDemoPackId)
     inputs.property("demoConfigHash", localValue("demo.configHash"))
-    inputs.property("assetRewriteVersion", "2")
-    inputs.dir(demoWebDist).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("demoRuntimeHash", localValue("demo.runtimeHash"))
+    inputs.property("assetRewriteVersion", "4")
     outputs.dir(generatedDemoAssets)
-    from(demoWebDist)
-    into(generatedDemoAssets.map { it.dir("demo") })
+    from(demoWebDist) {
+        into("demo")
+        exclude("demo-assets/**")
+        exclude(portableJunkPatterns)
+    }
+    from(activeDemoAssetSource) {
+        into("demo/demo-assets/$activeDemoPackId")
+        exclude(portableJunkPatterns)
+    }
+    into(generatedDemoAssets)
     doFirst {
-        delete(generatedDemoAssets.get().asFile)
         if (!demoWebDist.resolve("index.html").exists()) {
             throw GradleException(
                 "Missing ${demoWebDist.resolve("index.html")}. Apply a demo pack or build the configured web app before building Android.",
+            )
+        }
+        if (!demoWebDist.resolve("demo-runtime.json").exists()) {
+            throw GradleException(
+                "Missing ${demoWebDist.resolve("demo-runtime.json")}. Apply the active pack and rebuild its web assets before building Android.",
             )
         }
     }
@@ -143,22 +168,16 @@ val copyDemoWebAssets by tasks.registering(Copy::class) {
                 if (rewritten != original) file.writeText(rewritten)
             }
 
-        val runtimeManifest = """
-            {
-              "schemaVersion": 1,
-              "id": "${localValue("demo.packId")}",
-              "name": "${localValue("demo.packName")}",
-              "configHash": "${localValue("demo.configHash")}",
-              "generatedAt": "${localValue("demo.generatedAt")}",
-              "sourceMode": "${localValue("demo.sourceMode")}",
-              "expectedSources": {
-                "android": "${localValue("demo.androidUrl")}",
-                "browser": "${localValue("demo.browserUrl")}",
-                "ios": "${localValue("demo.iosUrl")}"
-              }
-            }
-        """.trimIndent()
-        demoDir.resolve("demo-runtime.json").writeText("$runtimeManifest\n")
+        // The public web runtime manifest is the canonical packaged metadata.
+        // Do not synthesize a second copy from BuildConfig/local.properties:
+        // the Android runtime reads this exact bundled asset at startup.
+        val runtimeManifest = demoDir.resolve("demo-runtime.json")
+        if (!runtimeManifest.exists()) {
+            throw GradleException(
+                "Missing ${demoWebDist.resolve("demo-runtime.json")}. Apply the active pack and rebuild its web assets before building Android.",
+            )
+        }
+
     }
 }
 
@@ -166,20 +185,50 @@ val validateDemoWebAssets by tasks.registering {
     dependsOn(copyDemoWebAssets)
     inputs.property("demoPackId", localValue("demo.packId"))
     inputs.property("demoConfigHash", localValue("demo.configHash"))
+    inputs.property("demoRuntimeHash", localValue("demo.runtimeHash"))
     inputs.file(generatedDemoAssets.map { it.dir("demo").file("demo-runtime.json") })
     doLast {
         val runtimeFile = generatedDemoAssets.get().asFile.resolve("demo/demo-runtime.json")
         if (!runtimeFile.exists()) {
             throw GradleException("Missing generated demo runtime: ${runtimeFile.absolutePath}")
         }
-        val text = runtimeFile.readText()
+        val runtime = runCatching { JsonSlurper().parse(runtimeFile) as? Map<*, *> }
+            .getOrElse { error -> throw GradleException("Generated demo runtime is not valid JSON: ${error.message}", error) }
+            ?: throw GradleException("Generated demo runtime must be a JSON object: ${runtimeFile.absolutePath}")
+        fun runtimeString(key: String): String = runtime[key]?.toString().orEmpty()
+        fun runtimeInt(key: String): Int = (runtime[key] as? Number)?.toInt() ?: -1
+        val expectedSources = runtime["expectedSources"] as? Map<*, *>
+        fun expectedSource(platform: String): String = expectedSources?.get(platform)?.toString().orEmpty()
+        val contractErrors = buildList {
+            if (runtimeInt("schemaVersion") != 2) add("schemaVersion must be 2")
+            if (runtimeInt("runtimeHashVersion") != 2) add("runtimeHashVersion must be 2")
+            for (key in listOf("id", "configHash", "runtimeHash")) {
+                if (runtimeString(key).isBlank()) add("$key is missing")
+            }
+            for (platform in listOf("browser", "android", "ios")) {
+                if (expectedSource(platform).isBlank()) add("expectedSources.$platform is missing")
+            }
+            if (
+                expectedSource("android").isNotBlank() &&
+                expectedSource("android") != "file:///android_asset/demo/index.html"
+            ) {
+                add("expectedSources.android must be file:///android_asset/demo/index.html")
+            }
+        }
+        if (contractErrors.isNotEmpty()) {
+            throw GradleException("Generated demo runtime is invalid: ${contractErrors.joinToString("; ")}.")
+        }
         val expectedPack = localValue("demo.packId")
         val expectedHash = localValue("demo.configHash")
-        if (expectedPack.isNotBlank() && !text.contains("\"id\": \"$expectedPack\"")) {
+        val expectedRuntimeHash = localValue("demo.runtimeHash")
+        if (expectedPack.isNotBlank() && runtimeString("id") != expectedPack) {
             throw GradleException("Generated demo runtime does not match selected pack $expectedPack.")
         }
-        if (expectedHash.isNotBlank() && !text.contains("\"configHash\": \"$expectedHash\"")) {
+        if (expectedHash.isNotBlank() && runtimeString("configHash") != expectedHash) {
             throw GradleException("Generated demo runtime does not match selected hash $expectedHash.")
+        }
+        if (expectedRuntimeHash.isNotBlank() && runtimeString("runtimeHash") != expectedRuntimeHash) {
+            throw GradleException("Generated demo runtime does not match selected runtime hash $expectedRuntimeHash.")
         }
     }
 }
@@ -192,6 +241,7 @@ tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach {
     dependsOn(validateDemoWebAssets)
     inputs.property("demoPackId", localValue("demo.packId"))
     inputs.property("demoConfigHash", localValue("demo.configHash"))
+    inputs.property("demoRuntimeHash", localValue("demo.runtimeHash"))
     inputs.dir(generatedDemoAssets).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
@@ -202,6 +252,7 @@ dependencies {
     // firebase-messaging 25.1.0 requires a newer Play Services floor, so keep this
     // pinned until the emulator image catches up.
     implementation("com.google.firebase:firebase-messaging:25.0.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 if (file("google-services.json").exists()) {

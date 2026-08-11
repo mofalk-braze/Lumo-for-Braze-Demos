@@ -14,6 +14,7 @@ import { Setup } from './screens/Setup'
 import { activeDemoPackId } from './brand/activeDemoConfig.generated'
 import { WoltAppSurface } from './screens/wolt/WoltApp'
 import { AktionMenschAppSurface } from './screens/aktion-mensch/AktionMenschApp'
+import { resolvePackAppSurface } from './screens/packSurfaceRegistry'
 
 /** The app surface: the active screen + bottom nav. Fills its container. */
 function AppSurface({ shell }: { shell: boolean }) {
@@ -36,6 +37,20 @@ function AppSurface({ shell }: { shell: boolean }) {
         <Routes>
           <Route path="/setup" element={<Setup onDone={() => navigate('/account')} />} />
           <Route path="/*" element={<WoltAppSurface />} />
+        </Routes>
+        <NotificationBanner />
+      </>
+    )
+  }
+
+  const PackAppSurface = resolvePackAppSurface(activeDemoPackId)
+  if (PackAppSurface) {
+    return (
+      <>
+        {!shell && <StatusBar theme="dark" />}
+        <Routes>
+          <Route path="/setup" element={<Setup onDone={() => navigate('/')} />} />
+          <Route path="/*" element={<PackAppSurface />} />
         </Routes>
         <NotificationBanner />
       </>

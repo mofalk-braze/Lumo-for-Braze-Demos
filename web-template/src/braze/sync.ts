@@ -10,6 +10,7 @@ export interface SyncEnvelope {
   sessionId: string
   runtimeId: string
   configHash: string
+  runtimeHash: string
   authority: SyncAuthority
   reason: SyncReason
   timestamp: number
@@ -58,6 +59,7 @@ function signature(externalId: string, sync: Partial<SyncEnvelope>): string {
     sync.sessionId ?? 'session',
     sync.runtimeId ?? activeRuntimeManifest.id,
     sync.configHash ?? activeRuntimeManifest.configHash,
+    sync.runtimeHash ?? activeRuntimeManifest.runtimeHash,
     sync.authority ?? 'unknown',
     sync.reason ?? 'unknown',
   ].join('|')
@@ -74,6 +76,7 @@ export function createIdentitySyncState(): IdentitySyncState {
       sessionId,
       runtimeId: activeRuntimeManifest.id,
       configHash: activeRuntimeManifest.configHash,
+      runtimeHash: activeRuntimeManifest.runtimeHash,
       authority,
       reason,
       timestamp: Date.now(),
@@ -104,6 +107,7 @@ export function createIdentitySyncState(): IdentitySyncState {
         sessionId: sync.sessionId ?? sessionId,
         runtimeId: sync.runtimeId ?? activeRuntimeManifest.id,
         configHash: sync.configHash ?? activeRuntimeManifest.configHash,
+        runtimeHash: sync.runtimeHash ?? activeRuntimeManifest.runtimeHash,
         authority: isSyncAuthority(sync.authority) ? sync.authority : 'native',
         reason: isSyncReason(sync.reason) ? sync.reason : 'manual',
       }
