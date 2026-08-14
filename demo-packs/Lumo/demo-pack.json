@@ -146,6 +146,14 @@
         "maxCards": 8
       }
     ],
+    "bannerSurfaces": [
+      {
+        "id": "lumo-home-banner",
+        "placement": "home_banner",
+        "screen": "home",
+        "height": 96
+      }
+    ],
     "rails": [
       {
         "id": "lumo-actions",

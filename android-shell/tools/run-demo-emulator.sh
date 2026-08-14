@@ -208,6 +208,19 @@ enforce_tap_to_wake_settings() {
   fi
 }
 
+wait_for_activity_manager() {
+  local deadline=$((SECONDS + BOOT_TIMEOUT_SECONDS))
+  local service_status=""
+  while (( SECONDS < deadline )); do
+    service_status="$(adb_device shell service check activity 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$service_status" == *"Service activity: found"* ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Android activity manager did not become ready within ${BOOT_TIMEOUT_SECONDS}s. See $EMULATOR_LOG."
+}
+
 wait_for_boot_and_unlock() {
   adb_device wait-for-device
   local deadline=$((SECONDS + BOOT_TIMEOUT_SECONDS))
@@ -215,6 +228,7 @@ wait_for_boot_and_unlock() {
     (( SECONDS < deadline )) || fail "Android boot did not complete within ${BOOT_TIMEOUT_SECONDS}s."
     sleep 2
   done
+  wait_for_activity_manager
 
   local type
   type="$(credential_type)"
@@ -282,7 +296,7 @@ wait_for_launcher_activity() {
 }
 
 quiesce_previous_app() {
-  echo "Quiescing $APP_ID before Android boot, trust, or install work..."
+  echo "Quiescing $APP_ID after boot readiness and before trust or install work..."
   if ! adb_device shell am force-stop --user "$ANDROID_USER" "$APP_ID" >/dev/null; then
     fail "Could not force-stop $APP_ID before Android preparation. Refusing to leave a stale app visible."
   fi
@@ -410,8 +424,8 @@ else
   start_expected_avd
 fi
 
-quiesce_previous_app
 wait_for_boot_and_unlock
+quiesce_previous_app
 prepare_trust
 if [[ "$TRUST_FRAMEWORK_RESTARTED" == "1" ]]; then
   # Explicit repair and volatile Conscrypt restoration both stop/start Android's

@@ -5,15 +5,33 @@ customer/private demo material out of Git.
 
 ## First Run
 
+The project skills under `.claude/skills/` are committed and discovered
+automatically. For a fresh clone, act as the setup operator: read
+`lumo-build-and-env`, run safe setup and verification steps yourself, and pause
+only when the teammate must complete a GUI, authentication, credential handoff,
+or secure-keyguard migration step. Prioritize the supported Android emulator
+path before optional iOS setup.
+
 Use these commands from the repo root:
 
 ```sh
-./bootstrap-lumo.sh --check
-./bootstrap-lumo.sh --install
-./bootstrap-lumo.sh --android-avd
+./bootstrap-lumo.sh --check --target android
+./bootstrap-lumo.sh --install --target android
+./bootstrap-lumo.sh --android-avd --target android
 npm run lumo:apply
 npm run lumo:cockpit
 ```
+
+Do not wipe an AVD, clear app data, recreate device state, or enter a device
+credential as a shortcut. A successful Android-first setup ends with the
+Control Room running, the `Lumo` pack applied, the dedicated AVD reused, and
+bundled native telemetry agreeing on pack id and `runtimeHash`.
+
+For the guided Android target, use `node tools/lumo.mjs android
+setup|doctor|start|status|stop`; only `start` accepts `--pack <id>`. Keep
+the persistent authority alive while the Control Room and emulator are in use;
+`start` returns after launch, while `status` and `stop` inspect or end that
+authority. Do not reinterpret optional iOS setup as an Android failure.
 
 Open the Control Room URL printed by the launcher. Use `Lumo` as the base pack.
 Treat that launcher process as the sole state, credential, orchestration, and
@@ -45,9 +63,27 @@ adds no authority.
   bespoke app UI through `screens/local-pack/pack-app.tsx`; do not add imports,
   pack ids, paths, or routing branches for an ignored private pack to tracked code.
 
-## Claude Plugin
+## Agent Skill Routing
 
-Load the repo plugin in Claude Code with:
+Use the narrowest committed project skill that matches the task:
+
+- `lumo-build-and-env` for a fresh machine and Android AVD provisioning.
+- `lumo-push-readiness-campaign` for first-time end-to-end Android push.
+- `lumo-run-and-operate` for normal Control Room and device operation.
+- `lumo-debugging-playbook` plus `lumo-diagnostics-and-tooling` for a
+  previously working setup that regressed.
+- `lumo-demo-pack-authoring` for pack lifecycle and schema work.
+- `braze-demo-app-builder` or `lumo-new-demo-campaign` for a new demo story.
+- `lumo-secrets-and-sanitization` and `lumo-change-control-and-qa` before any
+  handoff, commit, or publish operation.
+
+Committed docs and code remain the source of truth. If a skill conflicts with
+them, follow the committed contract and update the skill in the same change.
+
+## Optional Claude Plugin
+
+Project skills require no plugin flag. Load the compatibility plugin only when
+you want the namespaced demo-build command:
 
 ```sh
 claude --plugin-dir ./plugins/braze-demo-builder
@@ -81,6 +117,7 @@ Before publishing or committing setup changes, run:
 
 ```sh
 npm run lumo:apply
+node tools/check-agent-skills.mjs
 npm run check:precommit
 npm run public:check
 cd web-template && npm run build

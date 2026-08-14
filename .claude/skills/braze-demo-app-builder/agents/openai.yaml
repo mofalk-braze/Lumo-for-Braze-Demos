@@ -1,0 +1,4 @@
+interface:
+  display_name: "Braze Demo App Builder"
+  short_description: "Build credible Braze demo app features"
+  default_prompt: "Use $braze-demo-app-builder to add a credible Braze demo app feature from my story or screenshots."

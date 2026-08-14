@@ -1,0 +1,62 @@
+name: Source Distribution
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-distribution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-clone-android:
+    name: Clean Clone And Android Compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check Out Source
+        uses: actions/checkout@v4
+
+      - name: Set Up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web-template/package-lock.json
+
+      - name: Set Up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Install Source Dependencies
+        run: |
+          npm ci
+          npm ci --prefix web-template
+
+      - name: Verify Agent Skill Distribution
+        run: node tools/check-agent-skills.mjs
+
+      - name: Generate A Fresh Runtime
+        run: npm run lumo:apply
+
+      - name: Run Source And Public Gates
+        run: |
+          npm run check:precommit
+          npm run public:check
+          npm run --prefix web-template build
+
+      - name: Compile The Android Shell
+        working-directory: android-shell
+        run: ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin

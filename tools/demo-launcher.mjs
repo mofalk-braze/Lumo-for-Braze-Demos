@@ -8,19 +8,24 @@ import { createHash, randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { launcherHtml as controlRoomHtml } from './control-room-template.mjs'
 import { presenterRemoteHtml } from './presenter-remote-template.mjs'
+import { openDemoPack } from './lumo-pack-cli.mjs'
 import {
   androidShellDir,
   applyDemoPack,
+  createDemoPack,
   createRuntimeManifest,
+  duplicateDemoPack,
   generatedRuntimeManifestPath,
   getActivePackId,
   getDemoPack,
   launcherStateDir,
   listDemoPacks,
+  localDemoPacksDir,
   packWebBuildCommand,
   packWebDistDir,
   readProperties,
   repoRoot,
+  validateDemoPackForAuthoring,
   writeDemoPackSecrets,
   webTemplateDir,
 } from './demo-pack-utils.mjs'
@@ -34,6 +39,7 @@ const statePath = path.join(launcherStateDir, 'state.json')
 const serverInfoPath = path.join(launcherStateDir, 'server.json')
 const authorityLockPath = path.join(launcherStateDir, 'owner.lock')
 const buildCachePath = path.join(launcherStateDir, 'build-cache.json')
+const activityArchiveDir = path.join(launcherStateDir, 'activity-archives')
 const sseClients = new Set()
 const operatorSseClients = new Set()
 const operatorExecutions = new Map()
@@ -58,6 +64,8 @@ let stateBroadcastTimer = null
 let lastStateBroadcastAt = 0
 let serverPort = Number(process.env.PORT || 4177)
 const requestBodyLimitBytes = Number(process.env.BRAZE_CONTROL_ROOM_BODY_LIMIT || 256 * 1024)
+const activityLedgerLimit = 240
+const activityDedupeWindowMs = 2_500
 const defaultAndroidAvd = process.env.BRAZE_DEMO_ANDROID_AVD || 'Braze_Demo_API_36'
 const trustDiagnosticsTimeoutMs = Number(process.env.BRAZE_DEMO_TRUST_DIAGNOSTICS_TIMEOUT_MS || 15_000)
 const liveWebPort = 5173
@@ -316,6 +324,12 @@ function defaultState() {
         deviceUrl: liveWebDeviceUrl,
       },
     },
+    activitySession: {
+      id: '',
+      startedAt: '',
+      reason: '',
+    },
+    activityArchives: [],
     ledger: [],
     restResponses: [],
   }
@@ -852,7 +866,8 @@ function updateState(mutator) {
   ensureControlState(state, state.activePackId)
   mutator(state)
   ensureControlState(state, state.activePackId)
-  state.ledger = (state.ledger || []).slice(0, 120)
+  state.ledger = (state.ledger || []).slice(0, activityLedgerLimit)
+  state.activityArchives = (state.activityArchives || []).slice(0, 20)
   state.restResponses = (state.restResponses || []).slice(0, 40)
   writeState(state)
   broadcastState()
@@ -1285,6 +1300,7 @@ function listenControlRoomServer(port, { announce = false } = {}) {
       server.removeListener('error', onListenError)
       try {
         await stopLegacyAndroidTimeGuards(null, androidTimeGuard.status().pid)
+        beginActivitySession('launcher_started')
         writeServerInfo()
       } catch (error) {
         server.close()
@@ -3217,10 +3233,11 @@ function attributePreview(attributes, limit = 8) {
 function activityCategory(entry, severity) {
   const type = entry.type || ''
   if (type === 'error' || (severity === 'error' && (entry.source === 'launcher' || entry.transport === 'launcher'))) return 'error'
-  if (['job', 'control_promoted'].includes(type)) return 'launcher'
+  if (['job', 'control_promoted', 'session_boundary', 'activity_archived', 'pack_created', 'pack_duplicated'].includes(type)) return 'launcher'
   if (['sdk_event', 'sdk_event_sequence', 'sdk_attribute', 'sdk_purchase', 'change_user', 'demo_command'].includes(type)) return 'sdk'
   if (['rest_event', 'rest_attribute', 'rest_purchase', 'braze_rest_request'].includes(type)) return 'rest'
   if (['campaign_trigger', 'canvas_trigger'].includes(type)) return 'message'
+  if (['banner_mounted', 'banner_rendered', 'banner_error', 'banners_updated', 'banners_refresh'].includes(type)) return 'message'
   if (type === 'profile_export') return 'profile'
   if (['content_cards_refresh', 'content_card_impression', 'content_card_click', 'content_cards'].includes(type)) return 'content_cards'
   if (['foreground_push', 'push_permission', 'push_readiness', 'push_profile_preflight', 'push_received', 'push_opened', 'push_deleted', 'push_preview', 'apns_token', 'fcm_token'].includes(type)) return 'push'
@@ -3235,6 +3252,10 @@ function activityDisplayTitle(entry, category) {
   const payload = activityPayload(entry)
   const endpoint = activityEndpoint(entry)
   if (category === 'error') return label && !['error', 'launcher error'].includes(label.toLowerCase()) ? label : 'Launcher Failed'
+  if (type === 'session_boundary') return label || 'Session started'
+  if (type === 'activity_archived') return 'Activity archived'
+  if (type === 'pack_created') return label || 'Demo pack created'
+  if (type === 'pack_duplicated') return label || 'Demo pack duplicated'
   if (type === 'job') return label || 'Launcher Job Updated'
   if (type === 'sdk_event') return `SDK Event Logged${name ? `: ${name}` : ''}`
   if (type === 'sdk_event_sequence' || type === 'android_sequence') return label || 'SDK Event Sequence Ran'
@@ -3249,6 +3270,11 @@ function activityDisplayTitle(entry, category) {
   if (type === 'braze_rest_request') return `Braze REST Request${endpoint ? `: ${endpoint}` : ''}`
   if (type === 'campaign_trigger') return 'Campaign Trigger Sent'
   if (type === 'canvas_trigger') return 'Canvas Trigger Sent'
+  if (type === 'banner_mounted') return 'Banner Placement Mounted'
+  if (type === 'banner_rendered') return 'Banner Rendered'
+  if (type === 'banner_error') return 'Banner Render Failed'
+  if (type === 'banners_updated') return 'Banners Updated'
+  if (type === 'banners_refresh') return 'Banners Refresh Requested'
   if (type === 'profile_export') return 'User Profile Exported'
   if (type === 'content_cards_refresh') return 'Content Cards Refreshed'
   if (type === 'content_card_impression') return 'Content Card Impression Logged'
@@ -3271,9 +3297,14 @@ function activityDisplayTitle(entry, category) {
 function activityDisplaySummary(entry, category) {
   const type = entry.type || ''
   const response = entry.response || entry.result || null
+  const payload = activityPayload(entry)
   if (entry.severity === 'error' || normalizeSeverity(entry.status) === 'error') {
     return response?.error || 'This action did not complete. Open details for the exact error and validation context.'
   }
+  if (type === 'session_boundary') return entry.displaySummary || 'A new Control Room activity session began.'
+  if (type === 'activity_archived') return 'A redacted copy of the current activity was saved locally for handoff or troubleshooting.'
+  if (type === 'pack_created') return 'A new local pack workspace and notes.md handoff template were created without credentials.'
+  if (type === 'pack_duplicated') return 'A local pack copy was created; credentials and Firebase key material were deliberately omitted.'
   if (type === 'profile_export') return 'The active user profile was exported so profile, events, purchases, apps, and push token data can be checked.'
   if (type === 'push_profile_preflight') {
     const result = response && typeof response === 'object' ? response : {}
@@ -3285,6 +3316,11 @@ function activityDisplaySummary(entry, category) {
   }
   if (type === 'campaign_trigger') return 'A campaign trigger was sent for the active user.'
   if (type === 'canvas_trigger') return 'A Canvas trigger was sent for the active user.'
+  if (type === 'banner_mounted') return 'The native shell mounted the configured Banner placement over the matching web surface.'
+  if (type === 'banner_rendered') return 'The native SDK reported a rendered Banner for the configured placement.'
+  if (type === 'banner_error') return payload.error || 'The native SDK could not render the configured Banner placement.'
+  if (type === 'banners_updated') return 'The native SDK delivered its current Banner placements to the app.'
+  if (type === 'banners_refresh') return 'The app requested fresh Banners for the configured placement IDs.'
   if (type === 'rest_event') return 'A REST event was tracked for the active user.'
   if (type === 'rest_attribute') return 'REST profile attributes were tracked for the active user.'
   if (type === 'rest_purchase') return 'A REST purchase was tracked for the active user.'
@@ -3353,29 +3389,175 @@ function normalizeActivityEntry(entry) {
   }
 }
 
-function addLedger(entry) {
-  const response = entry.response ?? entry.result ?? null
-  const withDefaults = normalizeActivityEntry({
-    id: entry.id || randomUUID(),
-    ts: new Date().toISOString(),
-    status: entry.status || 'info',
-    source: entry.source || 'launcher',
-    platform: ledgerPlatformFor(entry),
-    transport: ledgerTransportFor(entry),
-    type: entry.type || 'info',
-    label: entry.label || entry.type || 'Event',
-    seedSync: Boolean(entry.seedSync),
-    externalId: entry.externalId || readState().activeExternalId,
-    payload: entry.payload || {},
+const deduplicatedTelemetryTypes = new Set([
+  'apns_token',
+  'bridge_action',
+  'content_cards',
+  'demo_source_ready',
+  'device_event',
+  'fcm_token',
+  'runtime_ready',
+])
+
+function canonicalActivityValue(value, key = '') {
+  if (Array.isArray(value)) return value.map((item) => canonicalActivityValue(item))
+  if (!value || typeof value !== 'object') return value
+  const ignored = new Set([
+    'createdAt',
+    'generatedAt',
+    'lastEventAt',
+    'lastSeenAt',
+    'observedAt',
+    'receivedAt',
+    'timestamp',
+    'ts',
+    'updatedAt',
+  ])
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([childKey]) => !ignored.has(childKey))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([childKey, childValue]) => [childKey, canonicalActivityValue(childValue, childKey || key)]),
+  )
+}
+
+function activityCorrelationId(entry) {
+  const payload = activityPayload(entry)
+  return String(
+    entry.correlationId ||
+    entry.executionId ||
+    entry.requestId ||
+    payload.executionId ||
+    payload.requestId ||
+    payload.sync?.executionId ||
+    entry.result?.executionId ||
+    entry.result?.sync?.executionId ||
+    '',
+  ).trim()
+}
+
+export function activityDedupeKey(entry) {
+  if (!entry || entry.type === 'session_boundary') return ''
+  const correlationId = activityCorrelationId(entry)
+  const payload = activityPayload(entry)
+  if (correlationId) {
+    return createHash('sha256').update(JSON.stringify({
+      correlationId,
+      type: entry.type || '',
+      platform: entry.platform || '',
+      transport: entry.transport || '',
+      event: activityEventName(entry),
+      action: payload.action || '',
+    })).digest('hex')
+  }
+  if (!deduplicatedTelemetryTypes.has(entry.type)) return ''
+  return createHash('sha256').update(JSON.stringify(canonicalActivityValue({
+    type: entry.type || '',
+    label: entry.label || '',
+    status: entry.status || '',
+    platform: entry.platform || '',
+    transport: entry.transport || '',
+    externalId: entry.externalId || '',
+    payload: entry.payload || null,
     request: entry.request || null,
-    response,
-    validation: entry.validation || null,
-    result: entry.result ?? response,
+    response: entry.response || entry.result || null,
+  }))).digest('hex')
+}
+
+export function mergeActivityLedger(ledger, entry, {
+  limit = activityLedgerLimit,
+  windowMs = activityDedupeWindowMs,
+  nowMs = Date.parse(entry?.ts || '') || Date.now(),
+} = {}) {
+  const current = Array.isArray(ledger) ? ledger : []
+  const dedupeKey = activityDedupeKey(entry)
+  if (!dedupeKey) return { ledger: [entry, ...current].slice(0, limit), entry, deduplicated: false }
+  const index = current.findIndex((candidate) => {
+    if ((candidate.sessionId || '') !== (entry.sessionId || '')) return false
+    const candidateAt = Date.parse(candidate.lastSeenAt || candidate.ts || '') || 0
+    return Math.abs(nowMs - candidateAt) <= windowMs && activityDedupeKey(candidate) === dedupeKey
   })
+  if (index < 0) return { ledger: [entry, ...current].slice(0, limit), entry, deduplicated: false }
+  const previous = current[index]
+  const merged = {
+    ...previous,
+    ...entry,
+    id: previous.id,
+    firstSeenAt: previous.firstSeenAt || previous.ts,
+    lastSeenAt: entry.ts,
+    duplicateCount: Number(previous.duplicateCount || 1) + 1,
+  }
+  return {
+    ledger: [merged, ...current.slice(0, index), ...current.slice(index + 1)].slice(0, limit),
+    entry: merged,
+    deduplicated: true,
+  }
+}
+
+function addLedger(entry) {
+  let recorded
   updateState((state) => {
-    state.ledger = [withDefaults, ...(state.ledger || [])].slice(0, 120)
+    const response = entry.response ?? entry.result ?? null
+    const withDefaults = normalizeActivityEntry({
+      id: entry.id || randomUUID(),
+      ts: entry.ts || new Date().toISOString(),
+      status: entry.status || 'info',
+      source: entry.source || 'launcher',
+      platform: ledgerPlatformFor(entry),
+      transport: ledgerTransportFor(entry),
+      type: entry.type || 'info',
+      label: entry.label || entry.type || 'Event',
+      seedSync: Boolean(entry.seedSync),
+      externalId: entry.externalId || state.activeExternalId,
+      sessionId: entry.sessionId || state.activitySession?.id || '',
+      correlationId: entry.correlationId || entry.executionId || entry.requestId || '',
+      payload: entry.payload || {},
+      request: entry.request || null,
+      response,
+      validation: entry.validation || null,
+      result: entry.result ?? response,
+    })
+    const merged = mergeActivityLedger(state.ledger, withDefaults)
+    state.ledger = merged.ledger
+    recorded = merged.entry
   })
-  return withDefaults
+  return recorded
+}
+
+function activityBoundary(session, label = 'Session started') {
+  return normalizeActivityEntry({
+    id: randomUUID(),
+    ts: session.startedAt,
+    status: 'info',
+    source: 'launcher',
+    platform: 'host',
+    transport: 'launcher',
+    type: 'session_boundary',
+    category: 'launcher',
+    label,
+    sessionId: session.id,
+    payload: { reason: session.reason },
+    result: null,
+    displayTitle: label,
+    displaySummary: session.reason === 'activity_cleared'
+      ? 'Earlier activity was archived and the Control Room started a clean session.'
+      : 'A new launcher session began. Events below this boundary belong to an earlier run.',
+  })
+}
+
+function beginActivitySession(reason = 'launcher_started') {
+  const session = {
+    id: randomUUID(),
+    startedAt: new Date().toISOString(),
+    reason,
+  }
+  updateState((state) => {
+    const legacySessionId = state.activitySession?.id || 'legacy'
+    state.ledger = (state.ledger || []).map((entry) => entry.sessionId ? entry : { ...entry, sessionId: legacySessionId })
+    state.activitySession = session
+    state.ledger = [activityBoundary(session), ...state.ledger].slice(0, activityLedgerLimit)
+  })
+  return session
 }
 
 function addRestResponse(response) {
@@ -3681,6 +3863,358 @@ function redactSecrets(value) {
     if (/api[_-]?key|authorization|bearer|token|secret|password/i.test(key)) return [key, '[redacted]']
     return [key, redactSecrets(item)]
   }))
+}
+
+function escapedRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function diagnosticRedactionContext(pack = null, state = null) {
+  let localPacks = pack?.source === 'local' ? [pack] : []
+  try {
+    localPacks = listDemoPacks().filter((item) => item.source === 'local')
+  } catch {
+    // Keep at least the active local pack aliases when another workspace pack is malformed.
+  }
+  const localPack = pack?.source === 'local'
+  const aliases = [...new Set(localPacks.flatMap((item) => [item.id, item.name, item.directory]).filter(Boolean))]
+    .sort((left, right) => String(right).length - String(left).length)
+  const identifiers = [...new Set([
+    state?.activeExternalId,
+    state?.deviceRuntime?.externalId,
+    state?.deviceRuntime?.deviceId,
+    pack?.android?.defaultExternalId,
+    pack?.brand?.demoUser?.externalId,
+    ...(state?.ledger || []).flatMap((entry) => [entry.externalId, entry.payload?.externalId, entry.result?.externalId]),
+  ].filter((value) => String(value || '').length >= 4))]
+    .sort((left, right) => String(right).length - String(left).length)
+  return { aliases, identifiers, localPack }
+}
+
+function redactDiagnosticString(value, context = {}) {
+  let output = String(value)
+  const userHome = String(process.env.HOME || '')
+  if (repoRoot) output = output.replaceAll(repoRoot, '<repo>')
+  if (userHome) output = output.replaceAll(userHome, '<home>')
+  for (const alias of context.aliases || []) {
+    if (!alias) continue
+    output = output.replace(new RegExp(escapedRegExp(alias), 'gi'), '[local-pack]')
+  }
+  for (const identifier of context.identifiers || []) {
+    if (!identifier) continue
+    output = output.replace(new RegExp(escapedRegExp(identifier), 'g'), '[redacted-id]')
+  }
+  output = output
+    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+/gi, '$1[redacted]')
+    .replace(/((?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^"'\s,;}]+/gi, '$1[redacted]')
+    .replace(/((?:external[_-]?id|device[_-]?id|installation[_-]?id)["']?\s*[:=]\s*["']?)[^"'\s,;}]+/gi, '$1[redacted]')
+    .replace(/((?:braze\.apiKey|braze\.restApiKey|firebase\.[A-Za-z]*token)\s*=\s*)[^\s]+/gi, '$1[redacted]')
+    .replace(/([?&](?:api_key|token|secret|password)=)[^&\s]+/gi, '$1[redacted]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+  return output
+}
+
+export function redactDiagnosticValue(value, context = {}, key = '') {
+  if (Array.isArray(value)) return value.map((item) => redactDiagnosticValue(item, context, key))
+  if (typeof value === 'string') return redactDiagnosticString(value, context)
+  if (!value || typeof value !== 'object') return value
+  const sensitiveKey = /api[_-]?key|authorization|bearer|token|secret|password|external[_-]?id|device[_-]?id|installation[_-]?id|email|phone|display[_-]?name|first[_-]?name|last[_-]?name|profile[_-]?name/i
+  if (/^(?:attributes|userAttributes)$/i.test(key)) {
+    return Object.fromEntries(Object.keys(value).map((childKey) => [childKey, '[redacted]']))
+  }
+  return Object.fromEntries(Object.entries(value).map(([childKey, item]) => {
+    if (sensitiveKey.test(childKey)) return [childKey, item ? '[redacted]' : item]
+    return [childKey, redactDiagnosticValue(item, context, childKey || key)]
+  }))
+}
+
+function troubleshootingLevel(blockers, codes, ready = false) {
+  if (blockers.some((blocker) => codes.includes(blocker.code))) return 'error'
+  return ready ? 'success' : 'warning'
+}
+
+export function guidedTroubleshootingCards(pack, runtime, state = readState(), instanceId = launcherInstanceId) {
+  const blockers = operatorBaseBlockers(pack, runtime, state, instanceId)
+  const byCode = (codes) => blockers.find((blocker) => codes.includes(blocker.code))
+  const platform = state.activePlatform === 'ios' ? 'ios' : 'android'
+  const latestJob = Array.from(jobs.values()).sort((left, right) => String(right.startedAt).localeCompare(String(left.startedAt)))[0]
+  const push = latestActivePushReadiness(state, instanceId)
+  const pushReason = pushReadinessBlockReason(push, { platform, externalId: state.activeExternalId || '' })
+  const trust = latestActiveTrustDiagnostics(state, instanceId)
+  const runtimeIssue = byCode(['device_missing', 'device_evidence_stale', 'platform_mismatch', 'pack_mismatch', 'runtime_hash_mismatch'])
+  const sourceIssue = byCode(['source_mismatch', 'source_not_confirmed', 'live_web_uncertain'])
+  const credentialIssue = byCode(['sdk_credentials_missing', 'sdk_credential_context_missing', 'sdk_credential_context_mismatch'])
+  const identityIssue = byCode(['persona_unapproved', 'identity_mismatch'])
+  const trustIssue = byCode(['trust_not_ready'])
+  const jobFailed = latestJob?.status === 'failed'
+  const sessionId = state.activitySession?.id || ''
+  const sessionLedger = (state.ledger || []).filter((entry) => !sessionId || entry.sessionId === sessionId)
+  const latestEvent = (predicate) => sessionLedger.find(predicate)
+  const contentCardSurfaces = Array.isArray(pack.content?.contentCardSurfaces) ? pack.content.contentCardSurfaces : []
+  const bannerSurfaces = Array.isArray(pack.content?.bannerSurfaces) ? pack.content.bannerSurfaces : []
+  const contentCardsEvent = latestEvent((entry) => entry.type === 'content_cards')
+  const contentCardsCount = Number(activityPayload(contentCardsEvent || {}).count || 0)
+  const configuredBannerPlacements = bannerSurfaces.map((surface) => String(surface.placement || '')).filter(Boolean)
+  const bannerError = latestEvent((entry) => entry.type === 'banner_error')
+  const bannerMounted = latestEvent((entry) => {
+    if (entry.type !== 'banner_mounted') return false
+    const placement = String(activityPayload(entry).placementId || '')
+    return !configuredBannerPlacements.length || configuredBannerPlacements.includes(placement)
+  })
+  const bannerDelivered = latestEvent((entry) => {
+    const payload = activityPayload(entry)
+    if (entry.type === 'banner_rendered') return configuredBannerPlacements.includes(String(payload.placementId || ''))
+    if (entry.type !== 'banners_updated') return false
+    const placements = Array.isArray(payload.placements) ? payload.placements.map(String) : []
+    return configuredBannerPlacements.some((placement) => placements.includes(placement))
+  })
+  const iamTrigger = latestEvent((entry) => entry.type === 'sdk_event' && activityEventName(entry) === 'demo_iam_trigger')
+  return [
+    {
+      id: 'android_launch',
+      level: jobFailed ? 'error' : troubleshootingLevel(blockers, ['device_missing', 'device_evidence_stale', 'platform_mismatch'], Boolean(state.deviceRuntime)),
+      title: jobFailed ? 'Android launch stopped' : (state.deviceRuntime ? 'Native app is connected' : 'Launch the Android demo'),
+      observation: jobFailed
+        ? `${latestJob.failedStep || latestJob.step || 'Launcher job'} failed. The exact command output is retained in Launcher Logs.`
+        : state.deviceRuntime
+          ? `The ${state.deviceRuntime.platform || platform} shell reported runtime evidence to this launcher.`
+          : 'No current native runtime evidence has reached the Control Room.',
+      nextStep: jobFailed ? 'Open Launcher Logs, follow the first failing step, then launch again.' : 'Keep the Control Room running and use Launch so clock sync and telemetry stay supervised.',
+      action: 'launch_android',
+      actionLabel: jobFailed ? 'Retry Android launch' : 'Launch Android',
+      agentHint: 'Start the persistent Control Room with npm run lumo:cockpit, then launch Android from the Setup card.',
+    },
+    {
+      id: 'workspace_credentials',
+      level: credentialIssue ? 'error' : 'success',
+      title: credentialIssue ? credentialIssue.label : 'Selected Braze workspace is confirmed',
+      observation: credentialIssue?.detail || 'The active pack has SDK credentials and the native credential fingerprint matches.',
+      nextStep: credentialIssue ? 'Open SDK and REST configuration, enter only the selected-pack values, save, then relaunch.' : 'No credential action is needed.',
+      action: 'open_credentials',
+      actionLabel: 'Open configuration',
+      agentHint: 'Never put REST keys in a pack. Keep REST keys in the launcher session or the documented host environment variable.',
+    },
+    {
+      id: 'runtime_identity',
+      level: runtimeIssue ? 'error' : (state.deviceRuntime ? 'success' : 'warning'),
+      title: runtimeIssue ? runtimeIssue.label : (state.deviceRuntime ? 'Pack and runtime hashes align' : 'Runtime identity not observed'),
+      observation: runtimeIssue?.detail || (state.deviceRuntime ? 'Native pack id and runtimeHash match the active generated runtime.' : 'The app has not yet reported its bundled runtime identity.'),
+      nextStep: runtimeIssue ? 'Apply the active pack and relaunch the same pack; do not select a pack by brand name.' : 'Use Apply pack whenever pack content or assets change.',
+      action: 'apply_pack',
+      actionLabel: 'Apply active pack',
+      agentHint: 'Treat demo-pack.json as source and never hand-edit generated runtime files.',
+    },
+    {
+      id: 'render_source',
+      level: sourceIssue ? 'error' : (state.deviceSourceReadiness?.renderConfirmed ? 'success' : 'warning'),
+      title: sourceIssue ? sourceIssue.label : (state.deviceSourceReadiness?.renderConfirmed ? 'Rendered source is confirmed' : 'Waiting for rendered-page proof'),
+      observation: sourceIssue?.detail || 'Native main-frame completion and webReady agree on the canonical runtime.',
+      nextStep: sourceIssue?.code === 'live_web_uncertain' ? 'Restore bundled Android mode and wait for correlated native confirmation.' : 'Keep bundled mode for rehearsal and handoff.',
+      action: sourceIssue?.code === 'live_web_uncertain' ? 'restore_bundled' : 'open_runtime',
+      actionLabel: sourceIssue?.code === 'live_web_uncertain' ? 'Restore bundled mode' : 'Inspect runtime',
+      agentHint: 'A URL alone is not readiness; use the matching pack id, configHash, runtimeHash, source generation, and webReady evidence.',
+    },
+    {
+      id: 'content_cards',
+      level: contentCardsCount > 0 ? 'success' : 'warning',
+      title: contentCardsCount > 0 ? `${contentCardsCount} Content Card${contentCardsCount === 1 ? '' : 's'} delivered` : 'Verify Content Card delivery',
+      observation: contentCardsEvent
+        ? `The native SDK returned ${contentCardsCount} active card${contentCardsCount === 1 ? '' : 's'} for ${contentCardSurfaces.length} declared surface${contentCardSurfaces.length === 1 ? '' : 's'}.`
+        : `The pack declares ${contentCardSurfaces.length} Content Card surface${contentCardSurfaces.length === 1 ? '' : 's'}, but this session has no SDK card update yet.`,
+      nextStep: contentCardsCount > 0
+        ? 'Open Home and Inbox and confirm each card uses the placement mapped in notes.md.'
+        : 'Refresh Content Cards, then confirm the Braze cards use an extras.placement value declared by this pack.',
+      action: 'verify_content_cards',
+      actionLabel: 'Refresh Content Cards',
+      agentHint: 'A successful refresh request is not delivery proof. Look for a later Content Cards updated event with a non-zero count and check the dashboard mapping in notes.md.',
+    },
+    {
+      id: 'banners',
+      level: bannerError ? 'error' : (bannerDelivered ? 'success' : 'warning'),
+      title: bannerError ? 'Banner render failed' : (bannerDelivered ? 'Configured Banner placement delivered' : 'Verify Banner placement and delivery'),
+      observation: bannerError
+        ? (activityPayload(bannerError).error || 'The native SDK reported a Banner rendering error.')
+        : bannerDelivered
+          ? `The SDK reported a configured placement (${configuredBannerPlacements.join(', ')}) in this session.`
+          : bannerMounted
+            ? 'The native placement is mounted, but no matching Banner update has been reported by the SDK.'
+            : `The pack declares ${bannerSurfaces.length} Banner surface${bannerSurfaces.length === 1 ? '' : 's'}; none has mounted in this session.`,
+      nextStep: bannerDelivered
+        ? 'Visually confirm the creative is visible on the screen and placement mapped in notes.md.'
+        : 'Open app Home to mount and refresh the Banner, then check that the dashboard placement ID exactly matches notes.md.',
+      action: 'verify_banners',
+      actionLabel: 'Open Home and inspect',
+      agentHint: 'A mounted slot proves placement wiring, not message delivery. Require matching Banner update/render telemetry plus a visible creative before rehearsal.',
+    },
+    {
+      id: 'iam',
+      level: 'warning',
+      title: iamTrigger ? 'IAM trigger logged; confirm the message' : 'Verify the IAM event mapping',
+      observation: iamTrigger
+        ? 'The native SDK logged demo_iam_trigger for the active user. The launcher cannot treat that event alone as visual display proof.'
+        : 'This session has not logged the default demo_iam_trigger event.',
+      nextStep: 'Map the dashboard action-based campaign to demo_iam_trigger, run it, and visually confirm the in-app message appears.',
+      action: 'verify_iam',
+      actionLabel: 'Log IAM trigger',
+      agentHint: 'Use the IAM row in notes.md. Check user identity, campaign eligibility, trigger event, and impression in that order when the message does not appear.',
+    },
+    {
+      id: 'android_trust_clock',
+      level: platform !== 'android' ? 'success' : (trustIssue ? 'error' : (trust?.ready ? 'success' : 'warning')),
+      title: platform !== 'android' ? 'Android-only check not applicable' : (trustIssue ? trustIssue.label : (trust?.ready ? 'Android trust is ready' : 'Verify Android trust and clock')),
+      observation: platform !== 'android' ? 'The selected target is iOS.' : (trustIssue?.detail || 'HTTPS media/Firebase trust and emulator clock health are required for reliable messaging.'),
+      nextStep: platform !== 'android' ? 'Switch to Android for the prioritized handoff flow.' : 'Run native HTTPS diagnostics; if TLS fails, follow the Zscaler and emulator clock guidance.',
+      action: 'verify_trust',
+      actionLabel: 'Verify Android trust',
+      agentHint: 'Do not disable TLS validation. Repair the emulator trust chain and network clock instead.',
+    },
+    {
+      id: 'push_delivery',
+      level: platform !== 'android' ? 'warning' : (pushReason ? 'error' : (push ? 'success' : 'warning')),
+      title: pushReason ? 'Push is not ready' : (push ? 'Push token is bound to the active user' : 'Push readiness not yet verified'),
+      observation: pushReason || (push ? 'Current native token telemetry matches this app, device, and External User ID.' : 'No current token evidence exists for the active user.'),
+      nextStep: 'Verify push readiness, confirm the Braze profile/app registration, then send a real dashboard push. A local preview is not delivery proof.',
+      action: 'verify_push',
+      actionLabel: 'Verify push readiness',
+      agentHint: 'For first-time push setup, follow the lumo-push-readiness campaign and use the manually shared Firebase service-account handoff.',
+    },
+    {
+      id: 'identity',
+      level: identityIssue ? 'warning' : 'success',
+      title: identityIssue ? identityIssue.label : 'Active persona is applied',
+      observation: identityIssue?.detail || 'SDK and REST controls target the same approved pack persona.',
+      nextStep: identityIssue ? 'Choose a named pack persona and use Apply user before sending events or messages.' : 'Keep the same persona through rehearsal and dashboard verification.',
+      action: 'open_setup',
+      actionLabel: 'Open user setup',
+      agentHint: 'Preserve SDK device identity; clearing app data is a recovery action, not a normal persona switch.',
+    },
+  ]
+}
+
+function activityArchivePayload(state, reason, createdAt) {
+  const pack = safeGetDemoPack(state.activePackId)
+  const runtime = runtimeForPack(pack)
+  const context = diagnosticRedactionContext(pack, state)
+  return redactDiagnosticValue({
+    schemaVersion: 1,
+    kind: 'lumo-redacted-activity-archive',
+    createdAt,
+    reason,
+    active: {
+      pack: { id: pack.id, name: pack.name, source: pack.source },
+      platform: state.activePlatform || 'android',
+      runtime: { configHash: runtime.configHash, runtimeHash: runtime.runtimeHash },
+    },
+    session: state.activitySession || null,
+    events: state.ledger || [],
+  }, context)
+}
+
+function writeActivityArchive(state, reason = 'manual_archive') {
+  const createdAt = new Date().toISOString()
+  const id = randomUUID()
+  const timestamp = createdAt.replace(/[:.]/g, '-').replace('Z', '')
+  const fileName = `activity-${timestamp}-${id.slice(0, 8)}.json`
+  const archive = activityArchivePayload(state, reason, createdAt)
+  fs.mkdirSync(activityArchiveDir, { recursive: true })
+  const destination = path.join(activityArchiveDir, fileName)
+  const temporary = `${destination}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(archive, null, 2)}\n`, { mode: 0o600 })
+  fs.renameSync(temporary, destination)
+  const metadata = {
+    id,
+    fileName,
+    createdAt,
+    reason,
+    eventCount: archive.events.length,
+    redacted: true,
+  }
+  return { archive, metadata }
+}
+
+function archiveCurrentActivity(reason = 'manual_archive') {
+  let result
+  updateState((state) => {
+    result = writeActivityArchive(state, reason)
+    state.activityArchives = [result.metadata, ...(state.activityArchives || [])].slice(0, 20)
+    const entry = normalizeActivityEntry({
+      id: randomUUID(),
+      ts: new Date().toISOString(),
+      sessionId: state.activitySession?.id || '',
+      status: 'success',
+      source: 'launcher',
+      platform: 'host',
+      transport: 'launcher',
+      type: 'activity_archived',
+      label: 'Activity archived',
+      payload: { fileName: result.metadata.fileName, eventCount: result.metadata.eventCount },
+      result: { redacted: true },
+    })
+    state.ledger = [entry, ...(state.ledger || [])].slice(0, activityLedgerLimit)
+  })
+  return result
+}
+
+function clearCurrentActivity() {
+  let result
+  updateState((state) => {
+    result = writeActivityArchive(state, 'clear_activity')
+    state.activityArchives = [result.metadata, ...(state.activityArchives || [])].slice(0, 20)
+    const session = { id: randomUUID(), startedAt: new Date().toISOString(), reason: 'activity_cleared' }
+    state.activitySession = session
+    state.ledger = [activityBoundary(session, 'Activity cleared · new session')]
+    state.restResponses = []
+  })
+  return result
+}
+
+function diagnosticBundle() {
+  const state = readState()
+  const { pack, secrets } = activePackAndSecrets(state)
+  const runtime = runtimeForPack(pack)
+  const profile = packProfile(pack, secrets, state)
+  const context = diagnosticRedactionContext(pack, state)
+  const latestJobs = Array.from(jobs.values()).slice(-5).reverse().map((job) => ({
+    ...job,
+    logs: (job.logs || []).slice(-120),
+  }))
+  const raw = {
+    schemaVersion: 1,
+    kind: 'lumo-redacted-diagnostic-bundle',
+    generatedAt: new Date().toISOString(),
+    redaction: {
+      applied: true,
+      note: 'Credentials, tokens, personal identifiers, local customer-pack names, and user-specific filesystem paths are removed.',
+    },
+    host: {
+      platform: process.platform,
+      architecture: process.arch,
+      node: process.versions.node,
+      launcherInstanceId,
+      port: serverPort,
+    },
+    active: {
+      platform: state.activePlatform || 'android',
+      pack: { id: pack.id, name: pack.name, source: pack.source },
+      profile,
+      runtime,
+      deviceRuntime: state.deviceRuntime || null,
+      sourceReadiness: state.deviceSourceReadiness || null,
+      pushReadiness: latestActivePushReadiness(state),
+      trustDiagnostics: latestActiveTrustDiagnostics(state),
+    },
+    development: state.development || {},
+    troubleshooting: guidedTroubleshootingCards(pack, runtime, state),
+    runtimeWarnings: runtimeWarnings(runtime, state),
+    activity: {
+      session: state.activitySession || null,
+      archives: state.activityArchives || [],
+      recentEvents: (state.ledger || []).slice(0, 80),
+      recentRestResponses: (state.restResponses || []).slice(0, 20),
+    },
+    jobs: latestJobs,
+  }
+  return redactDiagnosticValue(raw, context)
 }
 
 function queryString(query = {}) {
@@ -5043,6 +5577,56 @@ function serveDesignAsset(req, res) {
   stream.pipe(res)
 }
 
+function packManagerReport(pack, knownPacks) {
+  try {
+    return validateDemoPackForAuthoring(pack, { knownPacks })
+  } catch (error) {
+    return {
+      valid: false,
+      id: pack.id || '',
+      name: pack.name || pack.id || 'Invalid pack',
+      directory: pack.directory || '',
+      source: pack.source || '',
+      configHash: '',
+      runtimeHash: '',
+      notesPath: '',
+      errors: [error.message || String(error)],
+      warnings: [],
+    }
+  }
+}
+
+function packManagerState() {
+  const packs = listDemoPacks()
+  return {
+    workspaceDirectory: localDemoPacksDir,
+    sourceOfTruth: 'demo-pack.json',
+    credentialsCopiedOnDuplicate: false,
+    packs: packs.map((pack) => packManagerReport(pack, packs)),
+  }
+}
+
+function packManagerPackResult(pack) {
+  const manager = packManagerState()
+  return {
+    pack: manager.packs.find((item) => item.id === pack.id) || packManagerReport(pack, listDemoPacks()),
+    manager,
+  }
+}
+
+function openPackManagerTarget(packId, target = 'directory') {
+  if (!['directory', 'config', 'notes'].includes(target)) {
+    const error = new Error(`Unsupported Pack Manager target: ${target}`)
+    error.statusCode = 400
+    throw error
+  }
+  const result = openDemoPack(packId, {
+    config: target === 'config',
+    notes: target === 'notes',
+  })
+  return { packId, target, path: result.target, opened: result.opened }
+}
+
 function publicState() {
   const state = readState()
   const { pack, secrets } = activePackAndSecrets(state)
@@ -5112,6 +5696,13 @@ function publicState() {
       callbackUrl: launcherCallbackUrl(),
     },
     packs,
+    activity: {
+      currentSessionId: state.activitySession?.id || '',
+      startedAt: state.activitySession?.startedAt || '',
+      reason: state.activitySession?.reason || '',
+      archives: state.activityArchives || [],
+    },
+    troubleshooting: guidedTroubleshootingCards(pack, runtime, state),
     ledger: (state.ledger || []).map(normalizeActivityEntry),
     restResponses: state.restResponses || [],
     jobs: Array.from(jobs.values()).slice(-10).reverse(),
@@ -5702,6 +6293,54 @@ async function handleRequest(req, res) {
       res.end()
     } else if (req.method === 'GET' && url.pathname.startsWith('/design/')) {
       serveDesignAsset(req, res)
+    } else if (req.method === 'GET' && url.pathname === '/api/pack-manager') {
+      sendJson(res, 200, packManagerState(), { 'cache-control': 'no-store' })
+    } else if (req.method === 'POST' && url.pathname === '/api/pack-manager/new') {
+      const body = await readBody(req)
+      const pack = createDemoPack({
+        id: String(body.id || '').trim(),
+        name: String(body.name || '').trim(),
+        description: String(body.description || '').trim(),
+      })
+      addLedger({
+        source: 'launcher',
+        type: 'pack_created',
+        label: `Created pack ${pack.id}`,
+        status: 'success',
+        payload: { packId: pack.id, source: pack.source, credentialsCopied: false },
+      })
+      sendJson(res, 201, packManagerPackResult(pack), { 'cache-control': 'no-store' })
+    } else if (req.method === 'POST' && url.pathname === '/api/pack-manager/duplicate') {
+      const body = await readBody(req)
+      const sourcePack = getDemoPack(String(body.sourcePackId || '').trim())
+      const pack = duplicateDemoPack(sourcePack, {
+        id: String(body.id || '').trim(),
+        name: String(body.name || '').trim(),
+        description: String(body.description || '').trim(),
+      })
+      addLedger({
+        source: 'launcher',
+        type: 'pack_duplicated',
+        label: `Duplicated ${sourcePack.id} as ${pack.id}`,
+        status: 'success',
+        payload: { sourcePackId: sourcePack.id, packId: pack.id, credentialsCopied: false },
+      })
+      sendJson(res, 201, packManagerPackResult(pack), { 'cache-control': 'no-store' })
+    } else if (req.method === 'POST' && url.pathname === '/api/pack-manager/validate') {
+      const body = await readBody(req)
+      const manager = packManagerState()
+      const reports = body.packId
+        ? manager.packs.filter((pack) => pack.id === String(body.packId))
+        : manager.packs
+      if (body.packId && !reports.length) {
+        const error = new Error(`Unknown demo pack: ${body.packId}`)
+        error.statusCode = 404
+        throw error
+      }
+      sendJson(res, 200, { valid: reports.every((report) => report.valid), reports, manager }, { 'cache-control': 'no-store' })
+    } else if (req.method === 'POST' && url.pathname === '/api/pack-manager/open') {
+      const body = await readBody(req)
+      sendJson(res, 200, await openPackManagerTarget(String(body.packId || '').trim(), String(body.target || 'directory')), { 'cache-control': 'no-store' })
     } else if (req.method === 'GET' && url.pathname === '/api/packs') {
       sendJson(res, 200, listDemoPacks())
     } else if (req.method === 'GET' && url.pathname === '/api/state') {
@@ -5710,6 +6349,20 @@ async function handleRequest(req, res) {
       sendJson(res, 200, { ok: true, launcherInstanceId, pid: process.pid, port: serverPort })
     } else if (req.method === 'GET' && url.pathname === '/api/events') {
       streamState(req, res)
+    } else if (req.method === 'GET' && url.pathname === '/api/diagnostics/bundle') {
+      const bundle = diagnosticBundle()
+      const stamp = bundle.generatedAt.replace(/[:.]/g, '-').replace('Z', '')
+      sendJson(res, 200, bundle, {
+        'cache-control': 'no-store',
+        'content-disposition': `attachment; filename="lumo-diagnostics-${stamp}.json"`,
+        'x-content-type-options': 'nosniff',
+      })
+    } else if (req.method === 'POST' && url.pathname === '/api/activity/archive') {
+      const result = archiveCurrentActivity('manual_archive')
+      sendJson(res, 201, { ...result, state: publicState() }, { 'cache-control': 'no-store' })
+    } else if (req.method === 'POST' && url.pathname === '/api/activity/clear') {
+      const result = clearCurrentActivity()
+      sendJson(res, 200, { ...result, state: publicState() }, { 'cache-control': 'no-store' })
     } else if (url.pathname.startsWith('/api/operator/v1')) {
       const handled = await handleOperatorApiRequest(req, res, url)
       if (!handled) sendText(res, 404, 'Not found')
@@ -5899,6 +6552,7 @@ async function handleRequest(req, res) {
         status: body.status || 'info',
         platform,
         externalId: body.externalId,
+        correlationId: body.executionId || body.requestId || body.correlationId || '',
         payload: body.payload || body,
         result: body.result || null,
       }))

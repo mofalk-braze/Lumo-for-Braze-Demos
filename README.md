@@ -25,11 +25,34 @@ local clients provide focused operating views.
 
 Supported v1 host: Apple Silicon macOS.
 
+For the guided Android-first path, clone the repo, start Claude Code from the
+repo root, and ask it to set up Lumo for Android. The committed project skills
+are discovered from `.claude/skills/`; there is no skill zip to install.
+
+```text
+Read CLAUDE.md, use lumo-build-and-env, and set up this clone for the supported
+Android emulator. Run every safe step yourself, pause only for manual GUI or
+credential handoff steps, then launch the Control Room and verify bundled
+Android runtime readiness.
+```
+
+The equivalent manual sequence is:
+
 ```sh
-./bootstrap-lumo.sh --check
-./bootstrap-lumo.sh --install
-./bootstrap-lumo.sh --android-avd
+./bootstrap-lumo.sh --check --target android
+./bootstrap-lumo.sh --install --target android
+./bootstrap-lumo.sh --android-avd --target android
 npm run lumo:cockpit
+```
+
+For agent automation, the target-aware Android surface can replace that manual
+sequence:
+
+```sh
+node tools/lumo.mjs android setup
+node tools/lumo.mjs android doctor
+node tools/lumo.mjs android start --pack lumo-default
+node tools/lumo.mjs android status
 ```
 
 Open the Control Room URL printed by the launcher, choose `Lumo`, and launch
@@ -45,18 +68,46 @@ Detailed setup and troubleshooting live in `docs/lumo-public-quickstart.md`.
 ## Diagnostics
 
 ```sh
-npm run doctor
+node tools/lumo.mjs android doctor
 npm run lumo:apply
 npm run validate:demo-runtime
 ```
 
 ## Agent Demo Build Workflow
 
-`plugins/braze-demo-builder/` is the source-distributed Codex/Claude plugin for
-guided demo app builds. Load it with `claude --plugin-dir ./plugins/braze-demo-builder`
-and use `/braze-demo-builder:demo-build`. Claude-created or imported packs should
-live in `.demo-packs/` unless you are deliberately preparing a sanitized public
-pack.
+`.claude/skills/` is the canonical source-distributed agent bundle. It includes
+fresh-machine setup, Android push readiness, pack authoring, operation,
+diagnostics, troubleshooting, secrets, QA, architecture, and demo-building
+workflows. Claude Code discovers it automatically when started in this repo.
+Other coding agents should follow `AGENTS.md`, inspect the project skill
+descriptions, and read the owning `SKILL.md` before acting.
+
+`plugins/braze-demo-builder/` remains an optional compatibility plugin for the
+namespaced `/braze-demo-builder:demo-build` command:
+
+```sh
+claude --plugin-dir ./plugins/braze-demo-builder
+```
+
+Claude-created or imported packs should live in `.demo-packs/` unless you are
+deliberately preparing a sanitized public pack. Validate the distributed skill
+bundle with `node tools/check-agent-skills.mjs`.
+
+## Pack Manager
+
+Control Room → **Pack Manager** and the repo CLI expose the same safe pack
+workflow:
+
+```sh
+node tools/lumo.mjs pack new sample-pack --name "Sample Pack"
+node tools/lumo.mjs pack duplicate lumo-default sample-pack --name "Sample Pack"
+node tools/lumo.mjs pack validate sample-pack
+node tools/lumo.mjs pack open sample-pack --notes
+```
+
+New and duplicated packs go to ignored `.demo-packs/`; credentials are never
+copied. Both paths generate `notes.md` mappings for Content Cards, Banners,
+IAM, push, dashboard objects, proof, and fallback.
 
 ## Local Secrets
 
@@ -88,6 +139,8 @@ small setup group, and rotate/delete it after the event.
 Run these before committing:
 
 ```sh
+npm run lumo:apply
+node tools/check-agent-skills.mjs
 npm run check:precommit
 npm run public:check
 cd web-template && npm run build

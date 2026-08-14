@@ -24,12 +24,14 @@ import {
   extractRenderSyncIdentity,
   extractRuntimeTelemetry,
   extractTrustTelemetry,
+  guidedTroubleshootingCards,
   isCurrentLauncherEvidence,
   iosRenderReadinessMatchesExpectation,
   iosRuntimeEvidenceMatchesExpectation,
   iosSdkCredentialContextFingerprint,
   liveWebStateAfterHostStop,
   liveWebHazard,
+  mergeActivityLedger,
   operatorExecutionMatchesContext,
   operatorBaseBlockers,
   operatorPersonas,
@@ -38,6 +40,7 @@ import {
   pathIsWithinRoot,
   presenterControlPresets,
   releaseAuthorityLock,
+  redactDiagnosticValue,
   runtimeEvidenceIsComplete,
   renderSyncIdentityMatchesRuntime,
   selectFreshRuntimeManifest,
@@ -48,6 +51,64 @@ import {
   webBuildInputHash,
   withLauncherObservation,
 } from './demo-launcher.mjs'
+
+test('activity ledger merges repeated telemetry but preserves intentional story actions and session boundaries', () => {
+  const base = {
+    id: 'first',
+    ts: '2026-08-14T10:00:00.000Z',
+    sessionId: 'session-a',
+    type: 'runtime_ready',
+    label: 'Runtime ready',
+    status: 'success',
+    platform: 'android',
+    transport: 'device_callback',
+    payload: { runtimeHash: 'runtime-a', observedAt: 'first-observation' },
+  }
+  const first = mergeActivityLedger([], base)
+  const repeated = mergeActivityLedger(first.ledger, {
+    ...base,
+    id: 'second',
+    ts: '2026-08-14T10:00:01.000Z',
+    payload: { runtimeHash: 'runtime-a', observedAt: 'second-observation' },
+  })
+  assert.equal(repeated.deduplicated, true)
+  assert.equal(repeated.ledger.length, 1)
+  assert.equal(repeated.entry.id, 'first')
+  assert.equal(repeated.entry.duplicateCount, 2)
+
+  const nextSession = mergeActivityLedger(repeated.ledger, {
+    ...base,
+    id: 'third',
+    ts: '2026-08-14T10:00:01.500Z',
+    sessionId: 'session-b',
+  })
+  assert.equal(nextSession.deduplicated, false)
+  assert.equal(nextSession.ledger.length, 2)
+
+  const storyAction = { ...base, id: 'story-a', type: 'sdk_event', payload: { name: 'checkout' } }
+  const storyLedger = mergeActivityLedger([], storyAction)
+  const repeatedStory = mergeActivityLedger(storyLedger.ledger, { ...storyAction, id: 'story-b', ts: '2026-08-14T10:00:00.500Z' })
+  assert.equal(repeatedStory.deduplicated, false)
+  assert.equal(repeatedStory.ledger.length, 2)
+})
+
+test('diagnostic redaction removes credentials, people, local paths, and local pack aliases', () => {
+  const redacted = redactDiagnosticValue({
+    apiKey: 'sdk-secret',
+    externalId: 'person-123',
+    campaignId: 'campaign-safe',
+    log: `${process.cwd()}/.demo-packs/customer-alpha Authorization: Bearer bearer-secret`,
+    email: 'person@example.test',
+    warning: 'Runtime belongs to person-123 and must be checked.',
+  }, { aliases: ['customer-alpha'], identifiers: ['person-123'] })
+  assert.equal(redacted.apiKey, '[redacted]')
+  assert.equal(redacted.externalId, '[redacted]')
+  assert.equal(redacted.email, '[redacted]')
+  assert.equal(redacted.campaignId, 'campaign-safe')
+  assert.match(redacted.log, /<repo>/)
+  assert.match(redacted.log, /\[local-pack\]/)
+  assert.doesNotMatch(JSON.stringify(redacted), /sdk-secret|person-123|bearer-secret|customer-alpha/)
+})
 
 test('normalizes runtime and source evidence from prepareRuntime result telemetry', () => {
   const evidence = extractRuntimeTelemetry('android', {
@@ -707,6 +768,30 @@ function syntheticPackAndState() {
   return { pack, state }
 }
 
+test('guided troubleshooting distinguishes messaging placement wiring from delivery proof', () => {
+  const { pack, state } = syntheticPackAndState()
+  pack.content = {
+    contentCardSurfaces: [{ id: 'home-cards', placement: 'home_feed', screen: 'home' }],
+    bannerSurfaces: [{ id: 'home-banner', placement: 'home_banner', screen: 'home' }],
+  }
+  state.activitySession = { id: 'session-a', startedAt: '2026-08-14T10:00:00.000Z' }
+  state.ledger = [
+    { id: 'iam', sessionId: 'session-a', type: 'sdk_event', payload: { name: 'demo_iam_trigger' } },
+    { id: 'banner', sessionId: 'session-a', type: 'banners_updated', payload: { placements: ['home_banner'] } },
+    { id: 'cards', sessionId: 'session-a', type: 'content_cards', payload: { count: 2 } },
+  ]
+  const cards = guidedTroubleshootingCards(pack, {
+    id: pack.id,
+    configHash: 'config-hash',
+    runtimeHash: 'runtime-hash',
+    expectedSources: { android: 'file:///android_asset/demo/index.html' },
+  }, state, 'test-launcher')
+  assert.equal(cards.find((card) => card.id === 'content_cards')?.level, 'success')
+  assert.equal(cards.find((card) => card.id === 'banners')?.level, 'success')
+  assert.equal(cards.find((card) => card.id === 'iam')?.level, 'warning')
+  assert.match(cards.find((card) => card.id === 'iam')?.observation || '', /cannot treat that event alone as visual display proof/)
+})
+
 test('Presenter Remote exposes only pack-known personas and no raw custom user', () => {
   const { pack, state } = syntheticPackAndState()
   const personas = operatorPersonas(pack, state)
@@ -1068,6 +1153,14 @@ test('Control Room renders Diagnostics-only live-web controls with parseable cli
   assert.doesNotMatch(html, /<details class="panel span-4 row-span-2 story-controls-fallback" open>/)
   assert.match(html, /Story Controls · Control Room fallback/)
   assert.match(html, /timeGuard: state\.data\.development/)
+  assert.match(html, /Pack Manager/)
+  assert.match(html, /\/api\/pack-manager\/new/)
+  assert.match(html, /\/api\/pack-manager\/duplicate/)
+  assert.match(html, /\/api\/pack-manager\/validate/)
+  assert.match(html, /\/api\/diagnostics\/bundle/)
+  assert.match(html, /\/api\/activity\/archive/)
+  assert.match(html, /\/api\/activity\/clear/)
+  assert.match(html, /Agent hint:/)
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
   const inline = scripts.map((match) => match[1]).find((source) => source.trim())
   assert.ok(inline, 'expected an inline Control Room client script')

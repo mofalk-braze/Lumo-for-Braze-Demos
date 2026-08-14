@@ -2,10 +2,11 @@ import { useEffect } from 'react'
 import { useBraze } from '../braze/BrazeBridgeProvider'
 import { AnchorEvents } from '../braze/events'
 import { brandConfig } from '../brand/brandConfig'
-import { appContent, contentCardSurfaceForScreen, type ContentItem } from '../brand/content'
+import { appContent, bannerSurfacesForScreen, contentCardSurfaceForScreen, type ContentItem } from '../brand/content'
 import { BrandLogo, PointsBadge, Section, SectionHeader, Chip } from '../components/ui'
 import { ContentCardSlot } from '../components/ContentCardSlot'
 import { ItemCard } from '../components/ItemCard'
+import { NativeBannerSlot } from '../components/NativeBannerSlot'
 
 export function Home() {
   const { firstName, points, fireAnchor } = useBraze()
@@ -15,6 +16,7 @@ export function Home() {
   }, [fireAnchor])
 
   const contentCardSurface = contentCardSurfaceForScreen('home')
+  const bannerSurfaces = bannerSurfacesForScreen('home')
 
   const openItem = (item: ContentItem) =>
     fireAnchor(
@@ -71,6 +73,12 @@ export function Home() {
           )}
         </button>
       </Section>
+
+      {bannerSurfaces.map((surface) => (
+        <Section key={surface.id} className="mt-4">
+          <NativeBannerSlot placement={surface.placement} height={surface.height} />
+        </Section>
+      ))}
 
       {contentCardSurface && <ContentCardSlot surface={contentCardSurface} />}
 

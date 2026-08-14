@@ -6,15 +6,22 @@ import test from 'node:test'
 
 import {
   androidSeedProperties,
+  createDemoPack,
   createRuntimeManifest,
+  createStarterDemoPackConfig,
   demoConfigHash,
   demoRuntimeHash,
   directoryFingerprint,
+  duplicateDemoPack,
   generateRuntimeManifest,
+  generateDemoPackNotes,
   syncPackAppSurface,
   syncDemoAssets,
+  validateDemoPackForAuthoring,
+  validatePack,
   writeTextIfChanged,
 } from './demo-pack-utils.mjs'
+import { openDemoPack, runPackCommand } from './lumo-pack-cli.mjs'
 
 function temporaryDirectory(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumo-demo-pack-utils-'))
@@ -237,4 +244,147 @@ test('pack app surface mirrors one fixed ignored container and removes stale pri
   assert.equal(syncPackAppSurface(pack, { destinationRoot }), true)
   assert.equal(fs.existsSync(destinationRoot), false)
   assert.equal(syncPackAppSurface(pack, { destinationRoot }), false)
+})
+
+test('pack validation closes the Content Card rail gap and validates Banner authoring surfaces', () => {
+  const pack = createStarterDemoPackConfig({ id: 'schema-fixture', name: 'Schema Fixture' })
+
+  assert.equal(validatePack(pack, 'fixture/demo-pack.json'), pack)
+
+  const withoutLegacyRail = structuredClone(pack)
+  delete withoutLegacyRail.content.contentCardRail
+  assert.throws(
+    () => validatePack(withoutLegacyRail, 'fixture/demo-pack.json'),
+    /content\.contentCardRail requires non-empty title and placement strings/,
+  )
+
+  const invalidBanner = structuredClone(pack)
+  invalidBanner.content.bannerSurfaces.push({
+    id: 'second-banner',
+    placement: 'home_banner',
+    screen: 'account',
+    height: 64,
+  })
+  assert.throws(
+    () => validatePack(invalidBanner, 'fixture/demo-pack.json'),
+    /content\.bannerSurfaces\[1\] has duplicate placement: home_banner/,
+  )
+
+  invalidBanner.content.bannerSurfaces[1].placement = 'account_banner'
+  invalidBanner.content.bannerSurfaces[1].height = 0
+  assert.throws(
+    () => validatePack(invalidBanner, 'fixture/demo-pack.json'),
+    /content\.bannerSurfaces\[1\] height must be a positive integer/,
+  )
+})
+
+test('notes template maps Content Cards, Banners, IAM, and push without credential values', () => {
+  const pack = createStarterDemoPackConfig({ id: 'notes-fixture', name: 'Notes Fixture' })
+  const notes = generateDemoPackNotes(pack)
+
+  assert.match(notes, /extras\.placement=home_feed/)
+  assert.match(notes, /Braze placement ID/)
+  assert.match(notes, /`home_banner`/)
+  assert.match(notes, /demo_iam_trigger/)
+  assert.match(notes, /PUSH_CAMPAIGN_OR_CANVAS/)
+  assert.match(notes, /BRAZE_REST_API_KEY_<PACK_ID>/)
+  assert.doesNotMatch(notes, /braze\.apiKey\s*=/)
+  assert.doesNotMatch(notes, /firebase\.senderId\s*=/)
+})
+
+test('new pack creation is local-ready, self-describing, and authoring-valid', (t) => {
+  const destinationRoot = temporaryDirectory(t)
+  const pack = createDemoPack(
+    { id: 'fresh-solcon-pack', name: 'Fresh SolCon Pack' },
+    { destinationRoot, knownPacks: [] },
+  )
+
+  assert.equal(pack.directory, path.join(destinationRoot, 'fresh-solcon-pack'))
+  assert.equal(fs.existsSync(path.join(pack.directory, 'demo-pack.json')), true)
+  assert.equal(fs.existsSync(path.join(pack.directory, 'notes.md')), true)
+  assert.equal(fs.existsSync(path.join(pack.directory, 'secrets.properties')), false)
+  assert.deepEqual(fs.readdirSync(path.join(pack.directory, 'assets')), [])
+
+  const report = validateDemoPackForAuthoring(pack, { knownPacks: [pack] })
+  assert.equal(report.valid, true)
+  assert.deepEqual(report.errors, [])
+  assert.deepEqual(report.warnings, [])
+})
+
+test('pack duplication rewrites identity and excludes credential carriers', (t) => {
+  const root = temporaryDirectory(t)
+  const sourceDirectory = path.join(root, 'source')
+  const destinationRoot = path.join(root, 'local-packs')
+  const sourcePack = {
+    ...createStarterDemoPackConfig({ id: 'source-pack', name: 'Source Pack' }),
+    directory: sourceDirectory,
+    source: 'local',
+  }
+  const adapter = path.join(sourceDirectory, 'app-source/web-template/src/screens/local-pack/pack-app.tsx')
+  fs.mkdirSync(path.dirname(adapter), { recursive: true })
+  fs.mkdirSync(path.join(sourceDirectory, 'assets'), { recursive: true })
+  fs.writeFileSync(path.join(sourceDirectory, 'demo-pack.json'), `${JSON.stringify(sourcePack, null, 2)}\n`)
+  fs.writeFileSync(path.join(sourceDirectory, 'assets', 'hero.txt'), 'safe asset\n')
+  fs.writeFileSync(path.join(sourceDirectory, 'secrets.properties'), 'braze.apiKey=<LOCAL_ONLY>\n')
+  fs.writeFileSync(path.join(sourceDirectory, '.env.local'), 'BRAZE_REST_API_KEY=<LOCAL_ONLY>\n')
+  fs.writeFileSync(path.join(sourceDirectory, 'service_account.json'), '{"private_key":"<LOCAL_ONLY>"}\n')
+  fs.writeFileSync(path.join(sourceDirectory, 'signing-key.pem'), '<LOCAL_ONLY>\n')
+  fs.writeFileSync(path.join(sourceDirectory, 'client.certSigningRequest'), '<LOCAL_ONLY>\n')
+  fs.writeFileSync(path.join(sourceDirectory, 'notes.md'), 'stale source notes\n')
+  fs.writeFileSync(adapter, "export const demoPackId = 'source-pack'\nexport default function Surface() { return null }\n")
+
+  const duplicate = duplicateDemoPack(sourcePack, {
+    id: 'target-pack',
+    name: 'Target Pack',
+    destinationRoot,
+    knownPacks: [sourcePack],
+  })
+
+  assert.equal(duplicate.id, 'target-pack')
+  assert.equal(duplicate.brand.demoUser.externalId, 'target-pack-demo-user')
+  assert.equal(duplicate.android.defaultExternalId, 'target-pack-demo-user')
+  assert.equal(fs.existsSync(path.join(duplicate.directory, 'secrets.properties')), false)
+  assert.equal(fs.existsSync(path.join(duplicate.directory, '.env.local')), false)
+  assert.equal(fs.existsSync(path.join(duplicate.directory, 'service_account.json')), false)
+  assert.equal(fs.existsSync(path.join(duplicate.directory, 'signing-key.pem')), false)
+  assert.equal(fs.existsSync(path.join(duplicate.directory, 'client.certSigningRequest')), false)
+  assert.equal(fs.readFileSync(path.join(duplicate.directory, 'assets', 'hero.txt'), 'utf8'), 'safe asset\n')
+  assert.match(fs.readFileSync(path.join(duplicate.directory, 'notes.md'), 'utf8'), /Pack id: `target-pack`/)
+  assert.match(fs.readFileSync(path.join(duplicate.directory, 'app-source/web-template/src/screens/local-pack/pack-app.tsx'), 'utf8'), /demoPackId = "target-pack"/)
+})
+
+test('lumo pack new supports machine-readable agent output', (t) => {
+  const destinationRoot = temporaryDirectory(t)
+  let output = ''
+  const exitCode = runPackCommand(
+    ['new', 'agent-guided-pack', '--name', 'Agent Guided Pack', '--json'],
+    {
+      destinationRoot,
+      stdout: { write: (value) => { output += value } },
+    },
+  )
+  const result = JSON.parse(output)
+
+  assert.equal(exitCode, 0)
+  assert.equal(result.action, 'created')
+  assert.equal(result.id, 'agent-guided-pack')
+  assert.equal(result.directory, path.join(destinationRoot, 'agent-guided-pack'))
+  assert.equal(fs.existsSync(result.notesPath), true)
+})
+
+test('lumo pack open can print or prepare a missing local notes template without launching a GUI', (t) => {
+  const root = temporaryDirectory(t)
+  const pack = {
+    ...createStarterDemoPackConfig({ id: 'open-fixture', name: 'Open Fixture' }),
+    directory: path.join(root, 'open-fixture'),
+    source: 'local',
+  }
+  fs.mkdirSync(pack.directory, { recursive: true })
+  const result = openDemoPack(pack, { notes: true, print: true }, {
+    spawn: () => { throw new Error('GUI opener must not run for --print') },
+  })
+
+  assert.equal(result.opened, false)
+  assert.equal(result.target, path.join(pack.directory, 'notes.md'))
+  assert.equal(fs.existsSync(result.target), true)
 })

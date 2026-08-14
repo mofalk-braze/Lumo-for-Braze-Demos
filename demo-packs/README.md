@@ -41,6 +41,9 @@ sent through the native SDK for the active user.
 `content.contentCardRail` remains supported for legacy home rail demos. New
 screenshot-built apps should prefer `content.contentCardSurfaces`, which declares
 repeatable surfaces that route real Braze Content Cards by `extras.placement`.
+The shared legacy fallback still requires a non-empty `contentCardRail.title`
+and `contentCardRail.placement`; load-time validation rejects an incomplete
+fallback instead of allowing a later web crash.
 
 Each surface uses:
 
@@ -56,6 +59,37 @@ Each surface uses:
 Default demo-building guidance is to provide an inbox-style surface when the
 source app has notifications/messages or the story needs persistence, plus one
 contextual slot where cards fit naturally into the screenshot content.
+
+## Banner Surfaces
+
+`content.bannerSurfaces` declares native Braze Banner slots:
+
+- `id`: stable local slot id.
+- `placement`: exact unique Braze dashboard placement id.
+- `screen`: route/screen that renders the slot.
+- optional `height`: positive CSS-pixel height; defaults to `96`.
+
+The shared Home screen renders entries for `screen: "home"` with
+`NativeBannerSlot`. Bespoke screens must resolve their own surfaces with
+`bannerSurfacesForScreen()` and mount the same component. Browser mode is a
+layout preview only; Android and iOS native shells own real Banner rendering.
+
+## Pack Manager And Handoff Notes
+
+Create, duplicate, validate, and open packs from Control Room → **Pack
+Manager**, or from the repo CLI:
+
+```sh
+node tools/lumo.mjs pack new sample-pack --name "Sample Pack"
+node tools/lumo.mjs pack duplicate lumo-default sample-pack --name "Sample Pack"
+node tools/lumo.mjs pack validate sample-pack
+node tools/lumo.mjs pack open sample-pack --notes
+```
+
+New and duplicated packs always go to ignored `.demo-packs/`. Duplicate never
+copies credentials. Both paths generate `notes.md` with Content Card, Banner,
+IAM, and push dashboard mappings, presenter sequence, proof, and fallback
+fields. Complete that handoff before treating a pack as shareable.
 
 Applying a pack generates `web-template/public/demo-runtime.json`, web config,
 synced assets, Android seed metadata, and iOS runtime defaults. Validate with:

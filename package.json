@@ -9,15 +9,23 @@
     "bootstrap:check": "node tools/doctor-solcon.mjs",
     "doctor": "node tools/doctor-solcon.mjs",
     "demo:apply:starter": "node tools/demo-launcher.mjs --pack lumo-default --apply-only",
+    "lumo": "node tools/lumo.mjs",
     "lumo:doctor": "node tools/doctor-solcon.mjs",
+    "lumo:android:doctor": "node tools/lumo.mjs android doctor",
+    "lumo:android:setup": "node tools/lumo.mjs android setup",
+    "lumo:android:start": "node tools/lumo.mjs android start",
+    "lumo:android:status": "node tools/lumo.mjs android status",
+    "lumo:android:stop": "node tools/lumo.mjs android stop",
+    "lumo:pack": "node tools/lumo.mjs pack",
     "lumo:apply": "node tools/demo-launcher.mjs --pack lumo-default --apply-only",
     "lumo:cockpit": "node tools/demo-launcher.mjs",
-    "lumo:launch:android": "node tools/demo-launcher.mjs --pack lumo-default --run",
+    "lumo:launch:android": "node tools/lumo.mjs android start --pack lumo-default",
     "validate:demo-runtime": "node tools/validate-demo-runtime.mjs",
     "test:ios-contracts": "node ios-shell/tools/run-contract-tests.mjs",
-    "test:capabilities": "node tools/test-capabilities.mjs && node --test tools/demo-pack-utils.test.mjs tools/presenter-remote-template.test.mjs tools/demo-launcher-operator.test.mjs tools/demo-launcher-http.test.mjs android-shell/tools/run-demo-emulator.test.mjs",
+    "test:capabilities": "node tools/test-capabilities.mjs && node --test tools/demo-pack-utils.test.mjs tools/doctor-solcon.test.mjs tools/lumo-android-cli.test.mjs tools/presenter-remote-template.test.mjs tools/demo-launcher-operator.test.mjs tools/demo-launcher-http.test.mjs android-shell/tools/run-demo-emulator.test.mjs",
     "security:scan": "node tools/secret-scan.mjs",
+    "check:agent-skills": "node tools/check-agent-skills.mjs",
     "public:check": "node tools/public-readiness-check.mjs",
-    "check:precommit": "npm run test:capabilities && npm run validate:demo-runtime && npm run security:scan"
+    "check:precommit": "npm run test:capabilities && npm run validate:demo-runtime && npm run security:scan && npm run check:agent-skills"
   }
 }

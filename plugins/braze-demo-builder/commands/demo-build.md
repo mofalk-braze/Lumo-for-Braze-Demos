@@ -27,7 +27,10 @@ Before asking where anything lives, inspect the project sources that define curr
 - `tools/demo-launcher.mjs` and pack `launcher.presets` when Control Room behavior is involved
 - Android/iOS bridge files only when SDK behavior, push, IAM, launch links, purchases, Content Cards, or identity are involved
 
-Do not read or depend on ignored local `.claude/skills/...` files. Treat committed docs and code as source of truth.
+Read the committed canonical workflow at
+`.claude/skills/braze-demo-app-builder/SKILL.md` and only the references it
+routes for this task. Treat committed docs and code as source of truth if any
+guidance conflicts.
 
 ## 2. Classify The Request
 
@@ -52,7 +55,8 @@ Required inputs:
 - target platforms: web harness, Android, iOS, or all
 - screenshots, product references, or brand assets
 - logo/app icon PNG status and fallback if missing
-- Braze story type: Content Cards, IAM, push, purchase, loyalty, lifecycle, REST-triggered campaign/canvas, or launch link
+- Braze story type: Content Cards, Banners, IAM, push, purchase, loyalty,
+  lifecycle, REST-triggered campaign/canvas, or launch link
 - Content Card placement intent and expected `extras.placement` values
 - Braze dashboard setup needs: trigger events, campaign IDs, Canvas IDs, API-trigger properties, push readiness, APNs/FCM prerequisites, or universal/app link host files
 
@@ -82,6 +86,8 @@ Use real SDK Content Cards in shell builds. Browser fixtures are layout-only.
 - Firebase service account JSON stays outside Git. It may be uploaded manually into a teammate's own Braze workspace for Android push, but must not be committed or generated into app assets.
 - Preserve Android/iOS parity for pack application, runtime generation, asset packaging, launch flows, SDK bridge behavior, and Control Room controls. If parity is not applicable, document why.
 - Source URL overrides are advanced diagnostics and should remain visible when active.
+- Declare Banners through `content.bannerSurfaces`, mount `NativeBannerSlot` on
+  the mapped screen, and treat browser output as layout preview only.
 
 ## 6. Validation And Handoff
 
@@ -105,7 +111,10 @@ Final response must include:
 - skipped checks and reasons
 - platform parity notes
 - Content Card placements and Braze dashboard `extras.placement` values
+- Banner screens and exact Braze placement ids
 - logo/app icon decisions
 - pack location (`demo-packs/` or `.demo-packs/`)
 - remaining manual Braze dashboard setup
 - any required SolCon operator notes
+- generated pack `notes.md` with Content Card, Banner, IAM, push, proof, and
+  fallback mappings

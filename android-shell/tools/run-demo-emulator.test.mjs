@@ -23,6 +23,11 @@ function createHarness() {
   const trustLog = path.join(root, 'trust.log')
   const timeGuardLog = path.join(root, 'time-guard.log')
   const settingsFile = path.join(root, 'settings.state')
+  const activityStateFile = path.join(root, 'activity.state')
+  const activityReadyFile = path.join(root, 'activity.ready')
+  const devicesStateFile = path.join(root, 'devices.state')
+  const emulatorLog = path.join(root, 'emulator.log')
+  const emulatorPidFile = path.join(root, 'emulator.pid')
   const apk = path.join(root, 'app-debug.apk')
   const security = path.join(root, 'security')
   const trustInstaller = path.join(root, 'trust-installer')
@@ -34,10 +39,29 @@ if [[ "\${1:-}" == "-s" ]]; then shift 2; fi
 printf '%s\\n' "$*" >>"$FAKE_ADB_LOG"
 case "\${1:-} \${2:-} \${3:-}" in
   "start-server  ") exit 0 ;;
-  "devices  ") printf 'List of devices attached\\n%b' "$FAKE_ADB_DEVICES" ;;
+  "devices  ")
+    calls="$(cat "$FAKE_DEVICES_STATE_FILE" 2>/dev/null || printf '0')"
+    calls=$((calls + 1))
+    printf '%s' "$calls" >"$FAKE_DEVICES_STATE_FILE"
+    printf 'List of devices attached\\n'
+    if (( calls > FAKE_DEVICE_READY_AFTER_CALLS )); then printf '%b' "$FAKE_ADB_DEVICES"; fi
+    ;;
   "emu avd name") printf '%s\\nOK\\n' "$FAKE_AVD_NAME" ;;
   "wait-for-device  ") exit 0 ;;
   "shell getprop sys.boot_completed") printf '1\\n' ;;
+  "shell service check")
+    if [[ "\${4:-}" == "activity" ]]; then
+      checks="$(cat "$FAKE_ACTIVITY_STATE_FILE" 2>/dev/null || printf '0')"
+      checks=$((checks + 1))
+      printf '%s' "$checks" >"$FAKE_ACTIVITY_STATE_FILE"
+      if (( checks > FAKE_ACTIVITY_READY_AFTER_CHECKS )); then
+        : >"$FAKE_ACTIVITY_READY_FILE"
+        printf 'Service activity: found\\n'
+      else
+        printf 'Service activity: not found\\n'
+      fi
+    fi
+    ;;
   "shell dumpsys lock_settings") printf 'Current lock settings service state:\\n  CredentialType: %s\\n' "$FAKE_CREDENTIAL_TYPE" ;;
   "shell locksettings get-disabled") printf '%s\\n' "$FAKE_LOCKSCREEN_DISABLED" ;;
   "shell locksettings set-disabled") printf 'false\\n' ;;
@@ -61,13 +85,23 @@ case "\${1:-} \${2:-} \${3:-}" in
     ;;
   "shell dumpsys user") printf 'UserInfo{0:Owner:13} running\\n  State: RUNNING_UNLOCKED\\n' ;;
   "shell pm path") printf 'package:/data/app/fake/base.apk\\n' ;;
-  "shell input keyevent"|"shell input swipe"|"shell wm dismiss-keyguard"|"shell am force-stop") exit 0 ;;
+  "shell am force-stop")
+    if [[ "\${FAKE_REQUIRE_ACTIVITY_READY:-0}" == "1" && ! -f "$FAKE_ACTIVITY_READY_FILE" ]]; then
+      echo "Can't find service: activity" >&2
+      exit 20
+    fi
+    exit 0
+    ;;
+  "shell input keyevent"|"shell input swipe"|"shell wm dismiss-keyguard") exit 0 ;;
   "uninstall com.braze.demoshell ") printf 'Success\\n' ;;
   "install -r "*) printf 'Success\\n' ;;
   *) exit 0 ;;
 esac
 `)
-  writeExecutable(emulator, '#!/usr/bin/env bash\nexit 0\n')
+  writeExecutable(emulator, `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "-list-avds" ]]; then printf '%s\n' "$FAKE_AVD_NAME"; fi
+`)
   writeExecutable(security, '#!/usr/bin/env bash\nexit 0\n')
   writeExecutable(trustInstaller, `#!/usr/bin/env bash
 set -euo pipefail
@@ -95,7 +129,23 @@ exit 0
 set -euo pipefail
 printf 'serial=%s args=%s\n' "\${ANDROID_SERIAL:-}" "$*" >>"$FAKE_TIME_GUARD_LOG"
 `)
-  return { root, adb, emulator, log, trustLog, timeGuardLog, settingsFile, trustInstaller, timeGuard, apk }
+  return {
+    root,
+    adb,
+    emulator,
+    log,
+    trustLog,
+    timeGuardLog,
+    settingsFile,
+    activityStateFile,
+    activityReadyFile,
+    devicesStateFile,
+    emulatorLog,
+    emulatorPidFile,
+    trustInstaller,
+    timeGuard,
+    apk,
+  }
 }
 
 function runHarness(harness, overrides = {}) {
@@ -117,6 +167,8 @@ function runHarness(harness, overrides = {}) {
       TRUST_MODE: 'skip',
       TIME_SYNC_GUARD: '0',
       BRAZE_DEMO_ANDROID_BOOT_TIMEOUT_SECONDS: '2',
+      BRAZE_DEMO_EMULATOR_LOG: harness.emulatorLog,
+      BRAZE_DEMO_EMULATOR_PID_FILE: harness.emulatorPidFile,
       FAKE_ADB_LOG: harness.log,
       FAKE_TRUST_LOG: harness.trustLog,
       FAKE_TRUST_STATE: 'healthy',
@@ -128,6 +180,12 @@ function runHarness(harness, overrides = {}) {
       TIME_SYNC_GUARD_SCRIPT: harness.timeGuard,
       FAKE_TIME_GUARD_LOG: harness.timeGuardLog,
       FAKE_SETTINGS_FILE: harness.settingsFile,
+      FAKE_ACTIVITY_STATE_FILE: harness.activityStateFile,
+      FAKE_ACTIVITY_READY_FILE: harness.activityReadyFile,
+      FAKE_ACTIVITY_READY_AFTER_CHECKS: '0',
+      FAKE_REQUIRE_ACTIVITY_READY: '0',
+      FAKE_DEVICES_STATE_FILE: harness.devicesStateFile,
+      FAKE_DEVICE_READY_AFTER_CALLS: '0',
       ...overrides,
     },
   })
@@ -219,6 +277,28 @@ test('accepts CredentialType NONE with keyguard enabled for Swipe', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.match(result.stdout, /Ready\. launchMode=warm/)
     assert.doesNotMatch(adbLog(harness), /^install |^uninstall /m)
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})
+
+test('waits for Android activity manager before quiescing on a cold service start', () => {
+  const harness = createHarness()
+  try {
+    const result = runHarness(harness, {
+      BRAZE_DEMO_ANDROID_BOOT_TIMEOUT_SECONDS: '4',
+      FAKE_ACTIVITY_READY_AFTER_CHECKS: '1',
+      FAKE_REQUIRE_ACTIVITY_READY: '1',
+      FAKE_DEVICE_READY_AFTER_CALLS: '1',
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.match(result.stdout, /Ready\. launchMode=cold/)
+    const log = adbLog(harness)
+    const firstServiceCheck = log.indexOf('shell service check activity')
+    const forceStop = log.indexOf('shell am force-stop --user 0 com.braze.demoshell')
+    assert.ok(firstServiceCheck >= 0)
+    assert.ok(forceStop > firstServiceCheck)
+    assert.equal((log.match(/^shell service check activity$/gm) || []).length, 2)
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
@@ -431,10 +511,12 @@ test('auto trust fails closed when the persistent system CA is missing', () => {
     assert.equal(trustLog(harness), 'repair=0 args=--probe-only\n')
     assert.equal(unlockValidationCount(harness), 1)
     const log = adbLog(harness)
-    const forceStopIndex = log.indexOf('shell am force-stop --user 0 com.braze.demoshell')
+    const serviceReadyIndex = log.indexOf('shell service check activity')
     const bootValidationIndex = log.indexOf('shell dumpsys lock_settings')
-    assert.ok(forceStopIndex >= 0)
-    assert.ok(forceStopIndex < bootValidationIndex)
+    const forceStopIndex = log.indexOf('shell am force-stop --user 0 com.braze.demoshell')
+    assert.ok(serviceReadyIndex >= 0)
+    assert.ok(bootValidationIndex > serviceReadyIndex)
+    assert.ok(forceStopIndex > serviceReadyIndex)
     assert.doesNotMatch(log, /shell am start|\bremount\b|disable-verity/)
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true })

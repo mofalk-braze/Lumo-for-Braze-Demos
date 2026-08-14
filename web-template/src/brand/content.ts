@@ -56,6 +56,16 @@ export interface ContentCardSurface {
   maxCards?: number
 }
 
+export interface BannerSurface {
+  id: string
+  /** Exact Braze Banner placement id registered for this native SDK view. */
+  placement: string
+  /** App screen/route where this native Banner slot renders. */
+  screen: string
+  /** Reserved layout height in CSS pixels; defaults to 96. */
+  height?: number
+}
+
 export interface AppContent {
   hero: HeroCard
   categories: string[]
@@ -65,6 +75,8 @@ export interface AppContent {
   contentCardRail: { title: string; placement: string }
   /** Repeatable Content Card surface contract for screenshot-built apps. */
   contentCardSurfaces?: ContentCardSurface[]
+  /** Native SDK-owned Banner placements rendered into declared app slots. */
+  bannerSurfaces?: BannerSurface[]
   /** Browser-only layout fixtures. Native shells render SDK-delivered cards. */
   harnessCards?: HarnessContentCard[]
   wolt?: WoltContent
@@ -117,6 +129,12 @@ export function contentCardSurfaceForScreen(screen: string): ContentCardSurface 
 
 export function contentCardSurfaceByPlacement(placement: string): ContentCardSurface | undefined {
   return contentCardSurfaces.find((surface) => surface.placement === placement)
+}
+
+export const bannerSurfaces: BannerSurface[] = appContent.bannerSurfaces ?? []
+
+export function bannerSurfacesForScreen(screen: string): BannerSurface[] {
+  return bannerSurfaces.filter((surface) => surface.screen === screen)
 }
 
 export interface WoltCategory {

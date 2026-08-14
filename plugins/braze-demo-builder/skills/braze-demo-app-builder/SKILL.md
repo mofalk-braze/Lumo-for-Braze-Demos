@@ -1,6 +1,6 @@
 ---
 name: braze-demo-app-builder
-description: Build or update credible Braze demo app features in the pack-driven SolCon Android/iOS/Web runtime. Use when creating or changing demo packs, screenshot-built product screens, Control Room presets, Braze event stories, Content Card surfaces and placements, IAM triggers, push previews, launch links, native SDK-backed flows, or SolCon demo setup handoffs.
+description: Build or update credible Braze demo app features in the pack-driven SolCon Android/iOS/Web runtime. Use when creating or changing demo packs, screenshot-built product screens, Control Room presets, Braze event stories, Content Card surfaces and placements, Banner placements, IAM triggers, push previews, launch links, native SDK-backed flows, or SolCon demo setup handoffs.
 ---
 
 # Braze Demo App Builder
@@ -18,7 +18,11 @@ Before editing, inspect the relevant committed source of truth:
 - `android-shell/README.md` and Android bridge/activity files when SDK behavior, Android launch, FCM, trust, or packaged assets are in scope.
 - `ios-shell/README.md` and iOS bridge/manager/app delegate files when SDK behavior, iOS launch, APNs, signing, or WebView behavior are in scope.
 
-Do not route to local `.claude/skills/...` references; those are ignored and are not part of distribution.
+The canonical workflow is committed at
+`.claude/skills/braze-demo-app-builder/SKILL.md`. Read it and only the relevant
+linked references before editing. This plugin skill is a compatibility entry
+point for namespaced command sessions; committed docs and the project skill win
+if duplicated guidance drifts.
 
 ## Classify The Work
 
@@ -70,6 +74,16 @@ When a request includes Content Cards, do an advisory placement pass before codi
 - Prefer `ContentCardSlot`, `ContentCardInbox`, and `ContentCardView` from `web-template/src/components`.
 - Native Android and iOS own refresh, normalization, clicks, and impressions; the web layer renders normalized data and logs render/click intent through the bridge.
 
+## Banner Placement
+
+- Declare stable exact Braze placement ids in `content.bannerSurfaces` with a
+  local id, screen, and optional positive height.
+- Mount `NativeBannerSlot` on the declared screen. Browser mode is a layout
+  placeholder only; Android and iOS native SDK shells own real Banner refresh,
+  mount, unmount, and rendering.
+- Record every placement id, dashboard object, audience, test result, and
+  fallback in generated `notes.md`.
+
 ## Story Patterns
 
 - Use stable anchor events for portable triggers: `screen_viewed`, `content_viewed`, `content_engaged`, `offer_interaction`, `conversion_completed`, `loyalty_event`, and `preference_updated`.
@@ -104,4 +118,4 @@ xcodegen generate
 xcodebuild -project BrazeDemoShell.xcodeproj -scheme BrazeDemoShell -sdk iphonesimulator -derivedDataPath ./DerivedData CODE_SIGNING_ALLOWED=NO build
 ```
 
-Report changed subsystems, validation results, skipped checks, platform parity notes, Content Card placements, logo/icon decisions, pack location (`demo-packs/` or `.demo-packs/`), and any manual Braze dashboard setup still required.
+Report changed subsystems, validation results, skipped checks, platform parity notes, Content Card and Banner placements, logo/icon decisions, pack location (`demo-packs/` or `.demo-packs/`), generated `notes.md`, and any manual Braze dashboard setup still required.

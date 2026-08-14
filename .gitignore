@@ -18,7 +18,12 @@ ios-shell/Sources/Config.swift
 .DS_Store
 *.swp
 .idea/
-.claude/
+# Claude Code project skills are source-distributed so a fresh clone can guide
+# its own setup. Keep machine-local settings and archives ignored.
+.claude/*
+!.claude/skills/
+!.claude/skills/**
+.claude/skills/**/.DS_Store
 
 # ---------------------------------------------------------------------------
 # Credentials / secrets — NEVER commit these.

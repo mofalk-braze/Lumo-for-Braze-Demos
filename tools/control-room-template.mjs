@@ -248,6 +248,23 @@ export function launcherHtml() {
     }
     .ready-row strong { display: block; margin-top: 4px; font-size: 13px; line-height: 1.25; overflow-wrap: anywhere; }
     .ready-row p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    .troubleshooting-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .troubleshooting-card {
+      display: grid;
+      gap: 9px;
+      align-content: start;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-subtle);
+      padding: 13px;
+      min-width: 0;
+    }
+    .troubleshooting-card.success { border-color: rgba(0,113,105,0.24); }
+    .troubleshooting-card.warning { border-color: rgba(151,75,0,0.28); }
+    .troubleshooting-card.error { border-color: rgba(194,47,21,0.3); }
+    .troubleshooting-card strong { font-size: 14px; line-height: 1.3; }
+    .troubleshooting-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.42; overflow-wrap: anywhere; }
+    .troubleshooting-card .agent-hint { border-top: 1px solid var(--line); padding-top: 8px; color: var(--text); }
     .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(245px, 100%), 1fr)); gap: 12px; }
     .template-list, .story-list { display: grid; gap: 10px; }
     .control-card {
@@ -296,6 +313,8 @@ export function launcherHtml() {
     .event.error::before { background: var(--danger); }
     .event.warning::before { background: var(--warn); }
     .event.info::before { background: #6f5bd7; }
+    .event.session-boundary { border-style: dashed; background: #fbf8ff; }
+    .event.session-boundary::before { background: var(--brand); }
     .event-top {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -421,6 +440,22 @@ export function launcherHtml() {
     .template-editor .panel-head { display: grid; grid-template-columns: minmax(0, 1fr); }
     .template-editor #builderValidation { justify-self: start; white-space: normal; line-height: 1.25; max-width: 100%; }
     .template-editor-form { display: grid; gap: 12px; }
+    .pack-library { display: grid; gap: 10px; }
+    .pack-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 13px 14px;
+      display: grid;
+      gap: 9px;
+      min-width: 0;
+    }
+    .pack-card.invalid { border-color: rgba(194,47,21,0.3); }
+    .pack-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
+    .pack-card-head > div { min-width: 0; }
+    .pack-card strong { display: block; overflow-wrap: anywhere; }
+    .pack-card p { margin: 3px 0 0; font-size: 12px; }
+    .pack-hashes { color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     .editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .visually-hidden {
@@ -468,6 +503,7 @@ export function launcherHtml() {
       .topbar { flex-direction: column; }
       .form-grid { grid-template-columns: 1fr; }
       .ready-row { grid-template-columns: 1fr; }
+      .troubleshooting-grid { grid-template-columns: 1fr; }
       .control-card.row-card { grid-template-columns: 1fr; }
       .control-actions { justify-content: flex-start; }
       .button-group { width: 100%; }
@@ -492,7 +528,8 @@ export function launcherHtml() {
           <button class="active" data-view="cockpit"><span class="mark">01</span><span>Demo Cockpit</span></button>
           <button data-view="feed"><span class="mark">02</span><span>Activity Feed</span></button>
           <button data-view="templates"><span class="mark">03</span><span>Control Templates</span></button>
-          <button data-view="diagnostics"><span class="mark">04</span><span>Diagnostics</span></button>
+          <button data-view="packs"><span class="mark">04</span><span>Pack Manager</span></button>
+          <button data-view="diagnostics"><span class="mark">05</span><span>Diagnostics</span></button>
         </nav>
       </div>
       <div class="callback" id="callback">Callback pending</div>
@@ -685,7 +722,11 @@ export function launcherHtml() {
               <h2>Activity Feed</h2>
               <p>Searchable proof of the live demo: what was clicked, captured, sent, and returned.</p>
             </div>
-            ${buttonHtml({ id: 'refreshFeed', kind: 'ghost compact', icon: 'refresh-cw', label: 'Refresh' })}
+            <div class="button-group">
+              ${buttonHtml({ id: 'archiveFeed', kind: 'secondary compact', icon: 'archive', label: 'Archive' })}
+              ${buttonHtml({ id: 'clearFeed', kind: 'danger compact', icon: 'eraser', label: 'Clear' })}
+              ${buttonHtml({ id: 'refreshFeed', kind: 'ghost compact', icon: 'refresh-cw', label: 'Refresh' })}
+            </div>
           </div>
           <div class="form-grid">
             <div>
@@ -715,6 +756,13 @@ export function launcherHtml() {
                 <option value="push">Push</option>
                 <option value="diagnostics">Diagnostics</option>
                 <option value="error">Error</option>
+              </select>
+            </div>
+            <div>
+              <label for="feedSession">Session</label>
+              <select id="feedSession">
+                <option value="current">Current session</option>
+                <option value="">All sessions</option>
               </select>
             </div>
           </div>
@@ -814,8 +862,77 @@ export function launcherHtml() {
         </div>
       </section>
 
+      <section class="view" id="view-packs">
+        <div class="grid">
+          <section class="panel span-5">
+            <div class="panel-head">
+              <div>
+                <h2>Create a local pack</h2>
+                <p>Start clean or duplicate an existing story. Both paths create an ignored local workspace with a dashboard handoff template.</p>
+              </div>
+            </div>
+            <div class="readiness" style="margin-bottom:14px">
+              <div class="ready-row success"><span class="ready-dot"></span><div class="ready-copy"><span class="ready-label">1 · Create</span><strong>Pack source first</strong><p>Edit demo-pack.json and pack-owned assets; generated runtime files are outputs.</p></div></div>
+              <div class="ready-row success"><span class="ready-dot"></span><div class="ready-copy"><span class="ready-label">2 · Map</span><strong>Complete notes.md</strong><p>Record Content Card placements, Banner placements, IAM events, push dashboard objects, audience, and proof.</p></div></div>
+              <div class="ready-row success"><span class="ready-dot"></span><div class="ready-copy"><span class="ready-label">3 · Verify</span><strong>Validate, apply, launch</strong><p>Run the same pack through Android bundled mode and collect native messaging evidence.</p></div></div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="packManagerOperation">Operation</label>
+                <select id="packManagerOperation">
+                  <option value="new">New starter pack</option>
+                  <option value="duplicate">Duplicate existing pack</option>
+                </select>
+              </div>
+              <div id="packManagerSourceField" hidden>
+                <label for="packManagerSource">Source pack</label>
+                <select id="packManagerSource"></select>
+              </div>
+              <div>
+                <label for="packManagerId">New pack id</label>
+                <input id="packManagerId" placeholder="customer-demo" autocomplete="off" />
+              </div>
+              <div>
+                <label for="packManagerName">Display name</label>
+                <input id="packManagerName" placeholder="Customer Demo" autocomplete="off" />
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <label for="packManagerDescription">Purpose</label>
+              <textarea id="packManagerDescription" placeholder="What this demo proves and for whom."></textarea>
+            </div>
+            <div class="button-group" style="margin-top:14px">
+              ${buttonHtml({ id: 'packManagerSubmit', kind: 'primary', icon: 'package-plus', label: 'Create pack' })}
+              ${buttonHtml({ id: 'packManagerValidateAll', kind: 'secondary', icon: 'badge-check', label: 'Validate all' })}
+              <span class="chip" id="packManagerStatus">Ready</span>
+            </div>
+            <p class="field-note">Credentials are never copied. Add selected-pack SDK values through Setup; keep REST keys host-only.</p>
+          </section>
+          <section class="panel span-7">
+            <div class="panel-head">
+              <div>
+                <h2>Pack Library</h2>
+                <p>Committed examples and ignored working packs, with authoring validation and deployment hashes.</p>
+              </div>
+              ${buttonHtml({ id: 'packManagerRefresh', kind: 'ghost compact', icon: 'refresh-cw', label: 'Refresh' })}
+            </div>
+            <div class="pack-library" id="packLibrary"><div class="empty">Open Pack Manager to inspect packs.</div></div>
+          </section>
+        </div>
+      </section>
+
       <section class="view" id="view-diagnostics">
         <div class="grid">
+          <section class="panel span-12">
+            <div class="panel-head">
+              <div>
+                <h2>Guided Troubleshooting</h2>
+                <p>Evidence-backed checks with the safest next action and an agent-readable hint.</p>
+              </div>
+              ${buttonHtml({ id: 'downloadDiagnostics', kind: 'secondary compact', icon: 'download', label: 'Download redacted bundle' })}
+            </div>
+            <div class="troubleshooting-grid" id="troubleshootingCards"></div>
+          </section>
           <section class="panel span-12 dev-override" id="liveWebPanel">
             <div class="panel-head">
               <div>
@@ -883,6 +1000,7 @@ export function launcherHtml() {
   <script>
     const state = {
       data: null,
+      packManager: null,
       view: 'cockpit',
       busy: false,
       selectedControlId: '',
@@ -903,6 +1021,7 @@ export function launcherHtml() {
       cockpit: ['Demo Cockpit', 'Set up the demo, pin the actions that fit your story, and keep the latest activity visible.'],
       feed: ['Activity Feed', 'Audience-readable proof of actions, events, message triggers, profile checks, and responses.'],
       templates: ['Control Templates', 'Standard controls become demo-specific when you stage, pin, lock, and reuse them.'],
+      packs: ['Pack Manager', 'Create, duplicate, validate, and open source-of-truth demo packs without copying credentials.'],
       diagnostics: ['Diagnostics', 'Runtime sources, raw logs, REST history, and recovery context.'],
     }
     const templateCategories = [
@@ -956,6 +1075,8 @@ export function launcherHtml() {
       'content_card_impression',
       'content_card_click',
       'braze_rest_request',
+      'session_boundary',
+      'activity_archived',
     ])
     const diagnosticsOnlyTypes = new Set([
       'bridge_action',
@@ -1051,6 +1172,17 @@ export function launcherHtml() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || 'Request failed')
       return payload
+    }
+    function downloadJson(value, fileName) {
+      const blob = new Blob([JSON.stringify(value, null, 2) + '\\n'], { type: 'application/json' })
+      const href = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = href
+      anchor.download = fileName || 'lumo-export.json'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(href)
     }
     const setBusy = (busy) => {
       state.busy = busy
@@ -1236,6 +1368,7 @@ export function launcherHtml() {
       renderBuilder()
       renderFeed()
       renderTemplates()
+      renderPackManager()
       renderDiagnostics()
       renderJobLog()
       updateActionAvailability()
@@ -1723,6 +1856,8 @@ export function launcherHtml() {
       const query = (el('feedSearch').value || '').toLowerCase()
       const status = el('feedStatus').value
       const category = el('feedCategory').value
+      const session = el('feedSession').value
+      const currentSessionId = state.data.activity && state.data.activity.currentSessionId ? state.data.activity.currentSessionId : ''
       const rows = audienceRows(state.data.ledger).filter((entry) => {
         const haystack = [
           entry.displayTitle,
@@ -1742,7 +1877,8 @@ export function launcherHtml() {
         ].join(' ').toLowerCase()
         return (!query || haystack.includes(query)) &&
           (!status || (entry.severity || entry.status) === status) &&
-          (!category || entry.category === category)
+          (!category || entry.category === category) &&
+          (!session || !currentSessionId || entry.sessionId === currentSessionId)
       })
       renderActivityInto('feedActivity', rows)
     }
@@ -1762,6 +1898,110 @@ export function launcherHtml() {
       el('templateControls').className = 'template-list'
       el('templateControls').innerHTML = controls.length ? controls.map((control) => controlCard(control, 'template')).join('') : '<div class="empty">No controls match this filter.</div>'
       bindControlActions(el('templateControls'))
+    }
+    async function loadPackManager() {
+      const response = await fetch('/api/pack-manager', { cache: 'no-store' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || 'Pack Manager request failed')
+      state.packManager = payload
+      renderPackManager()
+      refreshIcons()
+      return payload
+    }
+    function renderPackManagerOperation() {
+      const duplicate = el('packManagerOperation').value === 'duplicate'
+      el('packManagerSourceField').hidden = !duplicate
+      el('packManagerSubmit').querySelector('.button-label').textContent = duplicate ? 'Duplicate pack' : 'Create pack'
+    }
+    function packManagerMessages(pack) {
+      return [...(pack.errors || []).map((message) => 'Error: ' + message), ...(pack.warnings || []).map((message) => 'Warning: ' + message)]
+    }
+    function renderPackManager() {
+      if (!state.packManager) return
+      const packs = state.packManager.packs || []
+      const selectedSource = el('packManagerSource').value
+      el('packManagerSource').innerHTML = packs.map((pack) => '<option value="' + esc(pack.id) + '">' + esc(pack.name) + ' · ' + esc(pack.source || 'pack') + '</option>').join('')
+      if (packs.some((pack) => pack.id === selectedSource)) el('packManagerSource').value = selectedSource
+      renderPackManagerOperation()
+      el('packLibrary').innerHTML = packs.length ? packs.map((pack) => {
+        const messages = packManagerMessages(pack)
+        return '<article class="pack-card ' + (pack.valid ? '' : 'invalid') + '">' +
+          '<div class="pack-card-head"><div><strong>' + esc(pack.name || pack.id) + '</strong><p>' + esc(pack.id) + ' · ' + esc(pack.source || 'unknown source') + '</p></div>' +
+            '<span class="chip ' + (pack.valid ? 'success' : 'error') + '">' + (pack.valid ? 'Valid' : 'Needs work') + '</span></div>' +
+          '<div class="pack-hashes">configHash ' + esc(pack.configHash || 'unavailable') + '<br />runtimeHash v2 ' + esc(pack.runtimeHash || 'unavailable') + '</div>' +
+          (messages.length ? '<p>' + messages.map(esc).join('<br />') + '</p>' : '<p>Pack source, handoff notes, and authoring contract are ready.</p>') +
+          '<div class="button-group">' +
+            buttonHtml({ kind: 'ghost compact', icon: 'badge-check', label: 'Validate', attrs: 'data-pack-action="validate" data-pack-id="' + esc(pack.id) + '"' }) +
+            buttonHtml({ kind: 'ghost compact', icon: 'file-json', label: 'Config', attrs: 'data-pack-action="config" data-pack-id="' + esc(pack.id) + '"' }) +
+            buttonHtml({ kind: 'ghost compact', icon: 'notebook-text', label: 'Handoff', attrs: 'data-pack-action="notes" data-pack-id="' + esc(pack.id) + '"' }) +
+            buttonHtml({ kind: 'secondary compact', icon: 'copy-plus', label: 'Use as base', attrs: 'data-pack-action="duplicate" data-pack-id="' + esc(pack.id) + '"' }) +
+          '</div>' +
+        '</article>'
+      }).join('') : '<div class="empty">No packs found. Create the first local pack here.</div>'
+      el('packLibrary').querySelectorAll('[data-pack-action]').forEach((button) => {
+        button.addEventListener('click', () => runPackManagerAction(button.dataset.packAction, button.dataset.packId))
+      })
+    }
+    async function runPackManagerAction(action, packId) {
+      if (action === 'duplicate') {
+        el('packManagerOperation').value = 'duplicate'
+        el('packManagerSource').value = packId
+        renderPackManagerOperation()
+        el('packManagerId').focus()
+        return
+      }
+      try {
+        setBusy(true)
+        el('packManagerStatus').className = 'chip warn'
+        el('packManagerStatus').textContent = action === 'validate' ? 'Validating…' : 'Opening…'
+        if (action === 'validate') {
+          const result = await request('/api/pack-manager/validate', { packId })
+          state.packManager = result.manager
+          el('packManagerStatus').className = 'chip ' + (result.valid ? 'success' : 'error')
+          el('packManagerStatus').textContent = result.valid ? 'Pack valid' : 'Validation failed'
+          renderPackManager()
+        } else {
+          await request('/api/pack-manager/open', { packId, target: action })
+          el('packManagerStatus').className = 'chip success'
+          el('packManagerStatus').textContent = action === 'notes' ? 'Handoff opened' : 'Config opened'
+        }
+      } catch (error) {
+        el('packManagerStatus').className = 'chip error'
+        el('packManagerStatus').textContent = error.message || String(error)
+      } finally {
+        setBusy(false)
+        refreshIcons()
+      }
+    }
+    async function submitPackManager() {
+      const duplicate = el('packManagerOperation').value === 'duplicate'
+      const body = {
+        id: el('packManagerId').value.trim(),
+        name: el('packManagerName').value.trim(),
+        description: el('packManagerDescription').value.trim(),
+      }
+      if (!body.id || !body.name) return alert('New pack id and display name are required.')
+      if (duplicate) body.sourcePackId = el('packManagerSource').value
+      try {
+        setBusy(true)
+        el('packManagerStatus').className = 'chip warn'
+        el('packManagerStatus').textContent = duplicate ? 'Duplicating…' : 'Creating…'
+        const result = await request(duplicate ? '/api/pack-manager/duplicate' : '/api/pack-manager/new', body)
+        state.packManager = result.manager
+        el('packManagerId').value = ''
+        el('packManagerName').value = ''
+        el('packManagerDescription').value = ''
+        el('packManagerStatus').className = 'chip success'
+        el('packManagerStatus').textContent = 'Created ' + result.pack.id
+        await load()
+        renderPackManager()
+      } catch (error) {
+        el('packManagerStatus').className = 'chip error'
+        el('packManagerStatus').textContent = error.message || String(error)
+      } finally {
+        setBusy(false)
+        refreshIcons()
+      }
     }
     function renderDiagnostics() {
       const runtime = state.data.active.runtime && state.data.active.runtime.manifest ? state.data.active.runtime.manifest : {}
@@ -1798,6 +2038,7 @@ export function launcherHtml() {
         },
       }
       el('deviceDetails').textContent = fmt(diagnostics)
+      renderTroubleshooting()
       renderActivityInto('debugActivity', diagnosticsRows(state.data.ledger).slice(0, 30), { diagnostics: true })
       const responses = state.data.restResponses || []
       rememberOpenDetails(el('restActivity'))
@@ -1811,6 +2052,22 @@ export function launcherHtml() {
         '<details data-detail-key="' + esc(key) + '"' + open + '><summary>Show response JSON</summary><pre class="json light">' + esc(fmt(entry.body)) + '</pre></details></article>'
         )
       }).join('') : '<div class="empty">No REST responses yet.</div>'
+    }
+    function renderTroubleshooting() {
+      const cards = state.data.troubleshooting || []
+      el('troubleshootingCards').innerHTML = cards.length ? cards.map((card) => (
+        '<article class="troubleshooting-card ' + esc(card.level || 'warning') + '">' +
+          '<span class="chip ' + esc(card.level || 'warning') + '">' + esc(card.level === 'success' ? 'Ready' : card.level === 'error' ? 'Blocked' : 'Check') + '</span>' +
+          '<strong>' + esc(card.title) + '</strong>' +
+          '<p><b>Observed:</b> ' + esc(card.observation) + '</p>' +
+          '<p><b>Next:</b> ' + esc(card.nextStep) + '</p>' +
+          '<p class="agent-hint"><b>Agent hint:</b> ' + esc(card.agentHint) + '</p>' +
+          buttonHtml({ kind: card.level === 'error' ? 'orange compact' : 'ghost compact', icon: 'arrow-right', label: card.actionLabel, attrs: 'data-troubleshoot-action="' + esc(card.action) + '"' }) +
+        '</article>'
+      )).join('') : '<div class="empty">No troubleshooting guidance is available yet.</div>'
+      el('troubleshootingCards').querySelectorAll('[data-troubleshoot-action]').forEach((button) => {
+        button.addEventListener('click', () => runTroubleshootingAction(button.dataset.troubleshootAction))
+      })
     }
     function summaryFor(entry) {
       if (entry.displaySummary) return entry.displaySummary
@@ -1934,7 +2191,7 @@ export function launcherHtml() {
     function renderActivityInto(id, rows, options = {}) {
       const root = el(id)
       rememberOpenDetails(root)
-      const signature = rows.map((entry) => [entry.id || entry.ts || entry.label || entry.type, entry.displayTitle, entry.severity, entry.category].join(':')).join('|')
+      const signature = rows.map((entry) => [entry.id || entry.ts || entry.label || entry.type, entry.displayTitle, entry.severity, entry.category, entry.duplicateCount || 1, entry.sessionId || ''].join(':')).join('|')
       if (state.activitySignatures[id] === signature && root.children.length) return
       state.activitySignatures[id] = signature
       root.innerHTML = rows.length ? rows.map((entry, index) => {
@@ -1943,13 +2200,15 @@ export function launcherHtml() {
         const severity = severityFor(entry)
         const category = categoryFor(entry)
         const detailsLabel = options.diagnostics ? 'Raw JSON' : 'Details'
-        return '<article class="event ' + esc(severity) + '">' +
+        const duplicateBadge = Number(entry.duplicateCount || 1) > 1 ? '<span class="tag">' + esc(entry.duplicateCount) + ' identical reports merged</span>' : ''
+        const boundaryClass = entry.type === 'session_boundary' ? ' session-boundary' : ''
+        return '<article class="event ' + esc(severity) + boundaryClass + '">' +
           '<div class="event-top">' +
             '<div class="event-heading">' +
               '<span class="event-icon">' + iconHtml(categoryIcon(category, severity)) + '</span>' +
               '<div class="event-title">' +
                 '<strong>' + esc(titleFor(entry)) + '</strong>' +
-                '<div class="event-badges"><span class="tag">' + esc(categoryLabel(category)) + '</span><span class="tag ' + esc(severity) + '">' + esc(severityLabel(severity)) + '</span></div>' +
+                '<div class="event-badges"><span class="tag">' + esc(categoryLabel(category)) + '</span><span class="tag ' + esc(severity) + '">' + esc(severityLabel(severity)) + '</span>' + duplicateBadge + '</div>' +
               '</div>' +
             '</div>' +
             '<time>' + esc(new Date(entry.ts).toLocaleTimeString()) + '</time>' +
@@ -1969,6 +2228,64 @@ export function launcherHtml() {
       state.jobLogSignature = signature
       el('logs').textContent = logs.length ? logs.join('\\n') : 'Waiting for output.'
       el('logs').scrollTop = el('logs').scrollHeight
+    }
+    async function runTroubleshootingAction(action) {
+      if (action === 'launch_android') {
+        state.view = 'cockpit'
+        render()
+        el('platform').value = 'android'
+        el('run').click()
+        return
+      }
+      if (action === 'apply_pack') {
+        state.view = 'cockpit'
+        render()
+        el('apply').click()
+        return
+      }
+      if (action === 'open_credentials') {
+        state.view = 'cockpit'
+        render()
+        el('credentialsPanel').open = true
+        el('credentialsPanel').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+      if (action === 'restore_bundled') {
+        el('liveWebStop').click()
+        return
+      }
+      if (action === 'verify_trust') {
+        await executeControl('android_trust_diagnostics')
+        return
+      }
+      if (action === 'verify_push') {
+        await executeControl('sdk_push_readiness')
+        return
+      }
+      if (action === 'verify_content_cards') {
+        await executeControl('sdk_refresh_cards')
+        return
+      }
+      if (action === 'verify_banners') {
+        await executeControl('sdk_navigate_home')
+        state.view = 'diagnostics'
+        render()
+        el('debugActivity').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+      if (action === 'verify_iam') {
+        await executeControl('sdk_iam_trigger')
+        return
+      }
+      if (action === 'open_setup') {
+        state.view = 'cockpit'
+        render()
+        el('externalId').focus()
+        return
+      }
+      state.view = 'diagnostics'
+      render()
+      el('runtimeDetails').scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
     async function executeControl(controlId) {
       const control = allControls().find((item) => item.id === controlId)
@@ -2201,6 +2518,12 @@ export function launcherHtml() {
       button.addEventListener('click', () => {
         state.view = button.dataset.view
         render()
+        if (state.view === 'packs') {
+          loadPackManager().catch((error) => {
+            el('packManagerStatus').className = 'chip error'
+            el('packManagerStatus').textContent = error.message || String(error)
+          })
+        }
       })
     })
     document.querySelectorAll('[data-view-jump]').forEach((button) => {
@@ -2355,6 +2678,30 @@ export function launcherHtml() {
       state.credentialsPackId = ''
       loadCredentials(el('pack').value).catch(() => {})
     })
+    el('packManagerOperation').addEventListener('change', renderPackManagerOperation)
+    el('packManagerSubmit').addEventListener('click', submitPackManager)
+    el('packManagerRefresh').addEventListener('click', () => {
+      loadPackManager().catch((error) => {
+        el('packManagerStatus').className = 'chip error'
+        el('packManagerStatus').textContent = error.message || String(error)
+      })
+    })
+    el('packManagerValidateAll').addEventListener('click', async () => {
+      try {
+        setBusy(true)
+        const result = await request('/api/pack-manager/validate', {})
+        state.packManager = result.manager
+        el('packManagerStatus').className = 'chip ' + (result.valid ? 'success' : 'error')
+        el('packManagerStatus').textContent = result.valid ? 'All packs valid' : 'Some packs need work'
+        renderPackManager()
+      } catch (error) {
+        el('packManagerStatus').className = 'chip error'
+        el('packManagerStatus').textContent = error.message || String(error)
+      } finally {
+        setBusy(false)
+        refreshIcons()
+      }
+    })
     el('builderPayload').addEventListener('input', updateBuilderPreview)
     el('builderRequiresPushToken').addEventListener('change', updateBuilderPreview)
     el('builderExecute').addEventListener('click', executeBuilder)
@@ -2369,8 +2716,38 @@ export function launcherHtml() {
     el('feedSearch').addEventListener('input', renderFeed)
     el('feedStatus').addEventListener('change', renderFeed)
     el('feedCategory').addEventListener('change', renderFeed)
+    el('feedSession').addEventListener('change', renderFeed)
     el('refreshCockpit').addEventListener('click', load)
     el('refreshFeed').addEventListener('click', load)
+    el('archiveFeed').addEventListener('click', async () => {
+      try {
+        setBusy(true)
+        const result = await request('/api/activity/archive', {})
+        if (result.state) state.data = result.state
+        downloadJson(result.archive, result.metadata && result.metadata.fileName)
+        render()
+      } catch (error) {
+        alert(error.message || String(error))
+      } finally {
+        setBusy(false)
+      }
+    })
+    el('clearFeed').addEventListener('click', async () => {
+      if (!window.confirm('Archive the current activity, then start a clean session?')) return
+      try {
+        setBusy(true)
+        const result = await request('/api/activity/clear', {})
+        if (result.state) state.data = result.state
+        render()
+      } catch (error) {
+        alert(error.message || String(error))
+      } finally {
+        setBusy(false)
+      }
+    })
+    el('downloadDiagnostics').addEventListener('click', () => {
+      window.location.assign('/api/diagnostics/bundle')
+    })
     el('cockpitRestRun').addEventListener('click', () => runCustomRestControl('cockpitRest'))
     el('cockpitRestStage').addEventListener('click', () => stageCustomRestControl('cockpitRest'))
     renderBrazeClusterOptions()
