@@ -21,8 +21,8 @@ thresholds manually. After the approved blueprint has a private file path, run
 - If the target belief, hero journey, data contract, surfaces, and non-goals
   are already approved, stop shaping and invoke `lumo-new-demo-campaign`.
 - If the user only needs one focused product screen or event-story change in
-  an existing approved pack, route through `lumo-plugin-workflow` to
-  `braze-demo-app-builder`.
+  an existing approved pack, stop shaping and invoke
+  `lumo-new-demo-campaign`; it selects the focused implementation path.
 - If the request is ambiguous, screenshot-led, Canvas-led, feature-led, or
   becoming hard to explain, stay here until the story boundary is approved.
 - Select `standard` for dashboard-heavy proof with no custom product build.
@@ -117,10 +117,10 @@ explicit implementation dependencies; never invent them.
 
 After approval, invoke `lumo-new-demo-campaign` with the completed blueprint,
 source evidence, screenshots, authorized actions, and unresolved dependencies.
-That skill owns neutral pack creation, delegated screenshot build, native proof,
-dashboard wiring, notes, rehearsal, and handoff. Continue to challenge later
-scope additions here only when they introduce a new journey, channel, persona,
-decision point, or explained capability.
+That skill is the single implementation entry point for both a focused change
+to an approved pack and a full neutral-pack-to-rehearsal campaign. Continue to
+challenge later scope additions here only when they introduce a new journey,
+channel, persona, decision point, or explained capability.
 
 For any external API, MCP, publishing, or workspace mutation, use
 `inspect -> proposed diff -> approval -> apply -> read back`. Do not claim that

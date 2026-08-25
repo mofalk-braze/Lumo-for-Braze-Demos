@@ -1,13 +1,17 @@
 ---
 name: braze-demo-app-builder
-description: Build an approved Braze demo app feature in the pack-driven Android/iOS/Web runtime. Use for product screens from screenshots, pack content, Control Room presets, Braze event stories, Content Cards, Banners, IAM triggers, push previews, launch links, or native SDK-backed demo flows after the target belief and story boundary are clear. For "now what should I build", incomplete discovery, Canvas-first mapping, or unbounded feature selection, use braze-solution-demo-campaign first.
+description: Expert implementation manual for bounded, approved Braze demo app features in the pack-driven Android/iOS/Web runtime. Invoke manually for product screens, event stories, messaging surfaces, launch links, or native SDK-backed flows, or read it when lumo-new-demo-campaign delegates that implementation. It does not select the story or orchestrate an end-to-end campaign.
+disable-model-invocation: true
 metadata:
   short-description: Build credible Braze demo app features
 ---
 
 # Braze Demo App Builder
 
-Use this skill to build real-feeling demo app features inside this runtime. The goal is a credible Braze story, not a static mock or presenter control surface.
+This is the expert implementation layer beneath `lumo-new-demo-campaign`. Use
+it to build a bounded approved feature inside this runtime, not to select a
+story or orchestrate a full campaign. Manual invocation remains supported.
+The goal is a credible Braze story, not a static mock or presenter surface.
 
 ## First Pass
 
@@ -23,8 +27,9 @@ Before editing, inspect:
   belief, hero journey, exact signal/surface contract, and non-goals
 
 If those story decisions are not approved, stop and route to
-`braze-solution-demo-campaign`. This skill implements a bounded story; it does
-not choose one from incomplete evidence.
+`braze-solution-demo-campaign`. If they are approved but this skill was selected
+automatically rather than invoked manually or read by `lumo-new-demo-campaign`,
+return orchestration to `lumo-new-demo-campaign` before editing.
 
 Classify the request before choosing files:
 
@@ -93,4 +98,6 @@ Classify the request before choosing files:
 - "Add a screen for this story" means create a product screen plus any pack/events/presets needed to demo it.
 - "Make this look like the screenshots" means extract layout, density, navigation, typography, state, and brand cues before coding.
 - "Demo push to IAM" means link or push opens the app, native resolves identity, native logs a custom event, and the mobile IAM triggers from that event.
-- "Set up a new app/customer concept" means create or update a demo pack, assets, content, standard events, launcher presets, and validation notes.
+- "Set up a new app/customer concept" belongs to
+  `lumo-new-demo-campaign`; this skill implements only the bounded build work
+  that campaign delegates.

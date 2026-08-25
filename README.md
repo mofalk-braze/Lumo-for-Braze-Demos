@@ -30,10 +30,10 @@ repo root, and ask it to set up Lumo for Android. The committed project skills
 are discovered from `.claude/skills/`; there is no skill zip to install.
 
 ```text
-Read CLAUDE.md, use lumo-build-and-env, and set up this clone for the supported
-Android emulator. Run every safe step yourself, pause only for manual GUI or
-credential handoff steps, then launch the Control Room and verify bundled
-Android runtime readiness.
+Read AGENTS.md and CLAUDE.md, choose the setup workflow, and make this clone
+ready on the supported Android emulator. Run every safe step yourself, pause
+only for manual GUI or credential handoff steps, then launch the Control Room
+and verify bundled Android runtime readiness. Do not reset app or emulator data.
 ```
 
 The equivalent manual sequence is:
@@ -84,18 +84,36 @@ npm run validate:demo-runtime
 
 `.claude/skills/` is the canonical source-distributed agent bundle. Claude Code
 discovers it automatically when started in this repo. Other coding agents
-should follow `AGENTS.md`, inspect the project skill descriptions, and read the
-owning `SKILL.md` before acting.
+follow `AGENTS.md` and read the same repository-owned files directly. Do not
+copy the bundle into a second machine-global source of truth.
+
+The SolCon can ask naturally; the agent owns routing. Use one primary lifecycle
+skill at a time:
+
+- Fresh clone or machine → `lumo-build-and-env`.
+- “What should I build?” or unbounded evidence →
+  `braze-solution-demo-campaign`.
+- Approved story or approved focused change → `lumo-new-demo-campaign`.
+- Start, rehearse, or present → `lumo-run-and-operate`.
+- Previously working behavior regressed → `lumo-debugging-playbook`.
+- Android push has never worked → `lumo-push-readiness-campaign`.
+- Credential or sanitization concern → `lumo-secrets-and-sanitization`.
+- Validate, commit, publish, or hand off changes →
+  `lumo-change-control-and-qa`.
+
+When the first phase is unclear, `lumo-start-here` asks three questions and
+selects the owner. Architecture, configuration, integration, pack-schema,
+diagnostic, documentation, focused-builder, and plugin skills are specialist
+references loaded only when their lifecycle owner needs them.
 
 For an incomplete story, screenshots without a journey, an existing Canvas
 that needs an app proof, or the question “what should I build?”, start here:
 
 ```text
-Use the project skill braze-solution-demo-campaign. Shape one target belief and
-one small app-to-Braze-to-message journey from my evidence. Define the exact
-typed SDK signal, Braze decision, placement, proof, reset, fallback, and
-do-not-build scope. Do not create a pack, copy Lumo, or mutate Braze until I
-approve the DEMO.md blueprint.
+Shape one target belief and one small app-to-Braze-to-message journey from my
+evidence. Define the exact typed SDK signal, Braze decision, placement, proof,
+reset, fallback, and do-not-build scope. Do not create a pack, copy Lumo, or
+mutate Braze until I approve the DEMO.md blueprint.
 ```
 
 After approval, `lumo-new-demo-campaign` owns the neutral pack, implementation,

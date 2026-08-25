@@ -7,25 +7,23 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const projectSkillsDir = path.join(repoRoot, '.claude', 'skills')
+const routingManifestPath = path.join(repoRoot, 'tools', 'agent-skill-routing.json')
 const failures = []
 
-const requiredSkills = [
-  'braze-demo-app-builder',
-  'braze-integration-reference',
-  'braze-solution-demo-campaign',
-  'lumo-architecture-contract',
-  'lumo-build-and-env',
-  'lumo-change-control-and-qa',
-  'lumo-config-and-flags',
-  'lumo-debugging-playbook',
-  'lumo-demo-pack-authoring',
-  'lumo-diagnostics-and-tooling',
-  'lumo-docs-and-writing',
-  'lumo-new-demo-campaign',
-  'lumo-plugin-workflow',
-  'lumo-push-readiness-campaign',
-  'lumo-run-and-operate',
-  'lumo-secrets-and-sanitization',
+let routingManifest = { entrySkills: [], specialistSkills: [], routingCases: [] }
+try {
+  routingManifest = JSON.parse(fs.readFileSync(routingManifestPath, 'utf8'))
+} catch (error) {
+  failures.push(`tools/agent-skill-routing.json could not be read: ${error.message}`)
+}
+
+const entrySkills = (routingManifest.entrySkills || []).map((entry) => entry.name)
+const specialistSkills = (routingManifest.specialistSkills || []).map((entry) => entry.name)
+const requiredSkills = [...new Set([...entrySkills, ...specialistSkills])].sort()
+const staleSkillFactPatterns = [
+  /\bno unit test suite\b/i,
+  /\bthere are no unit tests\b/i,
+  /\b\d+\s+(?:capability\/unit\/HTTP\s+)?tests? pass\b/i,
 ]
 
 const requiredSupportFiles = [
@@ -40,6 +38,7 @@ const requiredSupportFiles = [
   'braze-solution-demo-campaign/assets/DEMO.md',
   'braze-solution-demo-campaign/references/solcon-operating-model.md',
   'braze-solution-demo-campaign/scripts/check-demo-scope.mjs',
+  'lumo-start-here/agents/openai.yaml',
   'lumo-debugging-playbook/references/error-messages.md',
   'lumo-demo-pack-authoring/references/pack-schema.md',
   'lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs',
@@ -55,6 +54,14 @@ const contractTokens = new Map([
   [
     'lumo-build-and-env',
     ['Apple Silicon', 'Braze_Demo_API_36', 'RESET_APP_DATA=1', 'npm run lumo:cockpit'],
+  ],
+  [
+    'lumo-start-here',
+    ['one primary', 'Has this worked', 'lumo-new-demo-campaign', 'agent-skill-routing.json'],
+  ],
+  [
+    'lumo-new-demo-campaign',
+    ['approved', 'Focused implementation', 'End-to-end campaign', 'braze-demo-app-builder'],
   ],
   [
     'braze-solution-demo-campaign',
@@ -103,6 +110,20 @@ function metadataValue(block, key) {
   return block.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() || ''
 }
 
+function metadataText(block, key) {
+  const lines = block.split(/\r?\n/)
+  const index = lines.findIndex((line) => line.startsWith(`${key}:`))
+  if (index < 0) return ''
+  const inline = lines[index].slice(key.length + 1).trim()
+  if (!['>', '>-', '|', '|-'].includes(inline)) return inline
+  const value = []
+  for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+    if (!/^\s+/.test(lines[cursor])) break
+    value.push(lines[cursor].trim())
+  }
+  return value.join(' ').trim()
+}
+
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -133,9 +154,45 @@ function checkRelativeLinks(skillFile, text) {
     const target = match[1].trim().split('#')[0]
     if (!target || /^(?:https?:|mailto:|#)/.test(target)) continue
     const resolved = path.resolve(path.dirname(skillFile), target)
-    if (!resolved.startsWith(projectSkillsDir + path.sep) || !fs.existsSync(resolved)) {
-      failures.push(`${relative(skillFile)} has a missing or out-of-bundle link: ${match[1]}`)
+    if (
+      (resolved !== repoRoot && !resolved.startsWith(repoRoot + path.sep)) ||
+      !fs.existsSync(resolved)
+    ) {
+      failures.push(`${relative(skillFile)} has a missing or out-of-repository link: ${match[1]}`)
     }
+  }
+}
+
+if (routingManifest.schemaVersion !== 1) {
+  failures.push('tools/agent-skill-routing.json schemaVersion must be 1')
+}
+if (entrySkills.length < 6 || entrySkills.length > 10) {
+  failures.push(`routing manifest must declare 6-10 entry skills, found ${entrySkills.length}`)
+}
+if (new Set([...entrySkills, ...specialistSkills]).size !== entrySkills.length + specialistSkills.length) {
+  failures.push('routing manifest contains duplicate or overlapping entry/specialist skill names')
+}
+for (const specialist of routingManifest.specialistSkills || []) {
+  if (!entrySkills.includes(specialist.owner)) {
+    failures.push(`specialist ${specialist.name} has unknown lifecycle owner ${specialist.owner}`)
+  }
+}
+for (const entry of routingManifest.entrySkills || []) {
+  if (!String(entry.phase || '').trim()) failures.push(`entry ${entry.name} has no lifecycle phase`)
+  if (!String(entry.primaryFor || '').trim()) failures.push(`entry ${entry.name} has no primaryFor contract`)
+  if (!String(entry.notFor || '').trim()) failures.push(`entry ${entry.name} has no notFor boundary`)
+  if (!Array.isArray(entry.next)) failures.push(`entry ${entry.name} next must be an array`)
+  for (const next of entry.next || []) {
+    if (!entrySkills.includes(next)) failures.push(`entry ${entry.name} has unknown next lifecycle ${next}`)
+  }
+}
+if ((routingManifest.routingCases || []).length < 20) {
+  failures.push('routing manifest must include at least 20 realistic routing cases')
+}
+for (const [index, routeCase] of (routingManifest.routingCases || []).entries()) {
+  if (!String(routeCase.prompt || '').trim()) failures.push(`routing case ${index + 1} has no prompt`)
+  if (!entrySkills.includes(routeCase.expectedPrimary)) {
+    failures.push(`routing case ${index + 1} has non-entry primary ${routeCase.expectedPrimary}`)
   }
 }
 
@@ -163,8 +220,32 @@ for (const name of requiredSkills) {
   if (metadataValue(metadata, 'name') !== name) {
     failures.push(`${relative(skillFile)} frontmatter name must be ${name}`)
   }
-  if (!metadataValue(metadata, 'description')) {
+  const description = metadataText(metadata, 'description')
+  if (!description) {
     failures.push(`${relative(skillFile)} frontmatter description is missing`)
+  }
+  if (description.length > 1536) {
+    failures.push(`${relative(skillFile)} description exceeds Claude's 1,536-character listing limit`)
+  }
+  const modelInvocationDisabled = metadataValue(metadata, 'disable-model-invocation') === 'true'
+  if (entrySkills.includes(name) && modelInvocationDisabled) {
+    failures.push(`${relative(skillFile)} is a lifecycle entry and must remain model-invocable`)
+  }
+  if (specialistSkills.includes(name) && !modelInvocationDisabled) {
+    failures.push(`${relative(skillFile)} is a specialist and must set disable-model-invocation: true`)
+  }
+  if (entrySkills.includes(name) && text.split(/\r?\n/).length > 200) {
+    failures.push(`${relative(skillFile)} lifecycle entry exceeds the 200-line progressive-disclosure budget`)
+  }
+  for (const pattern of [
+    /before ANY/i,
+    /before any demo/i,
+    /finishes ANY change/i,
+    /before creating any/i,
+  ]) {
+    if (pattern.test(description)) {
+      failures.push(`${relative(skillFile)} description contains a blanket automatic trigger: ${pattern}`)
+    }
   }
   for (const token of contractTokens.get(name) || []) {
     if (!text.includes(token)) failures.push(`${relative(skillFile)} is missing contract token: ${token}`)
@@ -218,6 +299,10 @@ for (const file of walk(projectSkillsDir)) {
   for (const check of unsafeContentPatterns) {
     if (check.pattern.test(text)) failures.push(`${rel} contains ${check.label}`)
   }
+  for (const pattern of staleSkillFactPatterns) {
+    if (pattern.test(text)) failures.push(`${rel} hardcodes dynamic or obsolete test-suite facts: ${pattern}`)
+  }
+  if (file.endsWith('.md')) checkRelativeLinks(file, text)
 }
 
 const trackedSkillArtifacts = gitStatus(['ls-files', '-z', '.claude/skills'])
@@ -278,6 +363,9 @@ for (const [label, text] of [
   for (const token of ['Content Card', 'Banner', 'Android', 'iOS', '.demo-packs/']) {
     if (!text.includes(token)) failures.push(`${label} is missing shared builder contract token: ${token}`)
   }
+  if (text.split(/\r?\n/).length > 50) {
+    failures.push(`${label} must remain a thin compatibility pointer of at most 50 lines`)
+  }
 }
 
 if (failures.length) {
@@ -287,5 +375,5 @@ if (failures.length) {
 }
 
 console.log(
-  `Agent skill distribution check passed (${requiredSkills.length} skills, ${requiredSupportFiles.length} support files, plugin ${claudeManifest.version}).`,
+  `Agent skill distribution check passed (${entrySkills.length} entry skills, ${specialistSkills.length} specialists, ${(routingManifest.routingCases || []).length} routing cases, ${requiredSupportFiles.length} required support files, plugin ${claudeManifest.version}).`,
 )

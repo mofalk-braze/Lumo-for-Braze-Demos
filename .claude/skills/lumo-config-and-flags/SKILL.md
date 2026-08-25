@@ -1,12 +1,18 @@
 ---
 name: lumo-config-and-flags
-description: The single index of EVERY configuration axis in the Lumo Braze Demo Shells repo — launcher CLI flags, environment variables, npm scripts, android-shell/local.properties keys, ios-shell Config.swift fields, pack secrets.properties key names, and defaults for all of them. Use when someone asks "what does this env var do", "what flags/options does the launcher take", "how do I configure X", "what port does the Control Room use", "PORT", "RESET_APP_DATA", "RECREATE_AVD", "BRAZE_REST_API_KEY", "what local.properties keys exist", "what npm scripts exist", "what commands exist", "what are the defaults", "which BuildConfig field does this become", or "how do I add a new config/setting/flag/pack field/env var". Also use before overriding any default (AVD name, port, app id) to check side effects.
+description: >-
+  Expert/manual lookup for exact Lumo configuration names, defaults, readers,
+  and wiring across CLI flags, environment variables, npm scripts, Android
+  local properties, iOS config fields, and pack secrets. Invoke it directly
+  for a specific configuration fact or when a lifecycle skill points here. It
+  is an index, not a setup, operation, or troubleshooting workflow.
+disable-model-invocation: true
 ---
 
 # Lumo Configuration and Flags Index
 
-Every configuration axis in this repo, in one place: what it does, its default,
-where it is read, and how to add a new one. Sibling skills link here for these
+Expert index of configuration axes in this repo: what each does, its default,
+where it is read, and how to add a new one. Sibling workflows link here for
 fact tables; this skill does not explain workflows (see "When NOT to use").
 
 Jargon used below, defined once:
@@ -320,8 +326,8 @@ cd android-shell && ./gradlew :app:compileDebugKotlin
 - Actually running a demo end to end → `lumo-run-and-operate`.
 - Why the config system is designed this way; invariants →
   `lumo-architecture-contract`.
-- Building demo stories/screens/presets → the `braze-demo-app-builder` skill
-  or the `plugins/braze-demo-builder` plugin (see `lumo-plugin-workflow`).
+- Building an approved demo story, screen, or preset →
+  `lumo-new-demo-campaign`, which loads focused builder mechanics as needed.
 
 ## Provenance and maintenance
 

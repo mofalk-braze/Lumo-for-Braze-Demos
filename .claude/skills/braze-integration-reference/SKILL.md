@@ -1,23 +1,19 @@
 ---
 name: braze-integration-reference
 description: >-
-  How the Braze integration actually works in the Lumo demo shells repo — key
-  taxonomy (SDK API key vs REST key vs google-services.json vs Firebase service
-  account vs APNs), the web↔native brazeBridge contract and action vocabulary,
-  the braze-demo-sync/v1 envelope, how Content Cards route to placements,
-  Control Room REST safety, and how the FCM/APNs token lifecycle works. Use
-  when someone asks "how does the SDK work here", "which key goes where",
-  mentions "bridge", "brazeBridge", "changeUser", "what does extras.placement
-  do", "how does REST auth work here", "users/track", "campaign trigger",
-  "canvas trigger", "service account", "cluster", "iad-03",
-  "registeredPushToken", or asks why an SDK/Braze call behaves the way it
-  does — the mechanism, not the symptom. For "Content Cards not showing" or
-  "no FCM token" as a live problem to fix, use `lumo-debugging-playbook` or
-  `lumo-push-readiness-campaign`; this is the reference for the Braze domain
-  layer, it does not run demos or fix push step-by-step.
+  Expert/manual reference for Braze integration mechanics in Lumo: credential
+  taxonomy, the web-to-native bridge, identity synchronization, Content Card
+  placement, safe host REST calls, and FCM/APNs token lifecycle. Invoke it
+  directly for a mechanism-level investigation or when a lifecycle skill
+  points here. It does not run a demo or troubleshoot a live symptom.
+disable-model-invocation: true
 ---
 
 # Braze Integration Reference (Lumo Demo Shells)
+
+Use this expert reference to inspect mechanism and payload contracts after a
+lifecycle workflow identifies the relevant subsystem. Do not use it as a
+setup, operation, or recovery entry point.
 
 Vocabulary used below: a **pack** is a demo definition (`demo-pack.json` +
 ignored `secrets.properties`); the **shells** are the native Android/iOS apps
@@ -346,7 +342,8 @@ will not display — not a bug.
 - Full config-axis index (every pack field, env var, launcher flag, `local.properties` key) → `lumo-config-and-flags`.
 - Symptom→fix triage (push not arriving, Zscaler, stale runtime) → `lumo-debugging-playbook`.
 - Design invariants and the WHY behind the architecture → `lumo-architecture-contract`.
-- Building/altering demo stories, screens, packs-as-content → the `braze-demo-app-builder` skill / `braze-demo-builder` plugin (see `lumo-plugin-workflow`).
+- Building or altering an approved demo story, screen, or pack →
+  `lumo-new-demo-campaign`, which loads focused builder mechanics as needed.
 
 ## Provenance and maintenance
 

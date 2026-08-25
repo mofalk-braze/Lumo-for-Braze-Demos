@@ -1,23 +1,18 @@
 ---
 name: lumo-architecture-contract
 description: >-
-  The architecture contract for the Lumo Braze Demo Shells repo: the
-  load-bearing design decisions and WHY they exist, the invariants every change
-  must preserve, and the known-weak points. Use when someone asks "how does
-  this repo work", "why is it built this way", "what's the architecture",
-  "can I edit activeDemoConfig.generated.ts" (no — read this first),
-  "where do presenter controls go", "why is google-services.json committed",
-  "what are the invariants", "why can't the web app call Braze directly",
-  "why is the iOS SDK pinned", "is it safe to reset app data", "what is
-  configHash", "what is the bridge sync contract", or before ANY design
-  decision, refactor, new feature, platform change, or review in this repo.
-  Also use to check whether a proposed change violates a standing rule.
+  Expert/manual reference for the Lumo architecture contract: load-bearing
+  design decisions, invariants, rationale, and known weak points. Invoke it
+  directly, or when a lifecycle skill explicitly asks for an architecture
+  decision or invariant check. It is not a general feature-work entry point
+  and contains no setup, build, or troubleshooting workflow.
+disable-model-invocation: true
 ---
 
 # Lumo Architecture Contract
 
-Reference skill: the design decisions that hold this repo up, why each one
-exists, the invariants you must not break, and the places the design is
+Expert reference: the design decisions that hold this repo up, why each one
+exists, the invariants a change must preserve, and the places the design is
 honestly weak. **No runbooks here** — for "how do I run/build it" see
 `lumo-run-and-operate` and `lumo-build-and-env`.
 
@@ -270,9 +265,8 @@ supported paths:
 - Interpreting doctor/validate output → `lumo-diagnostics-and-tooling`
 - A symptom to triage → `lumo-debugging-playbook`
 - Commit gates and evidence standards → `lumo-change-control-and-qa`
-- Building demo *stories* (screens, presets, content) → the
-  `braze-demo-app-builder` skill / `plugins/braze-demo-builder` plugin
-  (routing: `lumo-plugin-workflow`)
+- Building approved demo *stories* (screens, presets, content) →
+  `lumo-new-demo-campaign`, which loads focused builder mechanics as needed
 
 ## Provenance and maintenance
 

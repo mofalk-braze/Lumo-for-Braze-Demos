@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lumo Start Here"
+  short_description: "Route a Lumo task to one lifecycle owner"
+  default_prompt: "Orient to this Lumo repository, choose one primary workflow, and take the first safe action."

@@ -21,12 +21,12 @@ claude
 Give the agent this outcome-oriented prompt:
 
 ```text
-Read CLAUDE.md, use lumo-build-and-env, and set up this clone for the supported
-Android emulator. Run every safe step yourself. Pause only for manual GUI,
-authentication, credential handoff, or keyguard migration steps. Apply the
-Lumo pack, launch the persistent Control Room, launch Android in bundled mode,
-and report evidence for pack id, runtimeHash, rendered source, SDK credentials,
-and push readiness. Never wipe app or emulator data.
+Read AGENTS.md and CLAUDE.md, choose the setup workflow, and make this clone
+ready on the supported Android emulator. Run every safe step yourself. Pause
+only for manual GUI, authentication, credential handoff, or keyguard migration
+steps. Apply the Lumo pack, launch the persistent Control Room, launch Android
+in bundled mode, and report evidence for pack id, runtimeHash, rendered source,
+SDK credentials, and push readiness. Never wipe app or emulator data.
 ```
 
 The agent should route first-time push setup to
@@ -76,24 +76,24 @@ workflow.
 ## Claude Setup
 
 The project skills are already available when Claude Code starts in the repo.
-For an incomplete brief, screenshots without a journey, or an existing Canvas
-that needs an app proof, start with the solution front door:
+The SolCon does not need to know their names. For an incomplete brief,
+screenshots without a journey, or an existing Canvas that needs an app proof,
+use this outcome prompt:
 
 ```text
-Use the project skill braze-solution-demo-campaign. Recommend one target belief
-and one small journey from my evidence. Define the exact typed SDK signal,
-Braze decision, message placement, proof, reset, fallback, and do-not-build
-scope. Do not create a pack, copy Lumo, or mutate Braze until I approve the
-DEMO.md blueprint.
+Recommend one target belief and one small journey from my evidence. Define the
+exact typed SDK signal, Braze decision, message placement, proof, reset,
+fallback, and do-not-build scope. Do not create a pack, copy Lumo, or mutate
+Braze until I approve the DEMO.md blueprint.
 ```
 
 After approval, `lumo-new-demo-campaign` creates the neutral pack and owns the
-implementation-to-rehearsal path. `braze-demo-app-builder` implements focused
-approved screens and event stories. Copyable prompts for screenshot-first,
-Canvas-first, dashboard build, troubleshooting, and rehearsal work are in
+implementation-to-rehearsal path. It loads focused builder and pack references
+internally when required. Copyable prompts for screenshot-first, Canvas-first,
+dashboard build, troubleshooting, and rehearsal work are in
 `docs/build-your-first-demo.md`.
 
-Use the plugin flag only for the optional namespaced implementation command.
+Use the plugin flag only for the optional namespaced compatibility alias.
 
 Optional plugin command:
 

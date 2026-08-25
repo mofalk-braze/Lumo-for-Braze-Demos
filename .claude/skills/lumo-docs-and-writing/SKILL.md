@@ -1,23 +1,20 @@
 ---
 name: lumo-docs-and-writing
 description: >-
-  Documentation of record for the Lumo Braze Demo Shells repo — which doc owns
-  which topic, where new docs go, the house writing style, and which docs must
-  move when code changes. Use when someone says "update the docs", "update the
-  README", "where do I document this", "write a guide", "write an onboarding
-  doc", "add this to AGENTS.md", "house style", "doc style", "rename this
-  script/doc", "is solcon-onboarding still current", "which doc covers X", or
-  when any change touches npm scripts, pack schema, bootstrap flags, or
-  invariants and the matching docs need to follow. Also use before creating any
-  new .md file in this repo, and when checking whether a doc edit will pass
-  security:scan or public:check.
+  Expert/manual reference for Lumo documentation ownership, placement, house
+  style, and code-to-doc synchronization. Invoke it directly when maintaining
+  the documentation system or when a lifecycle skill identifies docs that must
+  move with a code change. It is not an automatic prerequisite for every
+  Markdown or source edit.
+disable-model-invocation: true
 ---
 
 # Lumo docs and writing
 
-This skill owns the documentation of record: the inventory, where new content
-goes, the house style, and the code-to-doc sync map. It does not own the facts
-inside the docs — each doc and each sibling skill owns its own facts.
+This expert reference indexes documentation of record: the inventory, where
+new content goes, the house style, and the code-to-doc sync map. It does not
+own the facts inside the docs — each doc and each sibling skill owns its own
+facts.
 
 Standing rule from the authoring model: if this skill ever conflicts with a
 committed doc (`README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/*`,
@@ -38,8 +35,8 @@ committed doc (`README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/*`,
 | `web-template/README.md` | Web shell specifics: run, runtime files, bridge contract | Platform-local detail only |
 | `android-shell/README.md` | Android shell specifics: what it proves, setup, emulator | Platform-local detail only |
 | `ios-shell/README.md` | iOS shell specifics: prerequisites, xcodegen, run | Platform-local detail only |
-| `.claude/skills/` | Canonical source-distributed agent runbooks | Auto-discovered by Claude Code; validated by `tools/check-agent-skills.mjs` |
-| `plugins/braze-demo-builder/` | Optional namespaced demo-build command | Compatibility entry point; see `lumo-plugin-workflow` |
+| `.claude/skills/` | Canonical source-distributed agent runbooks | Nine lifecycle entries plus eight manual specialists; `tools/agent-skill-routing.json` owns the inventory and prompt corpus |
+| `plugins/braze-demo-builder/` | Optional namespaced demo-build command | Thin compatibility alias; project skills remain canonical |
 
 Not documentation of record: `Braze Design System (Collaborative)/README.md`
 (local-only reference dir, gitignored, excluded from scans).
@@ -60,8 +57,10 @@ Not documentation of record: `Braze Design System (Collaborative)/README.md`
 | Machine-local Claude state | `.claude/settings.local.json`, `.claude/launch.json`, archives, and caches; keep ignored |
 | Customer-specific notes | Nowhere committed. `.demo-packs/` or off-repo only |
 
-If you see "should teammates get this?" → yes means committed doc or plugin;
-no means this skill library. There is no third option.
+If you see "should teammates get this?", durable agent or human guidance goes
+in committed docs or project skills. Machine-specific state and credentials
+stay ignored. The optional plugin is only a compatibility alias, never a third
+source of truth.
 
 ## House style (derived by inspecting the committed docs)
 
@@ -94,13 +93,13 @@ no means this skill library. There is no third option.
 | Change | Docs that must move with it |
 |---|---|
 | npm script rename/add/remove (`package.json`) | `README.md` (First Run, Diagnostics, Commit Checks), `CLAUDE.md`, `docs/lumo-public-quickstart.md`, `docs/demo-runtime-architecture.md` (Drift Prevention), plus every `lumo-*` skill's Provenance section |
-| Pack schema change (fields, surfaces, presets) | `demo-packs/README.md`, `tools/validate-demo-runtime.mjs` pack checks, and the build skill (`.claude/skills/braze-demo-app-builder/` + plugin twin) |
+| Pack schema change (fields, surfaces, presets) | `demo-packs/README.md`, `tools/validate-demo-runtime.mjs`, `lumo-demo-pack-authoring`, `lumo-new-demo-campaign`, and focused builder references when rendering changes |
 | Bootstrap script or flag change | `docs/lumo-public-quickstart.md`, `README.md` First Run, `CLAUDE.md`, shell READMEs that quote the bootstrap flow; `docs/solcon-onboarding.md` only if its pointer breaks |
 | New invariant or contract rule | `AGENTS.md` (the rule) + `docs/demo-runtime-architecture.md` (the behavior/why) + `lumo-architecture-contract` skill |
 | Secrets model change | `README.md` Local Secrets, quickstart ledger, `demo-packs/README.md`, `CLAUDE.md`, `lumo-secrets-and-sanitization` skill |
 | Control Room / launcher UX change | `docs/demo-runtime-architecture.md` (Control Room IA), `lumo-run-and-operate` skill |
 | Plugin workflow change | `plugins/braze-demo-builder/` text, `README.md` Agent Demo Build Workflow section, quickstart Claude Setup section |
-| New-demo routing or blueprint contract | User-facing first-demo guide, `README.md` Agent Demo Build Workflow, `CLAUDE.md` skill routing, and `lumo-plugin-workflow`; keep implementation commands in their owning skills |
+| New-demo routing or blueprint contract | User-facing first-demo guide, `README.md` Agent Demo Build Workflow, `CLAUDE.md`, `lumo-start-here`, `tools/agent-skill-routing.json`, and the optional plugin pointer when its canonical target changes |
 
 Grep before claiming done — find every doc that quotes the old name:
 
@@ -162,6 +161,8 @@ docs-only carve-out — see `lumo-change-control-and-qa` Gate 1. README.md
 "Commit Checks" and AGENTS.md apply to every commit, docs-only included:
 
 ```sh
+npm run lumo:apply
+node tools/check-agent-skills.mjs
 npm run check:precommit          # tests + runtime validation + secret/skill checks
 npm run public:check
 cd web-template && npm run build
@@ -180,14 +181,16 @@ suggest skipping or narrowing gates because a change is "just docs".
 - The facts themselves (config keys, commands, pack schema) → the owning
   skill: `lumo-config-and-flags`, `lumo-demo-pack-authoring`,
   `lumo-architecture-contract`, etc.
-- Building demo stories/packs/screens → the plugin or
-  `braze-demo-app-builder`; routing between them → `lumo-plugin-workflow`.
+- Building an approved demo story, pack, or screen →
+  `lumo-new-demo-campaign`, which loads focused builder/pack references.
+- Optional plugin compatibility itself → `lumo-plugin-workflow`.
 - Fresh machine setup itself (not documenting it) → `lumo-build-and-env`.
 
 ## Provenance and maintenance
 
-Verified 2026-07-03 against the repo at commit 9ff55c7 by reading every doc
-listed in the inventory plus `tools/validate-demo-runtime.mjs`,
+Verified 2026-08-25 against the working repository by reading every doc listed
+in the inventory plus `tools/agent-skill-routing.json`,
+`tools/validate-demo-runtime.mjs`,
 `tools/secret-scan.mjs`, `tools/public-readiness-check.mjs`, `package.json`,
 `.gitignore`, and `bootstrap-lumo.sh`. Re-verify before relying:
 

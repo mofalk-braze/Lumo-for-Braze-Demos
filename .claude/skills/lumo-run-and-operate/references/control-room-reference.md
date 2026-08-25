@@ -6,6 +6,18 @@ Companion to `../SKILL.md`. Verified 2026-08-25 against `tools/lumo.mjs`,
 routes), and `tools/control-room-template.mjs` (UI, readiness gating, activity
 filtering). All ids, types, and payload keys below are exact.
 
+## Contents
+
+- [Canonical CLI](#canonical-cli)
+- [Guided and Expert modes](#guided-and-expert-modes)
+- [Built-in control presets](#built-in-control-presets)
+- [Action type and transport matrix](#action-type--transport-matrix-template-editor)
+- [REST safety validation](#rest-safety-validation-exact-rules)
+- [Readiness checks and gating](#readiness-checks-and-gating)
+- [Activity feed and diagnostics classification](#activity-feed-vs-diagnostics-classification)
+- [Launcher HTTP API](#launcher-http-api-localhost-only)
+- [Braze cluster presets](#braze-cluster-presets-credentials-editor)
+
 ## Canonical CLI
 
 ```sh

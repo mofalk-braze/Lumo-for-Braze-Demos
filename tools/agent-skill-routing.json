@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "entrySkills": [
+    { "name": "lumo-start-here", "phase": "route", "primaryFor": "new, mixed, or factual requests with no clear lifecycle phase", "notFor": "a request already owned by one lifecycle entry", "next": ["lumo-build-and-env", "braze-solution-demo-campaign", "lumo-new-demo-campaign", "lumo-run-and-operate", "lumo-debugging-playbook", "lumo-push-readiness-campaign", "lumo-secrets-and-sanitization", "lumo-change-control-and-qa"] },
+    { "name": "lumo-build-and-env", "phase": "onboard", "primaryFor": "fresh clone, machine, prerequisites, or never-provisioned environment", "notFor": "a previously working environment that regressed", "next": ["lumo-run-and-operate", "lumo-push-readiness-campaign"] },
+    { "name": "braze-solution-demo-campaign", "phase": "plan", "primaryFor": "unapproved evidence, screenshots, Canvas mapping, or demo-scope selection", "notFor": "an already approved story contract", "next": ["lumo-new-demo-campaign"] },
+    { "name": "lumo-new-demo-campaign", "phase": "build", "primaryFor": "approved end-to-end or focused demo implementation", "notFor": "ambiguous or unapproved story selection", "next": ["lumo-run-and-operate", "lumo-change-control-and-qa"] },
+    { "name": "lumo-run-and-operate", "phase": "operate", "primaryFor": "ordinary readiness, launch, rehearsal, and presentation of an existing demo", "notFor": "missing setup, missing story, or a confirmed regression", "next": ["lumo-debugging-playbook"] },
+    { "name": "lumo-debugging-playbook", "phase": "recover", "primaryFor": "a capability proven on this machine, install, and workspace that now fails", "notFor": "a prerequisite or push path that has never worked", "next": ["lumo-run-and-operate", "lumo-change-control-and-qa"] },
+    { "name": "lumo-push-readiness-campaign", "phase": "first-push", "primaryFor": "first end-to-end Android push proof for a teammate or workspace", "notFor": "push previously proven on the same install and workspace", "next": ["lumo-run-and-operate"] },
+    { "name": "lumo-secrets-and-sanitization", "phase": "security", "primaryFor": "credential, private-material, sanitization, handoff, or secret-incident work", "notFor": "an ordinary commit with no sensitive-material concern", "next": ["lumo-change-control-and-qa"] },
+    { "name": "lumo-change-control-and-qa", "phase": "maintain", "primaryFor": "validation, commit, push, PR, release, sharing, or handoff boundary", "notFor": "ordinary implementation before a delivery boundary", "next": [] }
+  ],
+  "specialistSkills": [
+    { "name": "braze-demo-app-builder", "owner": "lumo-new-demo-campaign" },
+    { "name": "braze-integration-reference", "owner": "lumo-start-here" },
+    { "name": "lumo-architecture-contract", "owner": "lumo-start-here" },
+    { "name": "lumo-config-and-flags", "owner": "lumo-start-here" },
+    { "name": "lumo-demo-pack-authoring", "owner": "lumo-new-demo-campaign" },
+    { "name": "lumo-diagnostics-and-tooling", "owner": "lumo-debugging-playbook" },
+    { "name": "lumo-docs-and-writing", "owner": "lumo-change-control-and-qa" },
+    { "name": "lumo-plugin-workflow", "owner": "lumo-start-here" }
+  ],
+  "routingCases": [
+    { "prompt": "Set up this fresh clone for the supported Android emulator.", "expectedPrimary": "lumo-build-and-env" },
+    { "prompt": "Prepare the optional iOS simulator environment on this new Mac.", "expectedPrimary": "lumo-build-and-env" },
+    { "prompt": "I have discovery notes but do not know what demo to build.", "expectedPrimary": "braze-solution-demo-campaign" },
+    { "prompt": "Turn this screenshot folder into one credible Braze journey.", "expectedPrimary": "braze-solution-demo-campaign" },
+    { "prompt": "Here is an existing Canvas; decide what the app should prove.", "expectedPrimary": "braze-solution-demo-campaign" },
+    { "prompt": "Implement the approved DEMO.md end to end and rehearse it.", "expectedPrimary": "lumo-new-demo-campaign" },
+    { "prompt": "Add one approved Content Card surface to this existing demo.", "expectedPrimary": "lumo-new-demo-campaign" },
+    { "prompt": "Create the neutral pack for this already approved story.", "expectedPrimary": "lumo-new-demo-campaign" },
+    { "prompt": "Start the Control Room and run my demo.", "expectedPrimary": "lumo-run-and-operate" },
+    { "prompt": "Rehearse the approved story and verify ordinary readiness.", "expectedPrimary": "lumo-run-and-operate" },
+    { "prompt": "Switch the active pack and launch Android without resetting identity.", "expectedPrimary": "lumo-run-and-operate" },
+    { "prompt": "Content Cards used to work and now nothing appears.", "expectedPrimary": "lumo-debugging-playbook" },
+    { "prompt": "Push worked yesterday but stopped arriving on this emulator.", "expectedPrimary": "lumo-debugging-playbook" },
+    { "prompt": "Android push has never worked for this teammate's workspace.", "expectedPrimary": "lumo-push-readiness-campaign" },
+    { "prompt": "Safely hand off the Firebase service account outside Git.", "expectedPrimary": "lumo-secrets-and-sanitization" },
+    { "prompt": "I think a credential may have entered a commit.", "expectedPrimary": "lumo-secrets-and-sanitization" },
+    { "prompt": "What does RESET_APP_DATA do? I am not asking to run it.", "expectedPrimary": "lumo-start-here" },
+    { "prompt": "Why is runtimeHash separate from configHash?", "expectedPrimary": "lumo-start-here" },
+    { "prompt": "The implementation is done; validate and commit it.", "expectedPrimary": "lumo-change-control-and-qa" },
+    { "prompt": "Which Lumo workflow owns this mixed request?", "expectedPrimary": "lumo-start-here" }
+  ]
+}

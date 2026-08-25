@@ -1,7 +1,7 @@
 {
   "name": "braze-demo-builder",
-  "version": "0.3.0",
-  "description": "Guided implementation for approved Braze demo app stories in the pack-driven Lumo Android, iOS, and web runtime.",
+  "version": "0.4.0",
+  "description": "Optional namespaced compatibility alias for the canonical repository-owned Lumo demo workflows.",
   "author": {
     "name": "Braze"
   },

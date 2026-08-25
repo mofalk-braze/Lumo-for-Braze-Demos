@@ -1,26 +1,28 @@
 ---
 name: lumo-diagnostics-and-tooling
+disable-model-invocation: true
 description: >-
-  The measurement layer for the Lumo Braze Demo Shells repo — how to check
-  health with instruments instead of eyeballing: npm run doctor, lumo:apply,
-  validate:demo-runtime, security:scan, public:check, the Control Room
-  Diagnostics view, the Android on-device debug drawer, and the bundled
-  check-runtime-drift.mjs script, each with an output interpretation guide.
-  Use when someone says "diagnose", "is it healthy", "check status", "doctor
-  output", "what does this doctor line mean", "validate failed",
-  "configHash mismatch", "drift", "stale pack", "stale runtime", "is the pack
-  applied", "push token status", "tokenPresent", "trust telemetry",
-  "diagnostics drawer", "long-press", "where are the logs", "emulator log",
-  "state.json", "REST response history", or wants to MEASURE what the demo
-  stack is actually doing before or during a session. Also use before any
-  demo to confirm nothing is stale.
+  Expert, explicitly invoked measurement reference for the Lumo Braze Demo
+  Shells repo: doctor and validator interpretation, runtime-drift inspection,
+  Control Room diagnostics, Android debug drawer, state/log locations, secret
+  scans, and public-readiness instruments. This is an internal compatibility
+  companion for lumo-run-and-operate and lumo-debugging-playbook when their
+  normal evidence does not isolate a problem; it does not own ordinary demo
+  preflight or regression repair.
 ---
 
-# Lumo Diagnostics and Tooling
+# Lumo Diagnostics And Tooling
 
-How to measure the health of this repo instead of guessing. Every instrument
-below is read-only or regenerates only derived files. For each one: what it
-checks, how to run it, how to read the output, and what to do next.
+Expert instrument catalog for measuring the health of this repo instead of
+guessing. Invoke it explicitly, or read it from `lumo-run-and-operate` /
+`lumo-debugging-playbook` only when their ordinary readiness or regression
+evidence needs deeper interpretation. It does not replace those lifecycle
+owners. Every instrument below is read-only or regenerates only derived files.
+
+Model invocation is disabled intentionally. Route a natural-language expert
+diagnostics request through `lumo-start-here`, let a lifecycle owner read this
+file directly, or invoke `/lumo-diagnostics-and-tooling` manually in Claude
+Code. Do not make this skill automatic again to solve discoverability.
 
 Jargon used throughout: a **pack** is a demo definition (`demo-pack.json` +
 assets) that is the source of truth; **applying** a pack regenerates runtime
@@ -366,22 +368,34 @@ Interpretation:
 Difference from `validate:demo-runtime`: the validator recomputes the
 EXPECTED hash from the pack and checks code contracts (slower, authoritative);
 this script only cross-compares what is on disk (instant, presenter-friendly).
-Before a demo, run the script; before a commit, run the validator. Neither
-sees inside a device — for the installed app's actual hash use the Android
-debug drawer or Control Room Device Identity.
+When a run/debug workflow suspects drift, run the script; commit-gate ownership
+remains with `lumo-change-control-and-qa`. Neither instrument sees inside a
+device — for the installed app's actual hash use the Android debug drawer or
+Control Room Device Identity.
 
-## Pre-demo 60-second health check
+## Extended Runtime Integrity Sweep
+
+Use this only when normal readiness exposes ambiguous drift, before a formal
+handoff that requests artifact-level evidence, or while validating a runtime
+repair. Ordinary rehearsal preflight belongs to `lumo-run-and-operate`.
 
 ```sh
-npm run doctor                       # exit 0, read any WARN lines
-npm run lumo:apply                   # "Applied demo pack: <name>"
-node .claude/skills/lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs   # Verdict: OK
-npm run validate:demo-runtime        # "Demo runtime validation passed."
+node .claude/skills/lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs
+npm run doctor
+npm run validate:demo-runtime
 ```
 
-Then launch via Control Room and confirm in Diagnostics that Device Identity
-matches Runtime Contract and push `tokenPresent` is true (if the story needs
-push).
+Capture that evidence before changing derived state. If it confirms drift and
+the user wants repair, then run:
+
+```sh
+npm run lumo:apply
+node .claude/skills/lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs
+npm run validate:demo-runtime
+```
+
+Finally launch via Control Room and confirm Device Identity matches Runtime
+Contract and push `tokenPresent` is true when the selected story needs push.
 
 ## When NOT to use this skill
 
@@ -391,7 +405,7 @@ push).
   committed, or key handoff → `lumo-secrets-and-sanitization`.
 - Doctor fails and you need to BUILD the environment (install tools,
   provision the AVD) → `lumo-build-and-env`.
-- You are presenting/operating a demo (cockpit usage, triggering actions) →
+- You are performing ordinary readiness, presenting, or operating a demo →
   `lumo-run-and-operate`.
 - You need every config axis, flag, or env var defined → `lumo-config-and-flags`.
 - Which checks gate a commit/push and what evidence counts →

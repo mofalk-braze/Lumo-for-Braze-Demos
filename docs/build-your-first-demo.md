@@ -38,26 +38,26 @@ one in `RESERVE` until the core loop is proven.
 ## Use The Agent Front Door
 
 Start the coding agent in the repository root. Claude Code discovers the
-committed project skills automatically. Other coding agents must read
-`AGENTS.md` and the owning `.claude/skills/<skill>/SKILL.md` before acting.
+committed project skills automatically. Other coding agents read `AGENTS.md`
+and the same repository-owned workflow files. The agent selects one lifecycle
+owner; the SolCon does not need to name or sequence specialist skills.
 
 Use this first prompt when the story is incomplete:
 
 ```text
-Use the project skill braze-solution-demo-campaign. Help me turn the evidence
-and screenshots I provide into the smallest credible Braze demo story. Start
-by recommending one target belief and one hero journey. Classify facts,
-assumptions, and discovery gaps; define the exact app action, native SDK signal,
-typed payload, Braze decision, visible response, proof, and fallback for every
-beat. Challenge unnecessary channels and complexity. Do not create a pack,
-copy Lumo, edit code, or mutate Braze until I approve the DEMO.md blueprint.
+Help me turn the evidence and screenshots I provide into the smallest credible
+Braze demo story. Start by recommending one target belief and one hero journey.
+Classify facts, assumptions, and discovery gaps; define the exact app action,
+native SDK signal, typed payload, Braze decision, visible response, proof, and
+fallback for every beat. Challenge unnecessary channels and complexity. Do not
+create a pack, copy Lumo, edit code, or mutate Braze until I approve the
+DEMO.md blueprint.
 ```
 
-That skill owns story shaping. After approval it hands the blueprint to
-`lumo-new-demo-campaign`, which owns the build, device proof, dashboard handoff,
-rehearsal, and completion gates. `braze-demo-app-builder` implements focused
-approved screens and event-story features; it is not the first stop for an
-unbounded screenshot folder.
+The solution workflow owns story shaping. After approval it hands the blueprint
+to `lumo-new-demo-campaign`, which owns the build, delegated implementation,
+device proof, dashboard handoff, rehearsal, and completion gates. The SolCon
+does not need to invoke the focused builder separately.
 
 ## The Three Artifacts
 
@@ -394,12 +394,12 @@ building anything.
 ### Build The Approved App
 
 ```text
-Use lumo-new-demo-campaign with the approved .demo-packs/<pack-id>/DEMO.md and
-the screenshot folder I provide. Create the concept with lumo pack new, never by
-copying Lumo. Delegate the private screenshot UI to braze-demo-app-builder,
-keep it under the pack's app-source, and make every app action, SDK payload,
-fallback preset, dashboard trigger, and notes.md mapping agree. Prove Android in
-bundled mode and stop at any manual credential or Braze-workspace boundary.
+Use the approved .demo-packs/<pack-id>/DEMO.md and screenshot folder to build,
+prove, and rehearse the story. Create the concept with lumo pack new, never by
+copying Lumo. Keep private screenshot UI under the pack's app-source, and make
+every app action, SDK payload, fallback preset, dashboard trigger, and notes.md
+mapping agree. Prove Android in bundled mode and stop at any manual credential
+or Braze-workspace boundary.
 ```
 
 ### Produce The Dashboard Build Sheet
@@ -415,11 +415,10 @@ unless the available integration has write capability and I approve the diff.
 ### Diagnose A Failed Story
 
 ```text
-Use lumo-debugging-playbook and lumo-diagnostics-and-tooling. Read the redacted
-diagnostic bundle and the pack's notes.md. Identify the first broken link in the
-chain from app action to SDK evidence to Braze decision to visible result. Do
-not wipe the AVD or app data. Return the evidence, likely cause, safest next
-action, and what will prove the fix.
+Read the redacted diagnostic bundle and the pack's notes.md. Use the regression
+workflow to identify the first broken link from app action to SDK evidence to
+Braze decision to visible result. Do not wipe the AVD or app data. Return the
+evidence, likely cause, safest next action, and what will prove the fix.
 ```
 
 ### Rehearse And Hand Off

@@ -5,6 +5,15 @@ branch. Everything here is read from
 `android-shell/tools/run-demo-emulator.sh` and
 `android-shell/tools/install-zscaler-system-ca.sh` (verified 2026-08-14).
 
+## Contents
+
+- [Why This Exists](#why-this-exists-the-war-story)
+- [Normal Launcher Behavior](#what-the-normal-launcher-does)
+- [CA Installer Behavior](#what-the-ca-installer-does)
+- [In-App Trust Telemetry](#in-app-trust-telemetry)
+- [Triage Table](#triage-table)
+- [Re-Verification](#re-verification)
+
 ## Why this exists (the war story)
 
 On the corporate network, Zscaler intercepts TLS and re-signs traffic with the

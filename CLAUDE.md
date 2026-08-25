@@ -70,23 +70,22 @@ or placement friction; any later wrapper stays thin and adds no authority.
 
 ## Agent Skill Routing
 
-Use the narrowest committed project skill that matches the task:
+Choose one primary lifecycle owner. Do not stack every plausible skill:
 
-- `lumo-build-and-env` for a fresh machine and Android AVD provisioning.
-- `lumo-push-readiness-campaign` for first-time end-to-end Android push.
-- `lumo-run-and-operate` for normal Control Room and device operation.
-- `lumo-debugging-playbook` plus `lumo-diagnostics-and-tooling` for a
-  previously working setup that regressed.
-- `lumo-demo-pack-authoring` for pack lifecycle and schema work.
-- `braze-solution-demo-campaign` first for “what should I build?”, incomplete
-  discovery, screenshots without a journey, Canvas-first mapping, surface/event
-  selection, or scope pressure.
-- `lumo-new-demo-campaign` only after the target belief, hero journey, typed
-  signal/surface contract, and non-goals are approved.
-- `braze-demo-app-builder` for focused implementation inside that approved
-  boundary.
-- `lumo-secrets-and-sanitization` and `lumo-change-control-and-qa` before any
-  handoff, commit, or publish operation.
+- `lumo-build-and-env`: fresh clone or machine through first bundled launch.
+- `braze-solution-demo-campaign`: unapproved or ambiguous demo story.
+- `lumo-new-demo-campaign`: approved end-to-end or focused implementation.
+- `lumo-run-and-operate`: ordinary readiness, rehearsal, and presentation.
+- `lumo-debugging-playbook`: previously working behavior that regressed.
+- `lumo-push-readiness-campaign`: first-time Android push proof.
+- `lumo-secrets-and-sanitization`: credential, sanitization, or secret incident.
+- `lumo-change-control-and-qa`: validation, commit, publish, and handoff.
+
+Use `lumo-start-here` only when the phase is unclear. Architecture,
+configuration, Braze integration, pack schema, diagnostic instruments,
+documentation ownership, focused builder mechanics, and plugin compatibility
+are specialist references. Read one only when the primary workflow directs it
+or the user explicitly asks that factual question.
 
 For a new product concept, run `node tools/lumo.mjs pack new <id>` only after
 story approval. It is neutral. Use `pack duplicate` only for an intentional
@@ -117,8 +116,9 @@ Then run:
 /braze-demo-builder:demo-build
 ```
 
-The optional command implements an approved story. Route unapproved story
-selection to `braze-solution-demo-campaign` first. New private packs belong
+The optional command delegates an approved story to the canonical project
+workflow. Route unapproved story selection to
+`braze-solution-demo-campaign` first. New private packs belong
 under `.demo-packs/`; only explicitly sanitized public packs belong under
 `demo-packs/`.
 

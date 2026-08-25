@@ -1,9 +1,20 @@
 ---
 name: lumo-demo-pack-authoring
-description: Anatomy, creation, validation, and lifecycle of Lumo demo packs (demo-pack.json + assets/ + secrets.properties). Use when asked to "create a pack", build a "new customer demo pack", edit "demo-pack.json", explain the "pack schema", "add a screen/tab/rail", configure "contentCardSurfaces" or a Content Card "placement", add launcher presets, set up "secrets.properties", decide between demo-packs/ and .demo-packs/, "promote pack" to the public tree, or "sanitize pack" for distribution. Also use for "Duplicate demo pack id" or kebab-case id validation failures, questions about which pack fields feed configHash, and durable-pack design (stable ids, stable placements, anchor events, self-describing packs).
+description: >-
+  Expert/internal reference for Lumo demo-pack mechanics: demo-pack.json
+  schema, assets, local credentials, authoring validation, stable identities
+  and placements, notes handoff, and sanitized promotion. Invoke manually for
+  exact pack questions, or read it when lumo-new-demo-campaign reaches pack
+  creation or editing. It does not choose a demo story or orchestrate
+  implementation.
+disable-model-invocation: true
 ---
 
 # Lumo Demo Pack Authoring
+
+This is the expert pack-mechanics layer beneath `lumo-new-demo-campaign`.
+Manual invocation remains supported for exact schema, lifecycle, validation,
+and promotion work; approved implementation requests enter through the campaign.
 
 A **demo pack** is a directory containing a `demo-pack.json` (public brand,
 content, event, and demo-user metadata), an optional `assets/` folder (images
@@ -327,12 +338,12 @@ box, in order:
 
 - Designing the demo STORY — which screens, event narrative, Content Card
   placement strategy, or what to build from incomplete discovery/screenshots →
-  `braze-solution-demo-campaign`; after approval, focused screenshot-to-app
-  implementation → `braze-demo-app-builder`. Routing between build layers:
-  `lumo-plugin-workflow`.
+  `braze-solution-demo-campaign`.
+- Any approved focused implementation or blueprint-to-rehearsed-demo campaign
+  → `lumo-new-demo-campaign`; it reads this pack reference and the internal
+  builder only when those mechanics are needed.
 - Applying, launching devices, presenting, Control Room operation →
   `lumo-run-and-operate`.
-- Approved blueprint-to-rehearsed-demo campaign → `lumo-new-demo-campaign`.
 - Secrets handling beyond key names, REST key resolution, handoff →
   `lumo-secrets-and-sanitization`.
 - Every config axis across the repo (env vars, launcher flags,
