@@ -16,6 +16,12 @@ Use stable anchor events for portable campaign triggers:
 
 Use flavor events for app-specific storytelling, and map them to anchors when useful. Keep specificity in properties such as `screen`, `surface`, `route_id`, `weight`, `merchant_id`, `offer_id`, `action`, `value`, or `currency`.
 
+For each hero action, choose one canonical dashboard trigger and keep these in
+agreement: product bridge call, flavor-to-anchor mapping, property names and
+types, fallback preset, dashboard object, and pack `notes.md`. When the product
+action emits flavor plus anchor, use `sdk_event_sequence` if the fallback must
+mirror both; otherwise make the fallback emit the canonical dashboard event.
+
 ## Story Types
 
 - Content Cards: native SDK fetches cards, web renders normalized card data by placement.
@@ -43,3 +49,5 @@ Each preset should have:
 - correct `type` and transport/platform
 - payload with realistic event or trigger properties
 - no secrets
+- an exact relationship to the app action and dashboard trigger it is meant to
+  reproduce; similar labels are not proof of equivalent behavior

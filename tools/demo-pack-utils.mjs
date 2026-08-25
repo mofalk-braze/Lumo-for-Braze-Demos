@@ -146,15 +146,10 @@ function initialsForName(name) {
   return initials || 'DP'
 }
 
-function starterFlavorEventName(id) {
-  return `${id.replace(/-/g, '_')}_primary_action`
-}
-
 export function createStarterDemoPackConfig({ id, name, description = '' }) {
   const packId = assertDemoPackId(id)
   const packName = assertNonEmptyString(name, 'Demo pack name')
   const demoExternalId = `${packId}-demo-user`
-  const eventName = starterFlavorEventName(packId)
   return {
     id: packId,
     name: packName,
@@ -168,113 +163,46 @@ export function createStarterDemoPackConfig({ id, name, description = '' }) {
       sessionTimeoutSeconds: 60,
     },
     launcher: {
-      presets: [
-        {
-          id: `${packId}-primary-action`,
-          label: 'Trigger primary action',
-          description: `Logs ${eventName} through the active native SDK.`,
-          type: 'sdk_event',
-          payload: {
-            name: eventName,
-            properties: {
-              source: 'control_room',
-            },
-          },
-        },
-      ],
+      presets: [],
     },
     brand: {
       appName: packName,
       displayName: packName,
-      tagline: 'A local product demo powered by Braze.',
+      tagline: 'Neutral starter — replace this with the approved product story.',
       logoText: initialsForName(packName),
       colors: {
-        brand: '#0F766E',
-        brandDark: '#115E59',
-        brandLight: '#CCFBF1',
-        accent: '#F97316',
-        ink: '#111827',
+        brand: '#475569',
+        brandDark: '#1E293B',
+        brandLight: '#E2E8F0',
+        accent: '#64748B',
+        ink: '#0F172A',
         muted: '#64748B',
-        line: '#D1D5DB',
+        line: '#CBD5E1',
         surface: '#F8FAFC',
       },
       tabs: [
         { id: 'home', label: 'Home', icon: 'Home' },
-        { id: 'inbox', label: 'Inbox', icon: 'Inbox' },
-        { id: 'account', label: 'Account', icon: 'User' },
       ],
-      flavorEvents: [
-        {
-          name: eventName,
-          label: 'Primary action',
-          anchor: 'content_engaged',
-          emitAnchor: true,
-          sample: { source: 'app' },
-        },
-      ],
+      flavorEvents: [],
       demoUser: {
         externalId: demoExternalId,
-        firstName: packName.split(/\s+/)[0],
-        attributes: {
-          lifecycle_stage: 'demo',
-        },
+        firstName: 'Demo',
+        attributes: {},
       },
     },
     content: {
       hero: {
-        title: `${packName} is ready`,
-        subtitle: 'Replace this starter content with the product story and screenshots for your demo.',
-        cta: 'Explore',
+        title: 'Define the demo experience',
+        subtitle: 'Replace this neutral starter with screens, actions, and Braze outcomes from the approved blueprint.',
       },
-      categories: ['Featured', 'For you', 'New'],
+      categories: [],
       contentCardRail: {
-        title: 'Personalized updates',
-        placement: 'home_feed',
+        title: 'Unmapped Content Cards',
+        placement: 'unmapped',
       },
-      contentCardSurfaces: [
-        {
-          id: 'home-feed',
-          placement: 'home_feed',
-          surface: 'carousel',
-          screen: 'home',
-          title: 'Personalized updates',
-          variant: 'carousel',
-          emptyBehavior: 'hide',
-          maxCards: 4,
-        },
-        {
-          id: 'inbox',
-          placement: 'inbox',
-          surface: 'inbox',
-          screen: 'inbox',
-          title: 'Inbox',
-          variant: 'inbox',
-          emptyBehavior: 'empty-state',
-          maxCards: 8,
-        },
-      ],
-      bannerSurfaces: [
-        {
-          id: 'home-banner',
-          placement: 'home_banner',
-          screen: 'home',
-          height: 96,
-        },
-      ],
-      rails: [
-        {
-          id: 'starter-content',
-          title: 'Starter content',
-          items: [
-            {
-              id: 'starter-item',
-              title: 'Replace this item',
-              subtitle: 'Pack-owned product content',
-              badge: 'Starter',
-            },
-          ],
-        },
-      ],
+      contentCardSurfaces: [],
+      bannerSurfaces: [],
+      rails: [],
     },
   }
 }
@@ -302,13 +230,15 @@ export function generateDemoPackNotes(pack) {
     '| _No Banner surface declared_ | — | Add a stable Braze placement ID before handoff. | — |',
   )
   const flavorEvents = Array.isArray(pack.brand?.flavorEvents) ? pack.brand.flavorEvents : []
-  const iamEventRows = [
-    '| Default IAM test | Action-based campaign | `demo_iam_trigger` | Control Room → Trigger IAM |',
-    ...flavorEvents.map(
-      (event) =>
-        `| ${markdownTableCell(event.label || event.name)} | Action-based campaign | \`${markdownTableCell(event.name)}\` | App action or matching Control Room preset |`,
-    ),
-  ]
+  const iamEventRows = mappingRows(
+    flavorEvents,
+    (event) => {
+      const trigger = event.emitAnchor && event.anchor ? event.anchor : event.name
+      const flavorNote = event.emitAnchor && event.anchor ? ` (app also logs \`${markdownTableCell(event.name)}\`)` : ''
+      return `| ${markdownTableCell(event.label || event.name)} | Action-based campaign or Canvas | \`${markdownTableCell(trigger)}\`${flavorNote} | App action and a matching anchor preset |`
+    },
+    '| _No IAM trigger declared_ | — | Choose one app action and durable anchor only if IAM is required. | — |',
+  )
   const externalId = pack.android?.defaultExternalId || pack.brand?.demoUser?.externalId || '<DEMO_USER_EXTERNAL_ID>'
 
   return `# Demo pack handoff
@@ -323,11 +253,21 @@ This file travels with the pack. Keep dashboard dependencies and rehearsal evide
 - Owner: \`<OWNER>\`
 - Last rehearsed: \`<YYYY-MM-DD>\`
 
+## Story contract
+
+Complete one row per presenter action before implementing dashboard objects. Use property names, types, and representative values that the native SDK will actually send.
+
+| Presenter action | Native SDK method | Event, purchase, or attribute | Typed properties and sample payload | Braze consumer | Visible result | Fallback |
+| --- | --- | --- | --- | --- | --- | --- |
+| \`<ACTION>\` | \`<SDK_METHOD>\` | \`<ANCHOR_OR_STATE_CHANGE>\` | \`<KEY: TYPE = SAMPLE>\` | \`<CAMPAIGN_OR_CANVAS_STEP>\` | \`<EXPECTED_APP_OR_DEVICE_RESULT>\` | \`<REHEARSED_FALLBACK>\` |
+
 ## Braze dashboard mappings
 
 ### Content Cards
 
 Create the card campaign or Canvas in Braze and add the exact key/value pair shown below. Placement matching is case-sensitive.
+
+- Required for this story: \`<YES_OR_NO>\`
 
 | App surface | Screen | Dashboard key/value | Render variant |
 | --- | --- | --- | --- |
@@ -341,6 +281,8 @@ ${contentCardRows.join('\n')}
 
 Create each Banner placement in Braze with the exact placement ID below. The native SDK owns rendering; the web app only declares the on-screen slot.
 
+- Required for this story: \`<YES_OR_NO>\`
+
 | App surface | Screen | Braze placement ID | Slot height |
 | --- | --- | --- | --- |
 ${bannerRows.join('\n')}
@@ -350,6 +292,8 @@ ${bannerRows.join('\n')}
 - Test result: \`<BANNER_TEST_RESULT>\`
 
 ### In-app messages
+
+- Required for this story: \`<YES_OR_NO>\`
 
 | Story step | Dashboard delivery | Trigger event | App/Control Room action |
 | --- | --- | --- | --- |
@@ -361,6 +305,8 @@ ${iamEventRows.join('\n')}
 
 ### Push
 
+- Required for this story: \`<YES_OR_NO>\`
+
 | Dashboard dependency | Mapping for this pack |
 | --- | --- |
 | Campaign or Canvas | \`<PUSH_CAMPAIGN_OR_CANVAS>\` |
@@ -369,7 +315,7 @@ ${iamEventRows.join('\n')}
 | Deep link or action | \`<PUSH_DEEP_LINK_OR_ACTION>\` |
 | Test result | \`<PUSH_TEST_RESULT>\` |
 
-Run Push readiness in the Control Room immediately before sending. Never copy an FCM registration token from another machine or install.
+If push is required, run Push readiness in the Control Room immediately before sending. Never copy an FCM registration token from another machine or install. If push is not required, mark its mappings and proof as \`N/A\`.
 
 ## Presenter sequence
 
@@ -387,10 +333,11 @@ Run Push readiness in the Control Room immediately before sending. Never copy an
 ## Acceptance checklist
 
 - [ ] Pack validates and applies with matching configHash/runtimeHash.
-- [ ] Every Content Card appears only in its mapped placement.
-- [ ] Every declared Banner placement renders on the expected screen.
-- [ ] IAM triggers once in the rehearsed state and is re-eligible when expected.
-- [ ] Android push readiness is green and a real push is received/tapped.
+- [ ] Every channel is explicitly marked required or not required.
+- [ ] Every required Content Card appears only in its mapped placement.
+- [ ] Every required Banner placement renders on the expected screen.
+- [ ] Every required IAM triggers in the rehearsed state and is re-eligible when expected.
+- [ ] If push is required, Android readiness is green and a real push is received/tapped.
 - [ ] Presenter sequence and offline fallback have both been rehearsed.
 `
 }
@@ -565,7 +512,30 @@ export function validateDemoPackForAuthoring(packOrId, { knownPacks } = {}) {
   if (!pack.description) errors.push('description is required for runtime validation')
   if (duplicateIdsFor(pack.id, packs).length > 1) errors.push(`duplicate demo pack id: ${pack.id}`)
   const notesPath = path.join(pack.directory || '', 'notes.md')
-  if (!pack.directory || !fs.existsSync(notesPath)) warnings.push('notes.md handoff is missing')
+  if (!pack.directory || !fs.existsSync(notesPath)) {
+    warnings.push('notes.md handoff is missing')
+  } else {
+    const notes = fs.readFileSync(notesPath, 'utf8')
+    if (/<[A-Z][A-Z0-9_ -]*>/.test(notes)) {
+      warnings.push('notes.md handoff contains unresolved placeholders')
+    }
+    for (const surface of pack.content?.contentCardSurfaces || []) {
+      if (!notes.includes(`extras.placement=${surface.placement}`)) {
+        warnings.push(`notes.md is missing Content Card placement: ${surface.placement}`)
+      }
+    }
+    for (const surface of pack.content?.bannerSurfaces || []) {
+      if (!notes.includes(`\`${surface.placement}\``)) {
+        warnings.push(`notes.md is missing Banner placement: ${surface.placement}`)
+      }
+    }
+    for (const event of pack.brand?.flavorEvents || []) {
+      const trigger = event.emitAnchor && event.anchor ? event.anchor : event.name
+      if (!notes.includes(`\`${trigger}\``)) {
+        warnings.push(`notes.md is missing IAM trigger mapping: ${trigger}`)
+      }
+    }
+  }
   return {
     valid: errors.length === 0,
     id: pack.id,

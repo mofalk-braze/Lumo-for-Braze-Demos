@@ -260,6 +260,11 @@ test('pack validation closes the Content Card rail gap and validates Banner auth
 
   const invalidBanner = structuredClone(pack)
   invalidBanner.content.bannerSurfaces.push({
+    id: 'first-banner',
+    placement: 'home_banner',
+    screen: 'home',
+    height: 96,
+  }, {
     id: 'second-banner',
     placement: 'home_banner',
     screen: 'account',
@@ -280,6 +285,28 @@ test('pack validation closes the Content Card rail gap and validates Banner auth
 
 test('notes template maps Content Cards, Banners, IAM, and push without credential values', () => {
   const pack = createStarterDemoPackConfig({ id: 'notes-fixture', name: 'Notes Fixture' })
+  pack.content.contentCardSurfaces.push({
+    id: 'home-feed',
+    placement: 'home_feed',
+    surface: 'carousel',
+    screen: 'home',
+    title: 'Personalized updates',
+    variant: 'carousel',
+    emptyBehavior: 'hide',
+  })
+  pack.content.bannerSurfaces.push({
+    id: 'home-banner',
+    placement: 'home_banner',
+    screen: 'home',
+    height: 96,
+  })
+  pack.brand.flavorEvents.push({
+    name: 'demo_iam_trigger',
+    label: 'IAM trigger',
+    anchor: 'content_engaged',
+    emitAnchor: true,
+    sample: { source: 'app' },
+  })
   const notes = generateDemoPackNotes(pack)
 
   assert.match(notes, /extras\.placement=home_feed/)
@@ -287,12 +314,32 @@ test('notes template maps Content Cards, Banners, IAM, and push without credenti
   assert.match(notes, /`home_banner`/)
   assert.match(notes, /demo_iam_trigger/)
   assert.match(notes, /PUSH_CAMPAIGN_OR_CANVAS/)
+  assert.match(notes, /Native SDK method/)
+  assert.match(notes, /Typed properties and sample payload/)
   assert.match(notes, /BRAZE_REST_API_KEY_<PACK_ID>/)
   assert.doesNotMatch(notes, /braze\.apiKey\s*=/)
   assert.doesNotMatch(notes, /firebase\.senderId\s*=/)
 })
 
-test('new pack creation is local-ready, self-describing, and authoring-valid', (t) => {
+test('new pack starter is identity-clean and style-clean', () => {
+  const pack = createStarterDemoPackConfig({ id: 'neutral-fixture', name: 'Neutral Fixture' })
+
+  assert.deepEqual(pack.brand.tabs, [{ id: 'home', label: 'Home', icon: 'Home' }])
+  assert.deepEqual(pack.brand.flavorEvents, [])
+  assert.deepEqual(pack.launcher.presets, [])
+  assert.deepEqual(pack.content.categories, [])
+  assert.deepEqual(pack.content.rails, [])
+  assert.deepEqual(pack.content.contentCardSurfaces, [])
+  assert.deepEqual(pack.content.bannerSurfaces, [])
+  assert.notEqual(pack.brand.colors.brand, '#0F766E')
+  assert.notEqual(pack.brand.colors.accent, '#F97316')
+  const notes = generateDemoPackNotes(pack)
+  assert.match(notes, /No IAM trigger declared/)
+  assert.doesNotMatch(notes, /Default IAM test/)
+  assert.doesNotMatch(notes, /extras\.placement=home_feed/)
+})
+
+test('new pack creation is local-ready and warns that its handoff is unfinished', (t) => {
   const destinationRoot = temporaryDirectory(t)
   const pack = createDemoPack(
     { id: 'fresh-solcon-pack', name: 'Fresh SolCon Pack' },
@@ -308,7 +355,38 @@ test('new pack creation is local-ready, self-describing, and authoring-valid', (
   const report = validateDemoPackForAuthoring(pack, { knownPacks: [pack] })
   assert.equal(report.valid, true)
   assert.deepEqual(report.errors, [])
-  assert.deepEqual(report.warnings, [])
+  assert.deepEqual(report.warnings, ['notes.md handoff contains unresolved placeholders'])
+})
+
+test('pack validation warns when declared dashboard mappings drift from notes', (t) => {
+  const destinationRoot = temporaryDirectory(t)
+  const pack = createDemoPack(
+    { id: 'handoff-drift', name: 'Handoff Drift' },
+    { destinationRoot, knownPacks: [] },
+  )
+  pack.content.contentCardSurfaces.push({
+    id: 'offers',
+    placement: 'offers_feed',
+    surface: 'feed',
+    screen: 'home',
+    title: 'Offers',
+    variant: 'feed',
+    emptyBehavior: 'hide',
+  })
+  pack.content.bannerSurfaces.push({ id: 'status', placement: 'status_banner', screen: 'home' })
+  pack.brand.flavorEvents.push({
+    name: 'offer_opened',
+    label: 'Offer opened',
+    anchor: 'content_engaged',
+    emitAnchor: true,
+  })
+
+  const report = validateDemoPackForAuthoring(pack, { knownPacks: [pack] })
+  assert.equal(report.valid, true)
+  assert.match(report.warnings.join('\n'), /unresolved placeholders/)
+  assert.match(report.warnings.join('\n'), /Content Card placement: offers_feed/)
+  assert.match(report.warnings.join('\n'), /Banner placement: status_banner/)
+  assert.match(report.warnings.join('\n'), /IAM trigger mapping: content_engaged/)
 })
 
 test('pack duplication rewrites identity and excludes credential carriers', (t) => {

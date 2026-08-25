@@ -120,8 +120,9 @@ export const inboxContentCardSurface: ContentCardSurface = {
   emptyBehavior: 'empty-state',
 }
 
+// Omission keeps legacy packs compatible; an explicit empty list means the story selected no Content Card surface.
 export const contentCardSurfaces: ContentCardSurface[] =
-  appContent.contentCardSurfaces?.length ? appContent.contentCardSurfaces : [legacyHomeSurface]
+  appContent.contentCardSurfaces === undefined ? [legacyHomeSurface] : appContent.contentCardSurfaces
 
 export function contentCardSurfaceForScreen(screen: string): ContentCardSurface | undefined {
   return contentCardSurfaces.find((surface) => surface.screen === screen && surface.surface !== 'inbox')

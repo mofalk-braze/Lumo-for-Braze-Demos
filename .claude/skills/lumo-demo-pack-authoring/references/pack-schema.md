@@ -98,10 +98,10 @@ Standard attribute names (`StandardAttributes`, same file): `loyalty_tier`,
 | `hero` | load-time + TS type | `{ title, subtitle?, cta? }` |
 | `categories` | load-time (array) | `string[]` |
 | `rails` | load-time (array) | `ContentRail[]`: `{ id, title, items }`; items are `{ id, title, subtitle?, meta?, badge?, image?, category? }` |
-| `contentCardRail` | load-time + web runtime | Required non-empty `{ title, placement }`; validated legacy Home fallback |
+| `contentCardRail` | load-time + web runtime | Required non-empty `{ title, placement }`; validated legacy shape. Neutral new packs use an `unmapped` placeholder, not an approved dashboard placement |
 | `contentCardSurfaces` | optional; fully validated at load-time when present | See below |
 | `bannerSurfaces` | optional; fully validated at load-time when present | Native SDK-owned Banner placements; see below |
-| `wolt`, `aktionMensch` | optional | App-specific content namespaces used by bespoke screen sets (`WoltContent`, `AktionMenschContent` in content.ts). Only relevant if the pack's web build renders those screens |
+| additional namespaces | optional | Pack-specific content consumed by a bespoke private app surface; keep it inside the ignored pack contract rather than adding a real brand namespace to shared tracked types |
 
 ### `content.contentCardSurfaces[]` — validated in `validateContentCardSurfaces`
 
@@ -118,9 +118,12 @@ All seven string fields are required and must be non-empty:
 | `emptyBehavior` | one of `hide`, `empty-state` | `hide` for contextual slots; `empty-state` for inbox-like surfaces |
 | `maxCards` | optional; positive integer | Card cap; any other value fails load-time validation |
 
-Fallback behavior (content.ts): if `contentCardSurfaces` is missing or empty,
+Legacy fallback behavior (content.ts): if `contentCardSurfaces` is undefined,
 the runtime synthesizes one carousel surface on `home` from `contentCardRail`
-(`emptyBehavior: 'hide'`, no `maxCards`).
+(`emptyBehavior: 'hide'`, no `maxCards`). An explicitly empty surfaces array
+suppresses that fallback. The neutral starter therefore keeps the required
+`contentCardRail` shape with an `unmapped` sentinel and declares
+`contentCardSurfaces: []`, so it assumes no Content Card channel or placement.
 
 ### `content.bannerSurfaces[]` — validated in `validateBannerSurfaces`
 
@@ -194,6 +197,12 @@ home, plus one template per type above) ship in `builtInPresets` in
 tools/demo-launcher.mjs — do NOT duplicate them in a pack; add only
 pack-specific story presets.
 
+For a hero action, the product bridge call, `flavorEvents[].anchor` and
+`emitAnchor`, preset payload or `sdk_event_sequence`, dashboard trigger, and
+`notes.md` must share one canonical event and property-type contract. A preset
+whose label resembles the app action but emits a different event is not a
+valid fallback.
+
 Note: the Control Room's "promote" action (`promoteControl` in
 tools/demo-launcher.mjs) writes a staged control back into the active pack's
 `demo-pack.json` (2-space indent). Your pack file can therefore be legitimately
@@ -209,6 +218,15 @@ modified by the Control Room; diff it before committing.
 
 Default (no `web` block): the launcher runs `npm run build` in `web-template/`
 and uses `web-template/dist`.
+
+## `app-source/` — private bespoke product UI
+
+Private screenshot-built source lives beside `demo-pack.json` at
+`app-source/web-template/src/screens/local-pack/`. Expose it only through
+`pack-app.tsx`. Pack apply mirrors that fixed directory into the ignored
+working container and removes stale private code when the selected pack has no
+app surface. Do not add a private pack id, brand name, route, import, or source
+path to tracked `web-template` files.
 
 ## `secrets.properties` (ignored file, next to demo-pack.json)
 

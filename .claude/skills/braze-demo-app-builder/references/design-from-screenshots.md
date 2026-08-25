@@ -31,6 +31,13 @@ From each screenshot, identify:
 - If screenshots conflict with existing runtime patterns, keep runtime patterns and adapt the visual treatment.
 - If brand assets are unavailable, use pack assets or generate/sync assets through the pack workflow.
 - For customer-like examples, prefer fictional/local-only data unless the user explicitly supplies approved assets.
+- Extract the source product's own color roles, typography, density, chrome,
+  and interaction model. Do not begin from the Lumo reference pack's visual
+  system and reskin it.
+- Put private screenshot-built code under the ignored pack's
+  `app-source/web-template/src/screens/local-pack/`, with `pack-app.tsx` as the
+  adapter. Put its images under the same pack's `assets/`. Never add a private
+  screen, route, import, pack id, or asset to tracked `web-template` source.
 
 ## Frontend Checks
 

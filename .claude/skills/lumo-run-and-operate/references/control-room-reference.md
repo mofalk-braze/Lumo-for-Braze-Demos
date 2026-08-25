@@ -1,6 +1,6 @@
 # Control Room operating reference
 
-Companion to `../SKILL.md`. Verified 2026-08-14 against `tools/lumo.mjs`,
+Companion to `../SKILL.md`. Verified 2026-08-25 against `tools/lumo.mjs`,
 `tools/lumo-android-cli.mjs`, `tools/lumo-pack-cli.mjs`,
 `tools/demo-launcher.mjs` (built-in presets, executor, REST validation, HTTP
 routes), and `tools/control-room-template.mjs` (UI, readiness gating, activity
@@ -27,7 +27,8 @@ node tools/lumo.mjs pack open <id> [--config | --notes] [--print]
 | `android doctor` | Android-only readiness check |
 | `android start` | Start or attach exactly one persistent Control Room authority, run apply/build/hash-aware install/launch/proof, then return while authority + clock guard remain alive |
 | `android status` / `stop` | Inspect or deliberately stop the verified authority |
-| `pack new` / `duplicate` | Create a local ignored `.demo-packs/` pack, omit credentials, generate `notes.md` handoff mappings |
+| `pack new` | Create a neutral ignored `.demo-packs/` pack with no assumed story or channel and generate `notes.md` |
+| `pack duplicate` | Create an intentional close variant that preserves the source app/style/story but omits credentials and regenerates `notes.md` |
 | `pack validate` / `open` | Validate one/all packs or open/print config and notes |
 
 Only `android start` accepts `--pack`, `--avd`, and `--port`. Only setup
@@ -42,6 +43,33 @@ Relevant env vars (full axis: `lumo-config-and-flags`): `PORT`,
 `BRAZE_DESIGN_SYSTEM_DIR`. Emulator script: `AVD`, `INSTALL_APP`,
 `LAUNCH_APP`, `APP_ID`, `ANDROID_USER`, `RESET_APP_DATA`, `ANDROID_HOME`,
 `ADB`, `EMULATOR`.
+
+## Guided and Expert modes
+
+The browser always opens in Guided mode at `00 First Demo`. Mode changes only
+the client presentation; it does not fork launcher state or readiness.
+
+The launcher publishes `active.story.controls` and
+`active.story.requirements` through `GET /api/state`:
+
+- controls are visible pack-owned or staged controls, capped at seven;
+- a pinned subset wins when pack-owned/staged controls are pinned;
+- generic standard/internal built-ins never define the story, even if pinned;
+- `requirements.needsRest` is derived only from those selected story controls;
+- `requirements.needsPush` is true only for a selected push control or a
+  selected control marked `requiresPushToken`.
+
+Guided presents Pack/App/Story readiness, one derived next action, configured
+story controls, recent audience proof, normal launch/user setup, Pack Manager,
+guided troubleshooting, and redacted bundle download. Expert adds Control
+Templates, raw/custom REST authoring, runtime hashes and config, logs, debug
+events, REST responses, and Android live-web override controls. An active or
+uncertain `DEV OVERRIDE` safety chip stays visible in either mode.
+
+The next-action order is Pack, then Story, then the prerequisites derived from
+that Story. If Story is missing, the action copies the
+`braze-solution-demo-campaign` prompt; it does not send the operator into SDK or
+device setup before the experience contract exists.
 
 ## Built-in control presets
 
@@ -131,17 +159,17 @@ From `validateBrazeRestRequest`:
 
 ## Readiness checks and gating
 
-Cockpit Readiness panel rows (from `readinessChecks()`):
+Cockpit readiness rows (from `readinessChecks()`):
 
 | Row | Green when | Common non-green cause |
 |---|---|---|
 | Demo | A pack is selected | No pack |
-| Braze | SDK key+endpoint configured; REST too if any REST controls exist | Missing session/env REST key |
+| Braze | SDK key+endpoint configured; REST too only when the selected story requires REST | Missing SDK setup or story-required session/env REST key |
 | Device | Native app reported runtime matching manifest | Not launched, stale install, hash mismatch, launch job failed |
 | Trust | Android HTTPS trust telemetry ready (auto-green on iOS) | Zscaler/TLS failure; check names the failing URL |
-| Push | Push token telemetry current for active user | Token absent, wrong user, registration error |
+| Push | Selected story requires push and token telemetry is current for active user | Token absent, wrong user, registration error; row is omitted when story does not need push |
 | User | Pending = applied = device-reported external ID | Typed but not applied; device echo pending |
-| Story | ≥1 pinned/ready story control | Nothing pinned |
+| Story | At least one pack-owned or staged story control | No durable pack/staged story; standard templates never count |
 
 Gating (`controlBlockReason`): every execute button is disabled while any of
 these hold, and the button tooltip shows the reason —
@@ -153,8 +181,9 @@ these hold, and the button tooltip shows the reason —
    (`requiresPushToken` or the `demo_iam_trigger` event).
 4. Push reason — for controls with `requiresPushToken: true`.
 
-Generic campaign/Canvas triggers are NOT push-blocked unless you mark them
-push-dependent; the editor warns `message channel unverified`.
+Generic campaign/Canvas triggers are not push-blocked unless their selected
+story control is marked push-dependent; the editor warns `message channel
+unverified`.
 
 ## Activity feed vs diagnostics classification
 
@@ -192,7 +221,7 @@ Activity operations:
 | Method + path | Purpose |
 |---|---|
 | `GET /` | Control Room UI |
-| `GET /api/state` | Full public state (pack, profile, presets, runtime, ledger, jobs) |
+| `GET /api/state` | Full public state (pack, profile, presets, selected story controls/requirements, runtime, ledger, jobs) |
 | `GET /api/events` | Server-sent events stream of state |
 | `GET /api/packs` | Pack list |
 | `GET /api/pack-manager` | Pack library with source, notes, configHash/runtimeHash, authoring errors, and warnings |

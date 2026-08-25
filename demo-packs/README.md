@@ -9,6 +9,14 @@ Each pack contains:
 
 - `demo-pack.json` for public brand, content, event, and demo-user metadata.
 - `secrets.properties` for local Braze credentials. This file is ignored.
+- `DEMO.md` for an approved private target belief, hero journey, typed
+  signal/surface contract, scope, and non-goals when the pack is built for a
+  real demo.
+- `notes.md` for exact dashboard ids, placements, presenter sequence, proof,
+  reset, and fallback.
+- Optional private screenshot-built UI under
+  `app-source/web-template/src/screens/local-pack/`, exposed by
+  `pack-app.tsx`. Local/customer pack code stays ignored.
 - Optional `launcher.presets` in `demo-pack.json` for reusable Control Room controls:
   SDK events, SDK attributes, SDK purchases, REST `/users/track` events, and
   API-triggered campaign/canvas sends.
@@ -56,9 +64,12 @@ Each surface uses:
 - `emptyBehavior`: `hide` for contextual slots, `empty-state` for inbox-like surfaces.
 - optional `maxCards`: positive integer cap.
 
-Default demo-building guidance is to provide an inbox-style surface when the
-source app has notifications/messages or the story needs persistence, plus one
-contextual slot where cards fit naturally into the screenshot content.
+Add a Content Card surface only when the approved story needs one. An
+inbox-style surface fits persistent message history; a contextual slot belongs
+where it fits the source product action and screenshot layout. An explicitly
+empty `contentCardSurfaces` array suppresses the legacy fallback. Keep the
+required neutral `contentCardRail` shape unmapped until a real surface is
+approved.
 
 ## Banner Surfaces
 
@@ -81,15 +92,28 @@ Manager**, or from the repo CLI:
 
 ```sh
 node tools/lumo.mjs pack new sample-pack --name "Sample Pack"
-node tools/lumo.mjs pack duplicate lumo-default sample-pack --name "Sample Pack"
 node tools/lumo.mjs pack validate sample-pack
 node tools/lumo.mjs pack open sample-pack --notes
 ```
 
-New and duplicated packs always go to ignored `.demo-packs/`. Duplicate never
-copies credentials. Both paths generate `notes.md` with Content Card, Banner,
-IAM, and push dashboard mappings, presenter sequence, proof, and fallback
-fields. Complete that handoff before treating a pack as shareable.
+Use `new` for every new product concept. It starts with one Home tab, neutral
+colors, empty message surfaces, and no assumed story event or presenter preset.
+Never copy the Lumo pack and strip it down.
+
+Use `duplicate <source-id> <new-id>` only for an intentional close variant.
+Duplicate preserves the source app, styling, story, events, placements, assets,
+and private surface; it never copies credentials and regenerates `notes.md`.
+
+Both paths go to ignored `.demo-packs/`. Generated `notes.md` starts with the
+action-to-SDK-to-typed-payload-to-Braze-to-visible-result contract and makes
+Content Card, Banner, IAM, and push explicit yes/no story decisions. Complete
+its dashboard objects, audience, presenter sequence, proof, reset, and fallback
+fields before treating the pack as shareable.
+
+`lumo pack validate` can structurally pass while warning that `notes.md` still
+contains `<...>` placeholders or has drifted from declared Content Card,
+Banner, or IAM mappings. Those warnings are unfinished handoff work, not demo
+readiness.
 
 Applying a pack generates `web-template/public/demo-runtime.json`, web config,
 synced assets, Android seed metadata, and iOS runtime defaults. Validate with:

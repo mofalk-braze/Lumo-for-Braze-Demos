@@ -172,12 +172,13 @@ EXACT COMMANDS — Path A (Control Room, recommended for non-engineers):
 npm run lumo:cockpit
 ```
 
-Open the printed URL → Session & Profile card → expand **"SDK and REST
-configuration"** → fill **SDK API key**, **SDK endpoint** (the **Braze
-cluster** dropdown fills both endpoints), optionally **REST endpoint** +
-**REST API key** (placeholder says `Session only, never saved` — REST keys
-are held in memory only) → click **Save config**. Saving writes the pack's
-`secrets.properties` AND automatically re-applies the pack.
+Open the printed URL → **01 Demo Cockpit** → expand **SDK configuration** →
+fill **SDK API key** and **SDK endpoint** (the **Braze cluster** dropdown fills
+the endpoints) → click **Save configuration**. Guided mode shows REST endpoint
+and session-only REST key only when the configured story needs host-side REST;
+Expert mode exposes them for optional setup. Saving writes the pack's
+`secrets.properties` and automatically re-applies the pack; the REST key stays
+in launcher memory only.
 
 Path B (file + apply):
 
@@ -191,7 +192,7 @@ npm run lumo:apply                                   # lumo-default pack
 
 EXPECTED OBSERVATION (gate):
 
-1. Control Room credential status chip (next to Save config) reads
+1. Control Room credential status chip (next to Save configuration) reads
    **`SDK ready`** (chip turns green). `SDK missing` = key or endpoint absent.
 2. Seeds reached the Android build input — check presence WITHOUT printing
    values:
@@ -203,7 +204,7 @@ EXPECTED OBSERVATION (gate):
 
 BRANCHES:
 
-- `SDK_KEY_MISSING` after Save config → the wrong pack was selected in
+- `SDK_KEY_MISSING` after Save configuration → the wrong pack was selected in
   Control Room; credentials are per-pack. Select the pack you will demo, save
   again. (Key names/index: `lumo-config-and-flags`.)
 - Tempted to type the key straight into `local.properties` or any generated

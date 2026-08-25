@@ -16,6 +16,8 @@ import {
   androidSourceReadinessMatchesExpectation,
   assertOperatorSnapshotContext,
   correlateDeviceCommands,
+  controlRoomStoryControls,
+  controlRoomStoryRequirements,
   createOwnedChildSingleton,
   createOperatorExecutionSequence,
   extractAndroidSourceReadiness,
@@ -809,6 +811,43 @@ test('server allow-list is exactly the first seven visible pinned controls', () 
   assert.equal(selected.some((control) => control.id === 'control_8'), false)
 })
 
+test('Control Room story readiness ignores generic fallback controls, even when pinned', () => {
+  const genericControls = [
+    { id: 'generic_sdk', type: 'sdk_event', transport: 'app_sdk', origin: 'standard', pinned: true },
+    { id: 'generic_rest', type: 'campaign_trigger', transport: 'braze_rest', origin: 'standard', pinned: true },
+  ]
+  assert.deepEqual(controlRoomStoryControls(genericControls), [])
+  assert.deepEqual(controlRoomStoryRequirements(genericControls), {
+    configured: false,
+    controlIds: [],
+    needsRest: false,
+    needsPush: false,
+  })
+})
+
+test('Control Room derives REST and push readiness only from the selected pack story', () => {
+  const controls = [
+    { id: 'pack_sdk', type: 'sdk_event', transport: 'app_sdk', origin: 'pack_library', pinned: true },
+    { id: 'staged_rest', type: 'canvas_trigger', transport: 'braze_rest', origin: 'staged', staged: true },
+    { id: 'pack_push', type: 'push_readiness', transport: 'app_sdk', origin: 'pack_story' },
+  ]
+  assert.deepEqual(controlRoomStoryControls(controls).map((control) => control.id), ['pack_sdk'])
+  assert.deepEqual(controlRoomStoryRequirements(controls), {
+    configured: true,
+    controlIds: ['pack_sdk'],
+    needsRest: false,
+    needsPush: false,
+  })
+
+  const unpinned = controls.map((control) => ({ ...control, pinned: false }))
+  assert.deepEqual(controlRoomStoryRequirements(unpinned), {
+    configured: true,
+    controlIds: ['pack_sdk', 'staged_rest', 'pack_push'],
+    needsRest: true,
+    needsPush: true,
+  })
+})
+
 test('live-web hazard remains fail-closed after an error or orphaned native override', () => {
   const clean = liveWebHazard({
     deviceRuntime: { platform: 'android', sourceOverride: false },
@@ -1143,8 +1182,37 @@ test('web build hashing ignores local tooling churn but includes source changes'
   }
 })
 
-test('Control Room renders Diagnostics-only live-web controls with parseable client JavaScript', () => {
+test('Control Room defaults to Guided First Demo while preserving Expert diagnostics', () => {
   const html = launcherHtml()
+  assert.match(html, /<button class="active" data-view="first-demo"><span class="mark">00<\/span><span>First Demo<\/span><\/button>/)
+  assert.match(html, /id="modeToggle"/)
+  assert.match(html, /view: 'first-demo'/)
+  assert.match(html, /mode: 'guided'/)
+  assert.match(html, /\.guided \.expert-only \{ display: none !important; \}/)
+  assert.match(html, /id="diagnosticsNavLabel">Help &amp; Troubleshooting/)
+  assert.match(html, /<section class="view" id="view-diagnostics">/)
+  assert.match(html, /id="troubleshootingCards"/)
+  const diagnosticBundleButton = html.match(/<button[^>]*id="downloadDiagnostics"[^>]*>/)?.[0]
+  assert.ok(diagnosticBundleButton, 'expected the redacted diagnostic bundle action')
+  assert.doesNotMatch(diagnosticBundleButton, /expert-only/)
+  assert.match(html, /id="liveWebPanel"[^>]*expert-only|expert-only" id="liveWebPanel"/)
+  assert.match(html, /<section class="view expert-only" id="view-templates">/)
+  assert.match(html, /cockpit-rest-panel expert-only/)
+  assert.match(html, /id="saveCredentials"[^>]*>[^<]*(?:<[^>]+>)*<span class="button-label">Save configuration<\/span>/)
+  assert.match(html, /A REST API key is optional and is not required for readiness/)
+  assert.match(html, /Generic templates are authoring aids and do not count as a story/)
+  assert.match(html, /firstDemoNextAction/)
+  assert.match(html, /Copy agent starter prompt/)
+  assert.match(html, /braze-solution-demo-campaign/)
+  assert.match(html, /navigator\.clipboard\.writeText\(storyPlanningPrompt\)/)
+  assert.ok(
+    html.indexOf("if (!story || story.level !== 'success')") <
+      html.indexOf("if (!braze || braze.level !== 'success')"),
+    'story definition must precede story-derived runtime setup',
+  )
+  assert.match(html, /Duplicate close variant/)
+  assert.match(html, /Handoff incomplete/)
+  assert.match(html, /Structure valid · handoff incomplete/)
   assert.match(html, /Android Live Web · DEV OVERRIDE/)
   assert.match(html, /\/api\/development\/live-web\/start/)
   assert.match(html, /\/api\/development\/live-web\/stop/)

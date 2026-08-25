@@ -24,6 +24,8 @@ export const packCommandUsage = `Usage:
   lumo pack open <id> [--config | --notes] [--print] [--json]
 
 New and duplicated packs always go to the ignored .demo-packs/ workspace.
+Use new for a new product or customer story; it starts with neutral styling and no assumed Braze channels.
+Use duplicate only for a close variant; it preserves the source app, styling, story, events, and placements.
 Duplicate deliberately omits credentials and regenerates notes.md.`
 
 const VALUE_FLAGS = new Set(['name', 'description'])

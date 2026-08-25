@@ -1,0 +1,4 @@
+interface:
+  display_name: "Braze Solution Demo Campaign"
+  short_description: "Shape a focused, credible Braze demo story"
+  default_prompt: "Use $braze-solution-demo-campaign to turn my evidence and screenshots into a focused demo blueprint."

@@ -55,27 +55,54 @@ reuse it or stop it rather than stacking servers.
 
 ## 2. Control Room tour
 
-Five sections in the left sidebar (source: `tools/control-room-template.mjs`),
-plus a **Present** toggle in the top bar that hides all operator panels and
-shows only Story Controls + Activity Feed for screen-sharing.
+The Control Room starts in **Guided** mode at **00 First Demo**. Guided keeps
+the normal setup, launch, story, proof, pack, and troubleshooting path visible.
+Use **Expert mode** only for template engineering, raw REST, runtime hashes,
+logs, REST responses, and development overrides. Both modes are clients of the
+same launcher state; switching modes does not start another authority.
+
+The **Present** toggle hides operator panels and shows Story Controls plus the
+Activity Feed for screen-sharing.
+
+### 00 First Demo
+
+This is the default operating path for a new SolCon:
+
+- **Pack** confirms that one demo pack is selected.
+- **App** combines SDK access, native runtime, trust, active user, and push only
+  when the configured story requires push.
+- **Story** accepts only pack-owned or staged controls. A pinned generic
+  built-in template is still an authoring aid and cannot make Story ready.
+- **Next action** chooses one safe step from the same readiness evidence used by
+  the cockpit. When Story is missing, it copies the
+  `braze-solution-demo-campaign` starter prompt before asking for SDK, REST,
+  push, or device work. Once Story exists, it can configure story access,
+  launch, verify trust, apply the user, verify push, or open Presenter Remote.
+- **Your story** exposes only the configured controls and their Run action.
+- **Latest proof** reuses audience-readable Activity Feed evidence.
+
+Do not treat `00 First Demo` as an app builder. Paste the copied prompt into the
+coding agent at the repository root, approve `DEMO.md`, then use
+`lumo-new-demo-campaign` to create durable pack controls. The Expert template
+builder is a manual fallback.
 
 ### 01 Demo Cockpit
 
 - **Setup panel**: demo pack selector, platform (Android/iOS), **External
   user ID** and **Display name** for the active demo user, and a collapsible
-  "SDK and REST configuration" editor with Braze cluster presets (US-01…US-08,
-  US-10, EU-01/02, AU-01, ID-01, JP-01, KR-01 — no US-09; fills SDK + REST
-  endpoints).
-  Buttons: **Save** (persist selection), **Apply user** (push identity to the
-  device), **Create user** (generate a fresh external ID and apply it),
-  **Apply pack** (apply-only, no build), **Launch** (full
-  apply → build → install → launch), **Verify** (export the active user
-  profile via REST).
-- **Readiness panel**: seven live checks — Demo, Braze, Device, Trust, Push,
-  User, Story — each with an observable level and a next step. The top bar
-  shows `Ready` or `N blockers`.
+  SDK configuration editor with Braze cluster presets (US-01…US-08, US-10,
+  EU-01/02, AU-01, ID-01, JP-01, KR-01 — no US-09). Guided shows REST fields
+  only when the configured story contains a host-side REST control; the REST
+  key remains session-only. **Save configuration** always saves SDK fields and
+  any currently required REST access.
+  Guided buttons: **Apply user** and **Launch** (full apply → build → install →
+  launch). Expert also exposes **Save**, **Create user**, **Apply pack**, and
+  **Verify** profile.
+- **Readiness panel**: Demo, Braze, Device, Trust, User, and Story, plus Push
+  only when the configured story requires it. Each row has observable evidence
+  and a next step. The top bar shows `Ready` or `N blockers`.
 - **Story Controls**: the pinned/ready controls for the live walkthrough.
-- **Custom REST Control**: run or stage a safe ad-hoc Braze REST call.
+- **Custom REST Control** (Expert): run or stage a safe ad-hoc Braze REST call.
 - **Activity Feed** (latest few entries; full feed is section 02).
 
 ### 02 Activity Feed
@@ -102,7 +129,7 @@ template). If you expect a row in the feed and don't see it → check Debug
 Events before assuming the action failed. Full type/category tables:
 `references/control-room-reference.md`.
 
-### 03 Control Templates
+### 03 Control Templates (Expert)
 
 Every runnable control in one overview: built-in standard templates (change
 user, log event/attribute/purchase, IAM trigger, Content Cards refresh, push
@@ -124,18 +151,22 @@ active pack's `launcher.presets` library, plus your staged controls.
 
 ### 04 Pack Manager
 
-Create a clean local starter pack or duplicate an existing pack into ignored
-`.demo-packs/`. Both operations generate `notes.md`; duplicate copies portable
-assets and app-source but deliberately excludes credentials, local state, and
-the source notes. The library shows committed/local source, configHash,
-runtimeHash, notes presence, validation errors, and warnings. Use **Open pack**,
-**Open config**, or **Open notes** to hand authoring back to the source files.
+Create a neutral local starter pack for every new concept. Use **Duplicate
+close variant** only when the human intentionally wants to preserve an existing
+app, style, story, events, placements, assets, and private surface. Both
+operations write to ignored `.demo-packs/` and generate `notes.md`; duplicate
+deliberately excludes credentials, local state, and the source notes.
+
+Guided shows source, handoff access, validation errors, and warnings. Expert
+also shows `configHash`, `runtimeHash`, and raw config access. Validation
+warnings such as unresolved handoff placeholders mean the pack is not ready to
+share even when structural validation passes.
 
 The safe sequence shown in the UI is: create → complete dashboard mappings in
 `notes.md` → validate → apply → launch Android in bundled mode. Pack Manager
 does not apply a pack or put secrets into it.
 
-### 05 Diagnostics
+### 05 Help & Troubleshooting (Guided) / Diagnostics (Expert)
 
 - **Guided Troubleshooting**: evidence-backed cards for launch, selected-pack
   credentials, runtime identity, rendered source, Android trust/clock, push,
@@ -144,6 +175,7 @@ does not apply a pack or put secrets into it.
 - **Download redacted bundle**: downloads `GET /api/diagnostics/bundle` with
   credentials, tokens, personal identifiers, private-pack names, and
   user-specific filesystem paths removed.
+- The following raw panels are **Expert-only**.
 - **Runtime Contract**: expected pack `id`, `configHash` (fingerprint of the
   applied public config), `runtimeHash` v2, source mode, and expected render
   sources per platform.
@@ -301,10 +333,10 @@ conventions and handoff: `lumo-secrets-and-sanitization`.
 | Launcher state (active pack/user/platform, staged controls per pack, ledger, push/trust telemetry, REST history) | `.demo-launcher/state.json` |
 | Redacted Activity Feed archives | `.demo-launcher/activity-archives/` (mode 0600) |
 | Emulator boot/system log | `/tmp/lumo-demo-emulator.log` |
-| Apply/build/launch job logs | Control Room → Diagnostics → Launcher Logs (in-memory, last 10 jobs; gone on restart) |
+| Apply/build/launch job logs | Control Room → Expert Diagnostics → Launcher Logs (in-memory, last 10 jobs; gone on restart) |
 | Device → launcher telemetry | Android posts to `http://10.0.2.2:<port>/api/device-events` (emulator's alias for the host); iOS simulator posts to `http://localhost:<port>/api/device-events` |
-| REST response history | Control Room → Diagnostics → REST Responses (cap 40, redacted) |
-| Redacted support bundle | Control Room → Diagnostics → **Download redacted bundle**, or `GET /api/diagnostics/bundle` |
+| REST response history | Control Room → Expert Diagnostics → REST Responses (cap 40, redacted) |
+| Redacted support bundle | Control Room → Help & Troubleshooting → **Download redacted bundle**, or `GET /api/diagnostics/bundle` |
 
 `.demo-launcher/state.json` is a safe cache — deleting it resets cockpit
 selections and staged controls but touches nothing on the device or in packs.

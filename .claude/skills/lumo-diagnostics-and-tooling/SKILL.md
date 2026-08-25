@@ -42,7 +42,7 @@ Android push address; an **AVD** is the Android emulator device definition.
 | Is the repo safe to publish/push? | Public readiness | `npm run public:check` |
 | Same two, batched (commit gate) | Precommit | `npm run check:precommit` |
 | Which pack/hash is in each location right now? | Drift script | `node .claude/skills/lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs` |
-| What is the live device actually reporting? | Control Room → Diagnostics | `npm run lumo:cockpit`, view 05 |
+| What is the live device actually reporting? | Control Room → Help & Troubleshooting / Expert Diagnostics | `npm run lumo:cockpit`, view 05 |
 | What does the Android app itself think? | On-device debug drawer | long-press the app's WebView |
 
 Note: `check:precommit` runs capability tests, runtime validation, the secret
@@ -207,11 +207,11 @@ success prints `Public readiness check passed.`. For the policy behind both
 (what may be committed, handoff protocol, incident response), see
 `lumo-secrets-and-sanitization`.
 
-## 5. Control Room Diagnostics view (live device truth)
+## 5. Control Room Troubleshooting And Diagnostics (Live Device Truth)
 
 Start the Control Room (`npm run lumo:cockpit`, prints
 `Braze Demo Control Room running at http://127.0.0.1:<port>`), open it, and
-click **05 Diagnostics** in the left nav. Start with:
+click **05 Help & Troubleshooting** in Guided mode. Start with:
 
 - **Guided Troubleshooting** — cards derived from current blockers and native
   evidence for Android launch, selected-pack credentials, runtime identity,
@@ -222,8 +222,9 @@ click **05 Diagnostics** in the left nav. Start with:
   private-pack names, and user-specific paths redacted. Use this instead of
   sharing raw `.demo-launcher/state.json` or copied logs.
 
-Then inspect the evidence panels (verified in
-`tools/control-room-template.mjs`):
+If those guided checks do not isolate the failure, switch to **Expert mode**.
+The same nav item becomes **05 Diagnostics** and exposes the raw evidence
+panels below (verified in `tools/control-room-template.mjs`):
 
 - **Runtime Contract** — the applied pack's manifest: `id`, `name`,
   `configHash`, `runtimeHash`, `assetBase`, and `expectedSources` per platform (browser
@@ -316,7 +317,7 @@ Bridge traffic is printed as `[bridge ←] <action> ...` lines
 | `/tmp/lumo-demo-emulator.log` | Android emulator stdout/stderr from `android-shell/tools/run-demo-emulator.sh` | `tail -f /tmp/lumo-demo-emulator.log` during a launch that hangs |
 | `adb logcat` | App + SDK runtime logs; the shell logs under tag `BrazeDemoShell` (verified `TAG` in MainActivity.kt) | `adb logcat -s BrazeDemoShell` for shell events; `adb logcat \| grep -i braze` to include Braze SDK internals |
 | `${TMPDIR:-/tmp}/lumo-android-ca/` | Working dir of the Zscaler CA installer (`android-shell/tools/install-zscaler-system-ca.sh`): exported cert, hashes, smoke-check artifacts | Inspect after a failed trust install; on macOS `TMPDIR` is usually a per-user path, so check both |
-| Control Room → Diagnostics → Launcher Logs | The same job output the CLI would print, kept per job | Browser |
+| Control Room → Expert Diagnostics → Launcher Logs | The same job output the CLI would print, kept per job | Browser |
 
 ## 8. Bundled script: `scripts/check-runtime-drift.mjs`
 

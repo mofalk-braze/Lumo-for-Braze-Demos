@@ -55,15 +55,22 @@ node tools/lumo.mjs android start --pack lumo-default
 node tools/lumo.mjs android status
 ```
 
-Open the Control Room URL printed by the launcher, choose `Lumo`, and launch
-Android or iOS. Use the Control Room for setup, authoring, telemetry, and
-diagnostics. Open Presenter Remote from the Control Room for a compact, paired
-view of the active persona, readiness, and up to seven pinned story controls.
-Collapsed Story Controls remain in the Control Room as fallback. Browser
+Open the Control Room URL printed by the launcher. It starts in Guided mode at
+`00 First Demo`, reduces readiness to `Pack`, `App`, and `Story`, and shows one
+next action plus the current proof. A missing Story copies the agent starter
+prompt before it asks for runtime setup. `Help & Troubleshooting` keeps guided
+cards and the redacted diagnostic bundle available. Expert mode restores
+template and payload authoring, hashes, logs, REST responses, and development
+overrides.
+Open Presenter Remote for a compact, paired view of the active persona,
+readiness, and up to seven approved story controls. Collapsed Story Controls
+remain in the Control Room as fallback. Browser
 extension packaging is deferred until three rehearsals show repeated window
 focus or placement friction; any later side-panel wrapper remains a thin client
 of the launcher rather than a new authority.
 Detailed setup and troubleshooting live in `docs/lumo-public-quickstart.md`.
+The post-setup workflow from evidence to a working app and Braze story lives in
+`docs/build-your-first-demo.md`.
 
 ## Diagnostics
 
@@ -75,12 +82,25 @@ npm run validate:demo-runtime
 
 ## Agent Demo Build Workflow
 
-`.claude/skills/` is the canonical source-distributed agent bundle. It includes
-fresh-machine setup, Android push readiness, pack authoring, operation,
-diagnostics, troubleshooting, secrets, QA, architecture, and demo-building
-workflows. Claude Code discovers it automatically when started in this repo.
-Other coding agents should follow `AGENTS.md`, inspect the project skill
-descriptions, and read the owning `SKILL.md` before acting.
+`.claude/skills/` is the canonical source-distributed agent bundle. Claude Code
+discovers it automatically when started in this repo. Other coding agents
+should follow `AGENTS.md`, inspect the project skill descriptions, and read the
+owning `SKILL.md` before acting.
+
+For an incomplete story, screenshots without a journey, an existing Canvas
+that needs an app proof, or the question “what should I build?”, start here:
+
+```text
+Use the project skill braze-solution-demo-campaign. Shape one target belief and
+one small app-to-Braze-to-message journey from my evidence. Define the exact
+typed SDK signal, Braze decision, placement, proof, reset, fallback, and
+do-not-build scope. Do not create a pack, copy Lumo, or mutate Braze until I
+approve the DEMO.md blueprint.
+```
+
+After approval, `lumo-new-demo-campaign` owns the neutral pack, implementation,
+device proof, dashboard handoff, and rehearsal. The detailed workflow and more
+copyable prompts are in `docs/build-your-first-demo.md`.
 
 `plugins/braze-demo-builder/` remains an optional compatibility plugin for the
 namespaced `/braze-demo-builder:demo-build` command:
@@ -100,14 +120,20 @@ workflow:
 
 ```sh
 node tools/lumo.mjs pack new sample-pack --name "Sample Pack"
-node tools/lumo.mjs pack duplicate lumo-default sample-pack --name "Sample Pack"
 node tools/lumo.mjs pack validate sample-pack
 node tools/lumo.mjs pack open sample-pack --notes
 ```
 
-New and duplicated packs go to ignored `.demo-packs/`; credentials are never
-copied. Both paths generate `notes.md` mappings for Content Cards, Banners,
-IAM, push, dashboard objects, proof, and fallback.
+`new` is the default for every new product concept. It starts with neutral
+styling and no assumed event, story control, Content Card, Banner, IAM, or push
+contract. Use `duplicate <source-id> <new-id>` only for an explicitly requested
+close variant because it preserves the source app, styling, story, events,
+placements, assets, and private surface. Both paths write to ignored
+`.demo-packs/`, never copy credentials, and generate `notes.md`.
+
+A structural pack `PASS` can still include handoff warnings for unresolved
+placeholders or mapping drift. Resolve every warning before rehearsal or
+sharing.
 
 ## Local Secrets
 

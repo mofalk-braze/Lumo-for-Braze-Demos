@@ -64,6 +64,8 @@ export function launcherHtml() {
       overflow: hidden;
     }
     .presentation .sidebar { display: none; }
+    .guided .expert-only { display: none !important; }
+    .guided:not(.story-needs-rest) .rest-story-only { display: none !important; }
     .brand img { width: 118px; height: auto; }
     .side-title { margin-top: 34px; }
     .side-title h1 {
@@ -107,6 +109,17 @@ export function launcherHtml() {
     .presentation .title h1 { font-size: 24px; }
     .presentation .title p { display: none; }
     .status-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .panel.first-demo-hero {
+      background: linear-gradient(135deg, rgba(128,30,215,0.98), rgba(48,2,102,0.98));
+      color: #fff;
+      border-color: transparent;
+    }
+    .panel.first-demo-hero h2 { font-size: 28px; }
+    .panel.first-demo-hero p { color: rgba(255,255,255,0.78); max-width: 760px; }
+    .panel.first-demo-hero .chip { background: rgba(255,255,255,0.16); color: #fff; }
+    .panel.first-demo-hero .button.ghost { border-color: rgba(255,255,255,0.42); background: transparent; color: #fff; }
+    .first-demo-steps { display: grid; gap: 10px; }
+    .first-demo-story { display: grid; gap: 10px; }
     .view { display: none; }
     .view.active { display: block; }
     .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 18px; align-items: start; }
@@ -525,11 +538,12 @@ export function launcherHtml() {
           <p>Configure quietly, run the app demo, and show the event-to-message story only when it helps the room.</p>
         </div>
         <nav class="nav" aria-label="Control Room sections">
-          <button class="active" data-view="cockpit"><span class="mark">01</span><span>Demo Cockpit</span></button>
+          <button class="active" data-view="first-demo"><span class="mark">00</span><span>First Demo</span></button>
+          <button data-view="cockpit"><span class="mark">01</span><span>Demo Cockpit</span></button>
           <button data-view="feed"><span class="mark">02</span><span>Activity Feed</span></button>
-          <button data-view="templates"><span class="mark">03</span><span>Control Templates</span></button>
+          <button class="expert-only" data-view="templates"><span class="mark">03</span><span>Control Templates</span></button>
           <button data-view="packs"><span class="mark">04</span><span>Pack Manager</span></button>
-          <button data-view="diagnostics"><span class="mark">05</span><span>Diagnostics</span></button>
+          <button data-view="diagnostics"><span class="mark">05</span><span id="diagnosticsNavLabel">Help &amp; Troubleshooting</span></button>
         </nav>
       </div>
       <div class="callback" id="callback">Callback pending</div>
@@ -537,17 +551,61 @@ export function launcherHtml() {
     <main>
       <div class="topbar">
         <div class="title">
-          <h1 id="pageTitle">Demo Cockpit</h1>
-          <p id="pageSubtitle">Set up the demo, pin the actions that fit your story, and keep the latest activity visible.</p>
+          <h1 id="pageTitle">First Demo</h1>
+          <p id="pageSubtitle">Follow one guided path from an active pack to a working, visible Braze story.</p>
         </div>
         <div class="status-row">
+          ${buttonHtml({ id: 'modeToggle', kind: 'ghost', icon: 'sliders-horizontal', label: 'Expert mode' })}
           ${buttonHtml({ id: 'presenterRemote', kind: 'primary', icon: 'panel-right-open', label: 'Presenter Remote' })}
           ${buttonHtml({ id: 'presentationToggle', kind: 'secondary', icon: 'presentation', label: 'Present' })}
           <span id="topStatus"></span>
         </div>
       </div>
 
-      <section class="view active" id="view-cockpit">
+      <section class="view active" id="view-first-demo">
+        <div class="grid">
+          <section class="panel span-12 first-demo-hero">
+            <span class="chip">Guided path</span>
+            <h2 style="margin-top:12px">Get one story working end to end</h2>
+            <p>Use the selected pack, native app readiness, configured story controls, and Activity Feed as one proof loop. Advanced payload authoring and raw diagnostics remain available in Expert mode.</p>
+            <div class="button-group" style="margin-top:18px">
+              ${buttonHtml({ id: 'firstDemoNext', kind: 'orange', icon: 'arrow-right', label: 'Check setup' })}
+              ${buttonHtml({ kind: 'ghost', icon: 'layout-dashboard', label: 'Open Demo Cockpit', attrs: 'data-view-jump="cockpit"' })}
+            </div>
+          </section>
+          <section class="panel span-5">
+            <div class="panel-head">
+              <div>
+                <h2>Three checks</h2>
+                <p>These are derived from the same active pack and readiness evidence as the cockpit.</p>
+              </div>
+            </div>
+            <div class="first-demo-steps" id="firstDemoSteps"></div>
+          </section>
+          <section class="panel span-7">
+            <div class="panel-head">
+              <div>
+                <h2>Your story</h2>
+                <p>Only pack-owned or staged story controls count. Generic templates never make this step ready.</p>
+              </div>
+              <span class="chip" id="firstDemoStoryStatus">Not configured</span>
+            </div>
+            <div class="first-demo-story" id="firstDemoStory"></div>
+          </section>
+          <section class="panel span-12">
+            <div class="panel-head">
+              <div>
+                <h2>Latest proof</h2>
+                <p>SDK actions, message interactions, profile checks, and launcher outcomes from the existing Activity Feed.</p>
+              </div>
+              ${buttonHtml({ id: 'refreshFirstDemo', kind: 'ghost compact', icon: 'refresh-cw', label: 'Refresh' })}
+            </div>
+            <div class="activity" id="firstDemoActivity"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-cockpit">
         <div class="grid">
           <section class="panel span-4 presentation-hide">
             <div class="panel-head">
@@ -579,7 +637,8 @@ export function launcherHtml() {
               </div>
             </div>
             <details class="credentials-box" id="credentialsPanel">
-              <summary>SDK and REST configuration</summary>
+              <summary id="credentialsSummary">SDK configuration</summary>
+              <p class="field-note" id="credentialGuidance">The SDK key configures the native app. REST access is only needed when the approved story uses host-side REST controls.</p>
               <div class="form-grid">
                 <div>
                   <label for="brazeCluster">Braze cluster</label>
@@ -594,11 +653,11 @@ export function launcherHtml() {
                   <label for="sdkEndpoint">SDK endpoint</label>
                   <input id="sdkEndpoint" autocomplete="off" placeholder="sdk.iad-03.braze.com" />
                 </div>
-                <div>
+                <div class="rest-story-only">
                   <label for="restEndpoint">REST endpoint</label>
                   <input id="restEndpoint" autocomplete="off" placeholder="https://rest.iad-03.braze.com" />
                 </div>
-                <div>
+                <div class="rest-story-only">
                   <label for="restApiKey">REST API key</label>
                   <input id="restApiKey" autocomplete="off" placeholder="Session only, never saved" />
                 </div>
@@ -612,17 +671,17 @@ export function launcherHtml() {
                 </div>
               </div>
               <div class="button-group" style="margin-top:12px">
-                ${buttonHtml({ id: 'saveCredentials', kind: 'secondary', icon: 'save', label: 'Save config' })}
+                ${buttonHtml({ id: 'saveCredentials', kind: 'primary', icon: 'save', label: 'Save configuration' })}
                 <span class="chip" id="credentialStatus">Not loaded</span>
               </div>
             </details>
             <div class="button-group" style="margin-top:15px">
-              ${buttonHtml({ id: 'saveActive', kind: 'primary', icon: 'save', label: 'Save' })}
+              ${buttonHtml({ id: 'saveActive', kind: 'primary expert-only', icon: 'save', label: 'Save' })}
               ${buttonHtml({ id: 'applyUser', kind: 'secondary', icon: 'user-check', label: 'Apply user' })}
-              ${buttonHtml({ id: 'createApplyUser', kind: 'secondary', icon: 'user-plus', label: 'Create user' })}
-              ${buttonHtml({ id: 'apply', kind: 'secondary', icon: 'check', label: 'Apply pack' })}
+              ${buttonHtml({ id: 'createApplyUser', kind: 'secondary expert-only', icon: 'user-plus', label: 'Create user' })}
+              ${buttonHtml({ id: 'apply', kind: 'secondary expert-only', icon: 'check', label: 'Apply pack' })}
               ${buttonHtml({ id: 'run', kind: 'orange', icon: 'rocket', label: 'Launch' })}
-              ${buttonHtml({ id: 'exportUser', kind: 'ghost', icon: 'badge-check', label: 'Verify' })}
+              ${buttonHtml({ id: 'exportUser', kind: 'ghost expert-only', icon: 'badge-check', label: 'Verify' })}
             </div>
             <div class="identity-status">
               <span class="chip" id="identityStatus">User pending</span>
@@ -648,12 +707,12 @@ export function launcherHtml() {
                 <h2>Story Controls</h2>
                 <p>Pinned or ready controls remain here as a fallback. Use Presenter Remote for the live story.</p>
               </div>
-              ${buttonHtml({ kind: 'ghost compact presentation-hide', icon: 'settings', label: 'Manage', attrs: 'data-view-jump="templates" data-template-filter-jump="story"' })}
+              ${buttonHtml({ kind: 'ghost compact presentation-hide expert-only', icon: 'settings', label: 'Manage', attrs: 'data-view-jump="templates" data-template-filter-jump="story"' })}
             </div>
             <div class="control-grid" id="storyControls"></div>
           </details>
 
-          <section class="panel span-8 presentation-hide cockpit-rest-panel">
+          <section class="panel span-8 presentation-hide cockpit-rest-panel expert-only">
             <div class="panel-head">
               <div>
                 <h2>Custom REST Control</h2>
@@ -770,7 +829,7 @@ export function launcherHtml() {
         </section>
       </section>
 
-      <section class="view" id="view-templates">
+      <section class="view expert-only" id="view-templates">
         <div class="template-workspace">
           <section class="panel">
             <div class="panel-head">
@@ -868,7 +927,7 @@ export function launcherHtml() {
             <div class="panel-head">
               <div>
                 <h2>Create a local pack</h2>
-                <p>Start clean or duplicate an existing story. Both paths create an ignored local workspace with a dashboard handoff template.</p>
+                <p>Start every new concept from the neutral pack. Duplicate only when you intentionally want a close variant of an existing app and story.</p>
               </div>
             </div>
             <div class="readiness" style="margin-bottom:14px">
@@ -881,7 +940,7 @@ export function launcherHtml() {
                 <label for="packManagerOperation">Operation</label>
                 <select id="packManagerOperation">
                   <option value="new">New starter pack</option>
-                  <option value="duplicate">Duplicate existing pack</option>
+                  <option value="duplicate">Duplicate close variant</option>
                 </select>
               </div>
               <div id="packManagerSourceField" hidden>
@@ -912,7 +971,7 @@ export function launcherHtml() {
             <div class="panel-head">
               <div>
                 <h2>Pack Library</h2>
-                <p>Committed examples and ignored working packs, with authoring validation and deployment hashes.</p>
+                <p>Committed examples and ignored working packs, with authoring validation. Deployment internals are available in Expert mode.</p>
               </div>
               ${buttonHtml({ id: 'packManagerRefresh', kind: 'ghost compact', icon: 'refresh-cw', label: 'Refresh' })}
             </div>
@@ -933,7 +992,7 @@ export function launcherHtml() {
             </div>
             <div class="troubleshooting-grid" id="troubleshootingCards"></div>
           </section>
-          <section class="panel span-12 dev-override" id="liveWebPanel">
+          <section class="panel span-12 dev-override expert-only" id="liveWebPanel">
             <div class="panel-head">
               <div>
                 <h2>Android Live Web · DEV OVERRIDE</h2>
@@ -947,7 +1006,7 @@ export function launcherHtml() {
               ${buttonHtml({ id: 'liveWebStop', kind: 'secondary', icon: 'package-check', label: 'Restore bundled mode' })}
             </div>
           </section>
-          <section class="panel span-6">
+          <section class="panel span-6 expert-only">
             <div class="panel-head">
               <div>
                 <h2>Runtime Contract</h2>
@@ -956,7 +1015,7 @@ export function launcherHtml() {
             </div>
             <pre class="json light" id="runtimeDetails"></pre>
           </section>
-          <section class="panel span-6">
+          <section class="panel span-6 expert-only">
             <div class="panel-head">
               <div>
                 <h2>Device Identity</h2>
@@ -965,7 +1024,7 @@ export function launcherHtml() {
             </div>
             <pre class="json light" id="deviceDetails"></pre>
           </section>
-          <section class="panel span-6">
+          <section class="panel span-6 expert-only">
             <div class="panel-head">
               <div>
                 <h2>Launcher Logs</h2>
@@ -974,7 +1033,7 @@ export function launcherHtml() {
             </div>
             <pre class="logs" id="logs">Launcher ready.</pre>
           </section>
-          <section class="panel span-6">
+          <section class="panel span-6 expert-only">
             <div class="panel-head">
               <div>
                 <h2>Debug Events</h2>
@@ -983,7 +1042,7 @@ export function launcherHtml() {
             </div>
             <div class="activity" id="debugActivity"></div>
           </section>
-          <section class="panel span-12">
+          <section class="panel span-12 expert-only">
             <div class="panel-head">
               <div>
                 <h2>REST Responses</h2>
@@ -1001,7 +1060,8 @@ export function launcherHtml() {
     const state = {
       data: null,
       packManager: null,
-      view: 'cockpit',
+      view: 'first-demo',
+      mode: 'guided',
       busy: false,
       selectedControlId: '',
       editorLoadedControlId: '',
@@ -1018,12 +1078,19 @@ export function launcherHtml() {
       displayNameDirty: false,
     }
     const titles = {
+      'first-demo': ['First Demo', 'Follow one guided path from an active pack to a working, visible Braze story.'],
       cockpit: ['Demo Cockpit', 'Set up the demo, pin the actions that fit your story, and keep the latest activity visible.'],
       feed: ['Activity Feed', 'Audience-readable proof of actions, events, message triggers, profile checks, and responses.'],
       templates: ['Control Templates', 'Standard controls become demo-specific when you stage, pin, lock, and reuse them.'],
       packs: ['Pack Manager', 'Create, duplicate, validate, and open source-of-truth demo packs without copying credentials.'],
       diagnostics: ['Diagnostics', 'Runtime sources, raw logs, REST history, and recovery context.'],
     }
+    const storyPlanningPrompt = [
+      'Use the project skill braze-solution-demo-campaign.',
+      'Help me define the smallest credible Braze demo story from my discovery evidence, screenshots, or existing Canvas.',
+      'Recommend one target belief and one hero journey, then define the exact app action, native SDK signal, typed payload, Braze decision, message placement, proof, reset, fallback, and do-not-build scope.',
+      'Do not copy the current pack, edit code, or mutate Braze until I approve the DEMO.md blueprint.',
+    ].join(' ')
     const templateCategories = [
       ['all', 'All'],
       ['story', 'Story'],
@@ -1187,7 +1254,7 @@ export function launcherHtml() {
     const setBusy = (busy) => {
       state.busy = busy
       document.querySelectorAll('button').forEach((button) => {
-        const navigation = button.matches('[data-view], [data-view-jump], #presentationToggle, #refreshCockpit, #refreshFeed')
+        const navigation = button.matches('[data-view], [data-view-jump], #modeToggle, #presentationToggle, #refreshCockpit, #refreshFeed, #refreshFirstDemo')
         if (!navigation) button.disabled = busy
       })
       renderTopStatus()
@@ -1360,10 +1427,12 @@ export function launcherHtml() {
     }
     function render() {
       if (!state.data) return
+      renderMode()
       renderNav()
       renderTopStatus()
       renderSetup()
       renderReadiness()
+      renderFirstDemo()
       renderStoryControls()
       renderBuilder()
       renderFeed()
@@ -1378,6 +1447,7 @@ export function launcherHtml() {
       if (!state.data) return
       renderTopStatus()
       renderReadiness()
+      renderFirstDemo()
       renderActivityInto('recentActivity', audienceRows(state.data.ledger).slice(0, state.presentation ? 8 : 5))
       if (el('builderActivity')) renderActivityInto('builderActivity', audienceRows(state.data.ledger).slice(0, 4))
       renderFeed()
@@ -1465,6 +1535,28 @@ export function launcherHtml() {
       events.onerror = () => {
         startLivePolling()
       }
+    }
+    function renderMode() {
+      const guided = state.mode !== 'expert'
+      const needsRest = storyRequirements().needsRest
+      if (guided && state.view === 'templates') state.view = 'first-demo'
+      el('shell').classList.toggle('guided', guided)
+      el('shell').classList.toggle('story-needs-rest', needsRest)
+      el('modeToggle').innerHTML = guided
+        ? iconHtml('sliders-horizontal') + '<span class="button-label">Expert mode</span>'
+        : iconHtml('sparkles') + '<span class="button-label">Guided mode</span>'
+      el('modeToggle').setAttribute('aria-pressed', String(!guided))
+      el('modeToggle').title = guided
+        ? 'Show raw payload authoring, template engineering, and diagnostics.'
+        : 'Return to the focused first-demo workflow.'
+      el('diagnosticsNavLabel').textContent = guided ? 'Help & Troubleshooting' : 'Diagnostics'
+      titles.diagnostics = guided
+        ? ['Help & Troubleshooting', 'Use evidence-backed checks and safe next actions without exposing raw launcher internals.']
+        : ['Diagnostics', 'Inspect runtime parity, device identity, logs, REST responses, and development tooling.']
+      el('credentialsSummary').textContent = needsRest ? 'SDK + story REST access' : 'SDK configuration'
+      el('credentialGuidance').textContent = needsRest
+        ? 'The SDK key configures the native app. This approved story also uses host-side REST, so its REST key stays in this launcher session and is never saved to the pack.'
+        : 'The SDK key configures the native app. This approved story does not need host-side REST; its optional REST fields are available in Expert mode.'
     }
     function renderNav() {
       if (state.presentation) state.view = 'cockpit'
@@ -1560,7 +1652,9 @@ export function launcherHtml() {
       ))
       const platform = data.active.platform || 'android'
       const controls = runnableStoryControls()
-      const needsRest = allControls().some((control) => control.transport === 'braze_rest' || restActionTypes.includes(control.type))
+      const requirements = storyRequirements()
+      const needsRest = requirements.needsRest
+      const needsPush = requirements.needsPush
       const identityReason = identityBlockReason()
       const runtimeReason = runtimeBlockReason()
       const trustReason = trustDiagnosticsReason()
@@ -1568,16 +1662,18 @@ export function launcherHtml() {
       const push = activePushReadiness()
       const pushWarning = !pushReason && push && push.lastPushChannelWarning ? push.lastPushChannelWarning : ''
       const trust = activeTrustDiagnostics()
-      const accessLevel = profile.sdkConfigured && (!needsRest || profile.restConfigured)
-        ? 'success'
-        : profile.sdkConfigured
-          ? 'warn'
-          : 'error'
+      const accessLevel = profile.sdkConfigured && (!needsRest || profile.restConfigured) ? 'success' : 'error'
       const accessTitle = profile.sdkConfigured
-        ? (needsRest && !profile.restConfigured ? 'SDK ready, REST unavailable' : 'Braze actions ready')
+        ? (needsRest
+            ? (profile.restConfigured ? 'SDK and REST story access ready' : 'This story still needs REST access')
+            : 'SDK story access ready')
         : 'SDK not configured'
       const accessDetail = profile.sdkConfigured
-        ? (needsRest && !profile.restConfigured ? 'SDK story moments can run. REST-only controls stay in diagnostics until a session key is available.' : 'SDK and configured REST story moments can run for the active user.')
+        ? (needsRest
+            ? (profile.restConfigured
+                ? 'The approved story includes host-side REST controls and the session credential is available.'
+                : 'Add a session-only REST key because the approved story includes host-side REST controls.')
+            : 'This approved story uses app SDK controls. A REST API key is optional and is not required for readiness.')
         : 'Add SDK API key and endpoint before running app SDK story moments.'
       const deviceLevel = runtimeReason
         ? 'error'
@@ -1661,12 +1757,12 @@ export function launcherHtml() {
           title: trustTitle,
           detail: trustDetail,
         },
-        {
+        needsPush ? {
           label: 'Push',
           level: pushLevel,
           title: pushTitle,
           detail: pushDetail,
-        },
+        } : null,
         {
           label: 'User',
           level: identityReason ? 'warn' : 'success',
@@ -1675,11 +1771,11 @@ export function launcherHtml() {
         },
         {
           label: 'Story',
-          level: controls.length ? 'success' : 'warn',
-          title: controls.length ? controls.length + ' controls ready' : 'No story controls pinned',
-          detail: controls.length ? 'Pinned controls are ready in the cockpit.' : 'Pin or stage controls before the live walkthrough.',
+          level: controls.length ? 'success' : 'error',
+          title: controls.length ? controls.length + ' ' + (controls.length === 1 ? 'control' : 'controls') + ' ready' : 'No story controls configured',
+          detail: controls.length ? 'Pack-owned or staged controls define this walkthrough.' : 'Add pack-owned or staged controls. Generic templates are authoring aids and do not count as a story.',
         },
-      ]
+      ].filter(Boolean)
     }
     function renderReadiness() {
       el('readiness').innerHTML = readinessChecks().map((item) => (
@@ -1689,8 +1785,149 @@ export function launcherHtml() {
         '</div>'
       )).join('')
     }
+    function readinessByLabel(label) {
+      return readinessChecks().find((item) => item.label === label) || null
+    }
+    function combinedReadiness(items) {
+      if (items.some((item) => item && item.level === 'error')) return 'error'
+      if (items.some((item) => item && item.level === 'warn')) return 'warn'
+      return 'success'
+    }
+    function firstDemoNextAction() {
+      const demo = readinessByLabel('Demo')
+      const braze = readinessByLabel('Braze')
+      const device = readinessByLabel('Device')
+      const trust = readinessByLabel('Trust')
+      const user = readinessByLabel('User')
+      const story = readinessByLabel('Story')
+      const push = readinessByLabel('Push')
+      const job = state.data && state.data.jobs ? state.data.jobs[0] : null
+      const platform = selectedPlatform()
+      if (!demo || demo.level !== 'success') return { action: 'packs', label: 'Choose a demo pack', icon: 'package-open' }
+      if (!story || story.level !== 'success') return { action: 'story', label: 'Copy agent starter prompt', icon: 'copy' }
+      if (!braze || braze.level !== 'success') return { action: 'credentials', label: storyRequirements().needsRest ? 'Add story access' : 'Configure app SDK', icon: 'key-round' }
+      if (!device || device.level !== 'success') {
+        if (job && job.status === 'running') return { action: 'cockpit', label: 'View launch progress', icon: 'loader-circle' }
+        return { action: 'launch', label: 'Launch ' + (platform === 'ios' ? 'iOS' : 'Android'), icon: 'rocket' }
+      }
+      if (trust && trust.level !== 'success') return { action: 'trust', label: 'Verify Android trust', icon: 'shield-check' }
+      if (user && user.level !== 'success') return { action: 'user', label: 'Apply demo user', icon: 'user-check' }
+      if (push && push.level !== 'success') return { action: 'push', label: 'Verify push readiness', icon: 'bell-ring' }
+      return { action: 'presenter', label: 'Open Presenter Remote', icon: 'panel-right-open' }
+    }
+    function firstDemoStep(label, item, detail) {
+      const level = item ? item.level : 'error'
+      return '<div class="ready-row ' + esc(level) + '">' +
+        '<span class="ready-dot" aria-hidden="true"></span>' +
+        '<div class="ready-copy"><span class="ready-label">' + esc(label) + '</span><strong>' + esc(item ? item.title : 'Not ready') + '</strong><p>' + esc(detail || (item ? item.detail : 'Complete this step before continuing.')) + '</p></div>' +
+      '</div>'
+    }
+    function renderFirstDemo() {
+      const demo = readinessByLabel('Demo')
+      const story = readinessByLabel('Story')
+      const appChecks = ['Braze', 'Device', 'Trust', 'User', 'Push'].map(readinessByLabel).filter(Boolean)
+      const appLevel = combinedReadiness(appChecks)
+      const nextAppCheck = appChecks.find((item) => item.level === 'error') || appChecks.find((item) => item.level === 'warn')
+      const readyAppChecks = appChecks.filter((item) => item.level === 'success').length
+      const app = {
+        level: appLevel,
+        title: appLevel === 'success' ? 'Native app is ready' : readyAppChecks + ' of ' + appChecks.length + ' app checks ready',
+        detail: nextAppCheck ? nextAppCheck.title + '. ' + nextAppCheck.detail : 'SDK access, native runtime, trust, user, and any story-required push proof are aligned.',
+      }
+      el('firstDemoSteps').innerHTML = [
+        firstDemoStep('1 · Pack', demo),
+        firstDemoStep('2 · App', app),
+        firstDemoStep('3 · Story', story),
+      ].join('')
+      const controls = runnableStoryControls()
+      el('firstDemoStoryStatus').className = 'chip ' + (controls.length ? 'success' : 'error')
+      el('firstDemoStoryStatus').textContent = controls.length ? controls.length + ' approved' : 'Not configured'
+      el('firstDemoStory').innerHTML = controls.length
+        ? controls.map((control) => controlCard(control, 'first-demo')).join('')
+        : '<div class="empty">This pack has no approved walkthrough yet. Copy the starter prompt into your coding agent and approve the story before configuring or launching it. Manual Control Templates remain available in Expert mode.</div>'
+      bindControlActions(el('firstDemoStory'))
+      renderActivityInto('firstDemoActivity', audienceRows(state.data.ledger).slice(0, 5))
+      const next = firstDemoNextAction()
+      el('firstDemoNext').dataset.firstDemoAction = next.action
+      el('firstDemoNext').innerHTML = iconHtml(next.icon) + '<span class="button-label">' + esc(next.label) + '</span>'
+      el('firstDemoNext').title = 'Next recommended action: ' + next.label
+      refreshIcons()
+    }
+    async function runFirstDemoNextAction() {
+      const next = firstDemoNextAction()
+      if (next.action === 'packs') {
+        state.view = 'packs'
+        render()
+        await loadPackManager()
+        return
+      }
+      if (next.action === 'credentials') {
+        state.view = 'cockpit'
+        render()
+        el('credentialsPanel').open = true
+        el('credentialsPanel').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+      if (next.action === 'launch') {
+        state.view = 'cockpit'
+        render()
+        el('run').click()
+        return
+      }
+      if (next.action === 'cockpit') {
+        state.view = 'cockpit'
+        render()
+        return
+      }
+      if (next.action === 'trust') {
+        await executeControl('android_trust_diagnostics')
+        return
+      }
+      if (next.action === 'user') {
+        state.view = 'cockpit'
+        render()
+        await applyUser()
+        return
+      }
+      if (next.action === 'story') {
+        try {
+          await navigator.clipboard.writeText(storyPlanningPrompt)
+          alert('Starter prompt copied. Paste it into the coding agent running at the repository root.')
+        } catch {
+          window.prompt('Copy this prompt into the coding agent running at the repository root:', storyPlanningPrompt)
+        }
+        return
+      }
+      if (next.action === 'push') {
+        await executeControl('sdk_push_readiness')
+        return
+      }
+      el('presenterRemote').click()
+    }
     function allControls() {
       return state.data && state.data.active && state.data.active.presets ? state.data.active.presets : []
+    }
+    function configuredStoryControls() {
+      const serverStory = state.data && state.data.active && state.data.active.story ? state.data.active.story : null
+      if (serverStory && Array.isArray(serverStory.controls)) return serverStory.controls
+      const eligible = allControls().filter((control) =>
+        control.type !== 'change_user' &&
+        !control.hidden &&
+        (control.staged || ['pack_library', 'pack_story', 'staged'].includes(control.origin))
+      )
+      const pinned = eligible.filter((control) => control.pinned)
+      return pinned.length ? pinned : eligible
+    }
+    function storyRequirements() {
+      const serverStory = state.data && state.data.active && state.data.active.story ? state.data.active.story : null
+      if (serverStory && serverStory.requirements) return serverStory.requirements
+      const controls = configuredStoryControls()
+      return {
+        configured: controls.length > 0,
+        controlIds: controls.map((control) => control.id),
+        needsRest: controls.some((control) => control.transport === 'braze_rest' || restActionTypes.includes(control.type)),
+        needsPush: controls.some((control) => Boolean(control.requiresPushToken) || ['push_permission', 'push_readiness'].includes(control.type)),
+      }
     }
     function selectedControl() {
       return allControls().find((control) => control.id === state.selectedControlId) || null
@@ -1711,10 +1948,7 @@ export function launcherHtml() {
       return true
     }
     function runnableStoryControls() {
-      const controls = allControls().filter((control) => control.type !== 'change_user')
-      const pinned = controls.filter((control) => control.pinned && !control.hidden)
-      if (pinned.length) return pinned.slice(0, state.presentation ? 8 : 6)
-      return controls.filter((control) => !control.hidden && ['standard', 'pack_library', 'pack_story', 'staged'].includes(control.origin)).slice(0, state.presentation ? 8 : 6)
+      return configuredStoryControls().slice(0, 7)
     }
     function controlCard(control, mode) {
       const meta = [
@@ -1725,10 +1959,12 @@ export function launcherHtml() {
         control.pinned ? 'pinned' : '',
         control.locked ? 'locked' : '',
       ].filter(Boolean).join(' · ')
-      const actions = mode === 'story'
+      const actions = mode === 'first-demo'
+        ? buttonHtml({ kind: 'primary', size: 'compact', icon: 'play', label: 'Run', attrs: 'data-execute="' + esc(control.id) + '"' })
+        : mode === 'story'
         ? buttonHtml({ kind: 'primary', size: 'compact', icon: 'play', label: 'Run', attrs: 'data-execute="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'ghost presentation-hide', size: 'compact', icon: 'pencil', label: 'Edit', attrs: 'data-tailor-control="' + esc(control.id) + '"' }) +
-          buttonHtml({ kind: 'ghost presentation-hide', size: 'compact', icon: control.pinned ? 'pin-off' : 'pin', label: control.pinned ? 'Unpin' : 'Pin', attrs: 'data-pin="' + esc(control.id) + '"' })
+          buttonHtml({ kind: 'ghost presentation-hide expert-only', size: 'compact', icon: 'pencil', label: 'Edit', attrs: 'data-tailor-control="' + esc(control.id) + '"' }) +
+          buttonHtml({ kind: 'ghost presentation-hide expert-only', size: 'compact', icon: control.pinned ? 'pin-off' : 'pin', label: control.pinned ? 'Unpin' : 'Pin', attrs: 'data-pin="' + esc(control.id) + '"' })
         : buttonHtml({ kind: 'primary', size: 'compact', icon: 'sliders-horizontal', label: 'Tailor', attrs: 'data-tailor-control="' + esc(control.id) + '"' }) +
           (!control.staged ? buttonHtml({ kind: 'secondary', size: 'compact', icon: 'bookmark-plus', label: 'Stage', attrs: 'data-stage="' + esc(control.id) + '"' }) : '') +
           buttonHtml({ kind: 'ghost', size: 'compact', icon: control.pinned ? 'pin-off' : 'pin', label: control.pinned ? 'Unpin' : 'Pin', attrs: 'data-pin="' + esc(control.id) + '"' }) +
@@ -1911,7 +2147,7 @@ export function launcherHtml() {
     function renderPackManagerOperation() {
       const duplicate = el('packManagerOperation').value === 'duplicate'
       el('packManagerSourceField').hidden = !duplicate
-      el('packManagerSubmit').querySelector('.button-label').textContent = duplicate ? 'Duplicate pack' : 'Create pack'
+      el('packManagerSubmit').querySelector('.button-label').textContent = duplicate ? 'Duplicate close variant' : 'Create pack'
     }
     function packManagerMessages(pack) {
       return [...(pack.errors || []).map((message) => 'Error: ' + message), ...(pack.warnings || []).map((message) => 'Warning: ' + message)]
@@ -1925,16 +2161,19 @@ export function launcherHtml() {
       renderPackManagerOperation()
       el('packLibrary').innerHTML = packs.length ? packs.map((pack) => {
         const messages = packManagerMessages(pack)
-        return '<article class="pack-card ' + (pack.valid ? '' : 'invalid') + '">' +
+        const handoffIncomplete = pack.valid && (pack.warnings || []).length > 0
+        const statusClass = pack.valid ? (handoffIncomplete ? 'warn' : 'success') : 'error'
+        const statusLabel = pack.valid ? (handoffIncomplete ? 'Handoff incomplete' : 'Ready') : 'Needs work'
+        return '<article class="pack-card ' + (pack.valid ? (handoffIncomplete ? 'incomplete' : '') : 'invalid') + '">' +
           '<div class="pack-card-head"><div><strong>' + esc(pack.name || pack.id) + '</strong><p>' + esc(pack.id) + ' · ' + esc(pack.source || 'unknown source') + '</p></div>' +
-            '<span class="chip ' + (pack.valid ? 'success' : 'error') + '">' + (pack.valid ? 'Valid' : 'Needs work') + '</span></div>' +
-          '<div class="pack-hashes">configHash ' + esc(pack.configHash || 'unavailable') + '<br />runtimeHash v2 ' + esc(pack.runtimeHash || 'unavailable') + '</div>' +
+            '<span class="chip ' + statusClass + '">' + statusLabel + '</span></div>' +
+          '<div class="pack-hashes expert-only">configHash ' + esc(pack.configHash || 'unavailable') + '<br />runtimeHash v2 ' + esc(pack.runtimeHash || 'unavailable') + '</div>' +
           (messages.length ? '<p>' + messages.map(esc).join('<br />') + '</p>' : '<p>Pack source, handoff notes, and authoring contract are ready.</p>') +
           '<div class="button-group">' +
             buttonHtml({ kind: 'ghost compact', icon: 'badge-check', label: 'Validate', attrs: 'data-pack-action="validate" data-pack-id="' + esc(pack.id) + '"' }) +
-            buttonHtml({ kind: 'ghost compact', icon: 'file-json', label: 'Config', attrs: 'data-pack-action="config" data-pack-id="' + esc(pack.id) + '"' }) +
+            buttonHtml({ kind: 'ghost compact expert-only', icon: 'file-json', label: 'Config', attrs: 'data-pack-action="config" data-pack-id="' + esc(pack.id) + '"' }) +
             buttonHtml({ kind: 'ghost compact', icon: 'notebook-text', label: 'Handoff', attrs: 'data-pack-action="notes" data-pack-id="' + esc(pack.id) + '"' }) +
-            buttonHtml({ kind: 'secondary compact', icon: 'copy-plus', label: 'Use as base', attrs: 'data-pack-action="duplicate" data-pack-id="' + esc(pack.id) + '"' }) +
+            buttonHtml({ kind: 'secondary compact', icon: 'copy-plus', label: 'Duplicate close variant', attrs: 'data-pack-action="duplicate" data-pack-id="' + esc(pack.id) + '"' }) +
           '</div>' +
         '</article>'
       }).join('') : '<div class="empty">No packs found. Create the first local pack here.</div>'
@@ -1957,8 +2196,11 @@ export function launcherHtml() {
         if (action === 'validate') {
           const result = await request('/api/pack-manager/validate', { packId })
           state.packManager = result.manager
-          el('packManagerStatus').className = 'chip ' + (result.valid ? 'success' : 'error')
-          el('packManagerStatus').textContent = result.valid ? 'Pack valid' : 'Validation failed'
+          const handoffIncomplete = result.valid && result.reports.some((report) => (report.warnings || []).length > 0)
+          el('packManagerStatus').className = 'chip ' + (result.valid ? (handoffIncomplete ? 'warn' : 'success') : 'error')
+          el('packManagerStatus').textContent = result.valid
+            ? (handoffIncomplete ? 'Structure valid · handoff incomplete' : 'Pack ready')
+            : 'Validation failed'
           renderPackManager()
         } else {
           await request('/api/pack-manager/open', { packId, target: action })
@@ -1991,8 +2233,11 @@ export function launcherHtml() {
         el('packManagerId').value = ''
         el('packManagerName').value = ''
         el('packManagerDescription').value = ''
-        el('packManagerStatus').className = 'chip success'
-        el('packManagerStatus').textContent = 'Created ' + result.pack.id
+        const handoffIncomplete = (result.pack.warnings || []).length > 0
+        el('packManagerStatus').className = 'chip ' + (handoffIncomplete ? 'warn' : 'success')
+        el('packManagerStatus').textContent = handoffIncomplete
+          ? 'Created ' + result.pack.id + ' · complete handoff'
+          : 'Created ' + result.pack.id
         await load()
         renderPackManager()
       } catch (error) {
@@ -2268,9 +2513,11 @@ export function launcherHtml() {
       }
       if (action === 'verify_banners') {
         await executeControl('sdk_navigate_home')
-        state.view = 'diagnostics'
-        render()
-        el('debugActivity').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        if (state.mode === 'expert') {
+          state.view = 'diagnostics'
+          render()
+          el('debugActivity').scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
         return
       }
       if (action === 'verify_iam') {
@@ -2283,6 +2530,7 @@ export function launcherHtml() {
         el('externalId').focus()
         return
       }
+      state.mode = 'expert'
       state.view = 'diagnostics'
       render()
       el('runtimeDetails').scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2533,6 +2781,13 @@ export function launcherHtml() {
         render()
       })
     })
+    el('modeToggle').addEventListener('click', () => {
+      state.mode = state.mode === 'expert' ? 'guided' : 'expert'
+      render()
+    })
+    el('firstDemoNext').addEventListener('click', () => {
+      runFirstDemoNextAction().catch((error) => alert(error.message || String(error)))
+    })
     el('presentationToggle').addEventListener('click', () => {
       state.presentation = !state.presentation
       render()
@@ -2719,6 +2974,7 @@ export function launcherHtml() {
     el('feedSession').addEventListener('change', renderFeed)
     el('refreshCockpit').addEventListener('click', load)
     el('refreshFeed').addEventListener('click', load)
+    el('refreshFirstDemo').addEventListener('click', load)
     el('archiveFeed').addEventListener('click', async () => {
       try {
         setBusy(true)

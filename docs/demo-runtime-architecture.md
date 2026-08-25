@@ -10,9 +10,10 @@ demo assets from a committed `demo-packs/<pack>/demo-pack.json` or ignored local
 - The launcher host process is the sole state, orchestration, credential, and
   SDK-command authority. CLI requests and local browser clients delegate to
   that process instead of creating a second state owner.
-- Braze Demo Control Room is the administrative client. It provides pack setup,
-  payload and template authoring, build/run actions, complete telemetry,
-  diagnostics, and recovery operations.
+- Braze Demo Control Room is the administrative client. Guided mode presents a
+  first-demo path, pack setup, story execution, audience-readable proof, and
+  safe troubleshooting. Expert mode adds payload and template authoring, raw
+  runtime evidence, development controls, and recovery operations.
 - Presenter Remote is a thin paired operator client. It exposes the active
   pack, platform, persona, readiness, at most seven pinned story controls,
   pre-approved variants, and the latest correlated result. It never exposes
@@ -42,10 +43,21 @@ active runtime pack id.
 ## Operator IA
 
 The launcher serves two local clients from one authority. The Control Room is
-setup-first and cockpit-like rather than a preset wall:
+guided-first and cockpit-like rather than a preset wall. It opens in Guided
+mode at `00 First Demo`; the operator can explicitly switch to Expert mode
+without starting another process or creating another state owner:
 
+- First Demo: three server-derived checks named Pack, App, and Story, one
+  recommended next action, the configured story controls, and recent Activity
+  Feed proof. App combines SDK access, native runtime, trust, active user, and
+  push only when the configured story requires push. Story accepts only
+  pack-owned or staged controls; generic built-in templates remain authoring
+  aids and cannot make Story ready. A missing Story produces the copyable
+  solution-campaign agent prompt before runtime setup work.
 - Demo Cockpit: active pack, user, actionable readiness, pinned story controls,
-  latest Activity Feed, and apply/build/run actions.
+  latest Activity Feed, and apply/build/run actions. Guided mode keeps the
+  normal launch, user, and story path visible. Optional host-side REST fields
+  are required and shown only when the configured story needs REST.
 - Activity Feed: audience-readable proof for meaningful SDK and REST actions,
   message display, user actions, profile updates, triggers, and launch outcomes.
   Bridge handshakes, runtime reports, token registration, refresh chatter, hashes,
@@ -55,8 +67,11 @@ setup-first and cockpit-like rather than a preset wall:
   Control Room renders them. Categories are `launcher`, `sdk`, `rest`, `message`,
   `profile`, `content_cards`, `push`, `diagnostics`, and `error`; severities are
   `success`, `error`, `warning`, and `info`. Feed rows remain strictly newest
-  first by timestamp in v1; related events are not grouped or reordered.
-- Control Templates: compact template overview for standard brand-agnostic
+  first. Exact or correlated repeats within the dedupe window merge into one
+  row with a duplicate count. Launcher start and Clear add visible session
+  boundaries; the operator can filter to the current session, download a
+  redacted Archive, or Clear only after the current evidence is archived.
+- Control Templates (Expert): compact template overview for standard brand-agnostic
   templates, pack controls, staged demo controls, visibility controls, and
   promotion into reusable pack presets. Tailoring happens in an embedded editor
   with payload preview and validation feedback, so operators do not leave the
@@ -64,9 +79,15 @@ setup-first and cockpit-like rather than a preset wall:
   `Sync demo seed attributes` template derives its SDK attribute payload from
   the active pack's `brand.demoUser.attributes`; running it is explicit and
   the Activity Feed shows the attribute names and values that were applied.
-- Diagnostics: runtime contract, expected render sources, native SDK device ID,
-  native diagnostic boundary, advanced override visibility, bridge/debug events,
-  job logs, and REST response history.
+- Pack Manager: neutral new-pack creation, explicitly close-variant
+  duplication, handoff-note access, and authoring validation. Deployment hashes
+  and raw configuration access are Expert details.
+- Help & Troubleshooting (Guided): evidence-backed cards with one safe next
+  action and a redacted diagnostic-bundle download.
+- Diagnostics (Expert): runtime contract, expected render sources, native SDK
+  device ID, advanced override visibility, bridge/debug events, job logs, and
+  REST response history. The same troubleshooting cards and bundle remain
+  available.
 
 Presenter Remote is an additive compact view for the live story. It pairs with
 the current launcher session, receives a narrow `operator/v1` snapshot and

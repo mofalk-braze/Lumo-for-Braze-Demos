@@ -1,25 +1,28 @@
 ---
 name: lumo-new-demo-campaign
 description: >-
-  Executable end-to-end campaign for the Lumo Braze Demo Shells repo: turns a
-  real customer brief into a durable, presentable, rehearsed demo pack running
-  on a device. Use when someone says "new demo for <customer>", "I have a
-  customer brief", "prospect demo", "build a demo end to end", "demo next
-  week", "prepare a demo", "get a demo ready for <meeting>", "rehearsal",
-  "demo checklist", "day of demo", "demo tomorrow morning", or names a
-  prospect and asks to get a working demo onto a device. Also use when an
-  existing customer demo needs to be brought back to presentable state before
-  a meeting. This campaign orchestrates the sibling skills; single-mechanic
-  questions belong to them.
+  Execute an approved Braze demo blueprint end to end in the Lumo Demo Shells
+  repo: create a neutral pack, delegate screenshot UI and event-story work,
+  wire Braze, prove it on a device, rehearse it, and leave a durable handoff.
+  Use after the target belief, hero journey, signal/surface contract, and
+  non-goals are approved, or when the user explicitly asks to implement an
+  already approved plan. For "now what should I build", incomplete discovery,
+  unbounded screenshots, or Canvas-first story shaping, use
+  braze-solution-demo-campaign first.
 ---
 
-# Lumo New-Demo Campaign: Customer Brief → Durable, Rehearsed Demo
+# Lumo New-Demo Campaign: Approved Blueprint → Durable, Rehearsed Demo
 
 This is an executable campaign, not a reference. Run the phases in order; each
 has a gate you must observe before moving on. The end state is a **durable
 pack**: a demo the owner does not have to keep touching — it re-applies
 cleanly months later, its Braze dashboard wiring is written down inside the
 pack itself, and nothing about it lives only in someone's head.
+
+Precondition: the user has approved one target belief, one hero journey, the
+signal/surface contract, and explicit non-goals. If that boundary is missing or
+the request is still feature-led, invoke `braze-solution-demo-campaign` and do
+not make the SolCon invent implementation details from a blank intake form.
 
 Jargon (defined once): a **pack** is a folder with `demo-pack.json` + optional
 `assets/` + an ignored `secrets.properties`; it is the source of truth for one
@@ -36,6 +39,7 @@ per-install Android push address; **AVD** = the Android emulator definition.
 
 | Work | Delegate to |
 |---|---|
+| Incomplete evidence, story selection, scope pressure, screenshot-first or Canvas-first blueprint | `braze-solution-demo-campaign` |
 | Story/screen design, screenshots → UI, Content Card placement advice | `braze-demo-app-builder` skill (or `/braze-demo-builder:demo-build` in a plugin session — see `lumo-plugin-workflow`) |
 | Pack schema detail, field-by-field authoring, promotion/sanitization | `lumo-demo-pack-authoring` |
 | Android push bring-up on a machine that has never had working push | `lumo-push-readiness-campaign` (Phases 5–6, their gates, for per-pack verification) |
@@ -49,29 +53,30 @@ without hopping files. For the *why* behind any rule, see
 
 ---
 
-## Phase 1 — Intake gate (no work before this)
+## Phase 1 — Implementation intake gate
 
-**PURPOSE.** Collect every input the build layer requires. Missing inputs =
-stop and ask the human. Do NOT invent logos, campaign/canvas ids, Content Card
-placements, or push claims — a guessed id produces a demo that silently shows
-nothing. This list mirrors the required-inputs list in
-`plugins/braze-demo-builder/commands/demo-build.md` (section 3).
+**PURPOSE.** Convert the approved story into build inputs. If an approved
+`.demo-packs/<id>/DEMO.md` exists, treat it as the intent-and-scope source and
+generated `notes.md` as the dashboard/operator handoff. Do not invent logos,
+workspace ids, placements, payloads, or push claims; unresolved implementation
+details remain named dependencies rather than guessed values.
 
 **REQUIRED INPUTS.**
 
 | # | Input | Why it blocks |
 |---|---|---|
-| 1 | Customer/app concept + the story goal (what the audience must believe afterward) | Drives every screen and event choice |
+| 1 | Approved target belief, hero journey, and do-not-build list | Prevents implementation from expanding the story |
 | 2 | Target platforms: browser harness, Android, iOS, or all | iOS is dev-mode only (Vite server, no push on unsigned simulator builds) — changes scope |
 | 3 | Screenshots / product references / brand assets | Screens are built from these, not imagination |
 | 4 | Logo / app-icon PNG status, and the agreed fallback if missing | Never fabricate a logo |
-| 5 | Braze story type: Content Cards, Banners, IAM, push, purchase, launch link, REST-triggered campaign/canvas | Determines bridge features and dashboard work |
-| 6 | Content Card `extras.placement` and Banner placement ids/screens | Both route by exact dashboard identifiers; a mismatch = an empty surface |
-| 7 | Dashboard setup needs: trigger event names, campaign ids, Canvas ids, API-trigger properties | Needed for Phase 6 wiring and `launcher.presets` |
+| 5 | Exact product action, SDK operation, wire event/attribute, and typed properties | Keeps the app action, preset, and dashboard contract aligned |
+| 6 | Content Card `extras.placement`, Banner placement ids/screens, IAM trigger, and push identity/deep link | Exact identifiers route the visible response |
+| 7 | Dashboard object dependencies: trigger/entry event, audience, campaign/Canvas ids, and API-trigger properties | Needed for Phase 6 wiring and `launcher.presets`; ids may remain explicit manual dependencies until created |
 | 8 | Demo date and audience (exec / technical / workshop) | Sets the rehearsal deadline and fallback depth |
 
-**GATE.** Every row answered or explicitly deferred by the human. If the story
-includes push, also confirm now that the presenting teammate's own Braze
+**GATE.** The story boundary is approved and every row is either resolved or
+recorded as an explicit implementation dependency. If the story includes push,
+also confirm that the presenting teammate's own Braze
 workspace has the Firebase service-account JSON uploaded (past failure: push
 built perfectly, never arrived, because the credential lived in someone
 else's workspace). If unknown → schedule `lumo-push-readiness-campaign`
@@ -90,28 +95,35 @@ Customer names must never reach commits, branches, or the public tree.
 **COMMANDS** (from repo root):
 
 ```sh
-cp -R demo-packs/Lumo ".demo-packs/<Customer Dir>"
+node tools/lumo.mjs pack new sample-travel --name "Sample Travel" \
+  --description "Approved travel lifecycle demo."
+node tools/lumo.mjs pack open sample-travel --print
 ```
 
-Then edit `.demo-packs/<Customer Dir>/demo-pack.json`:
+`pack new` starts from neutral structure and styling with no assumed Braze
+channels, story, events, presets, or placements. Use it for every new product
+concept. Never copy the Lumo pack or another existing pack and then "strip it
+down". Use `lumo pack duplicate` only when the human explicitly wants a close
+variant, because duplicate intentionally preserves the source app, styling,
+story, events, placements, assets, and private app surface.
+
+Then edit `.demo-packs/sample-travel/demo-pack.json`:
 
 - `id`: choose ONCE, kebab-case (validated against
-  `^[a-z0-9]+(?:-[a-z0-9]+)*$` in `tools/demo-pack-utils.mjs`). Example
-  pattern from an existing local pack: `wolt-food-delivery`. **Renaming the id
-  later changes the configHash, breaks the generated asset path
+  `^[a-z0-9]+(?:-[a-z0-9]+)*$` in `tools/demo-pack-utils.mjs`). **Renaming the
+  id later changes the configHash, breaks the generated asset path
   (`/demo-assets/<id>/`), the `BRAZE_REST_API_KEY_<PACK_ID>` env var name, and
-  every dashboard note that references it.** Directory name may be
-  human-friendly (spaces allowed); the launcher finds packs by `id` or dir
-  name. Keep the id customer-neutral if there is any chance of later
-  promotion.
-- `name`, `description`, and strip Lumo brand/content down to a skeleton for
-  the build phase.
+  every dashboard note that references it.** Keep the id customer-neutral if
+  there is any chance of later promotion.
+- Replace the neutral starter fields from the approved blueprint. Do not add a
+  channel, event, placement, or presenter control merely because an older pack
+  contains it.
 
-Create the local secrets file (ignored by git; the committed Lumo copy holds
-only placeholders):
+Place the approved blueprint at `.demo-packs/sample-travel/DEMO.md`. Create
+`.demo-packs/sample-travel/secrets.properties` locally with these documented
+key names and real values from the presenter's workspace:
 
-```sh
-cat > ".demo-packs/<Customer Dir>/secrets.properties" <<'EOF'
+```properties
 # Local-only. Never commit. Key names documented in demo-packs/README.md.
 braze.apiKey=<YOUR_SDK_API_KEY>
 braze.endpoint=<SDK_ENDPOINT e.g. sdk.fra-01.braze.eu>
@@ -119,14 +131,16 @@ braze.restEndpoint=<REST_ENDPOINT e.g. https://rest.fra-01.braze.eu>
 demo.externalId=<pack-id>-demo-user
 demo.profileName=<Display name>
 demo.displayName=<First name>
-EOF
 ```
 
 REST keys never go in this file — export
 `BRAZE_REST_API_KEY_<PACK_ID>` (uppercase, dashes→underscores) in the shell
 that runs the Control Room, or paste per-session in the Control Room UI.
-All customer screenshots/brand assets go in the pack's own `assets/` dir —
-never into `web-template/public/` or anywhere committed.
+Screenshots and brand assets go in the pack's own `assets/`. Screenshot-built
+product code goes under
+`.demo-packs/sample-travel/app-source/web-template/src/screens/local-pack/`
+with the adapter at `pack-app.tsx`. Never put private product code or assets in
+tracked `web-template/src` or `web-template/public`.
 
 **EXPECTED OBSERVATION.**
 
@@ -134,8 +148,8 @@ never into `web-template/public/` or anywhere committed.
 node tools/demo-launcher.mjs --list
 ```
 
-prints JSON including your pack with `"source": "local"`,
-`"hasSecrets": true`.
+prints JSON including your pack with `"source": "local"` and, after local
+credentials are added, `"hasSecrets": true`.
 
 **BRANCHES.** `Demo pack not found` on later commands → dir lacks
 `demo-pack.json` or the id in the file doesn't match what you typed. Id
@@ -154,10 +168,10 @@ job is the **durability gate** on what comes back:
 
 | Check | Durable | Fragile (reject) |
 |---|---|---|
-| Events | Anchor events reused across stories (`onboarding_completed`-style, stable names in `launcher.presets`) | One-off event names invented per meeting |
+| App action and events | The product action calls the shared bridge/provider, emits the blueprint's exact flavor event and portable anchor with typed properties, and has one named canonical dashboard trigger | A click that only changes local UI, an undocumented payload, or a dashboard trigger that neither app nor fallback emits |
 | Content Cards | `content.contentCardSurfaces` with stable `placement` strings (these are the dashboard `extras.placement` contract) | Legacy `contentCardRail` for new surfaces; placements you plan to "fix later" |
-| Customer specifics | Everything customer-specific lives in the pack (brand, content, assets, presets) | Customer names/screens hardcoded in `web-template/src` — **a customer-specific screen in web-template source is a durability smell; if the story genuinely seems to need one, stop and flag it to the owner instead of merging it** |
-| Presets | Reusable `launcher.presets` entries (`sdk_event`, `sdk_attribute`, `sdk_purchase`, `rest_event`, `campaign_trigger`, `canvas_trigger`) with descriptions | Ad-hoc REST calls you'd have to remember to retype |
+| Private product UI | Screenshot-built code lives in the ignored pack's `app-source/web-template/src/screens/local-pack/`; brand, content, assets, and presets stay in that pack | Customer names, routes, imports, screens, or assets hardcoded in tracked `web-template/src` or `public` |
+| Presets | A fallback preset emits the same canonical dashboard trigger as the app action; use `sdk_event_sequence` when it must mirror both flavor and anchor events. REST/campaign/Canvas presets carry the approved ids and properties | A flavor-only preset for an anchor-triggered dashboard object, or an ad-hoc call that does not match the documented payload |
 | Generated files | Untouched | Any hand-edit to `activeDemoConfig.generated.ts`, `demo-runtime.json`, `local.properties` — always fix the pack and re-apply |
 
 `contentCardSurfaces` entries require all of: `id`, `placement`, `surface`
@@ -176,6 +190,7 @@ Repeat this loop after every pack edit.
 **COMMANDS.**
 
 ```sh
+node tools/lumo.mjs pack validate <id>
 node tools/demo-launcher.mjs --pack <id> --apply-only
 npm run validate:demo-runtime
 ```
@@ -186,8 +201,11 @@ Browser harness check:
 cd web-template && npm run dev
 ```
 
-**EXPECTED OBSERVATION.** Apply prints `Applied demo pack: <name>` and exits
-0. Validation prints exactly `Demo runtime validation passed.` Vite serves
+**EXPECTED OBSERVATION.** Pack validation structurally passes. Record any
+handoff warnings as required Phase 6 work; they may remain during the build
+loop, but not at demo-ready handoff. Apply prints `Applied demo pack: <name>`
+and exits 0. Runtime validation prints exactly
+`Demo runtime validation passed.` Vite serves
 `http://localhost:5173` — the phone frame renders your screens with fixture
 data (browser Content Cards are layout-only fixtures; real cards need a
 shell). Applying generates: `web-template/src/brand/activeDemoConfig.generated.ts`,
@@ -212,7 +230,10 @@ investigate.
 **BRANCHES.** Validation failure naming a pack field → fix `demo-pack.json`,
 re-loop. Failure about hash/id disagreement between generated files → you (or
 a tool) edited a generated file; re-apply overwrites it. Vite shows the wrong
-brand → the last-applied pack wins; re-apply yours.
+brand → the last-applied pack wins; re-apply yours. A structural pack PASS with
+warnings about unresolved `<...>` notes placeholders or Card/Banner/IAM mapping
+drift can continue to build/device proof but means the handoff remains
+unfinished; it is not demo readiness.
 
 ---
 
@@ -272,9 +293,9 @@ dashboard wiring lives in chat history is not durable.
 
 **STEPS.**
 
-1. In the presenting teammate's Braze workspace: create the trigger-event
-   based campaigns/Canvases using the exact event names from
-   `launcher.presets`.
+1. In the presenting teammate's Braze workspace, create the campaign/Canvas
+   using the blueprint's canonical trigger. Prove the real app action and its
+   fallback preset both emit that event with the documented property types.
 2. Content Card campaigns: set key `placement` in the campaign's key-value
    pairs to the pack's `contentCardSurfaces[].placement` values, verbatim.
    (The shells route real cards to surfaces by `extras.placement`.)
@@ -291,8 +312,11 @@ dashboard wiring lives in chat history is not durable.
    and fallback mapping. Anyone must be able to re-wire a fresh workspace from
    this file alone.
 
-**GATE.** `notes.md` exists and lists every id the demo touches; presets
-re-applied; `npm run validate:demo-runtime` still passes.
+**GATE.** `notes.md` exists, lists every id the demo touches, has no unresolved
+handoff placeholders or mapping-drift warnings; the app action,
+flavor/anchor mapping, fallback preset, dashboard trigger, and notes name the
+same canonical event contract; presets are re-applied; and
+`npm run validate:demo-runtime` still passes.
 
 ---
 
@@ -364,8 +388,8 @@ A pack is durable when every row passes. Re-check after ANY later edit.
 |---|---|---|
 | 1 | Stable id, chosen once, kebab-case, customer-neutral if promotable | `node tools/demo-launcher.mjs --list` shows the same id as every note in `notes.md` |
 | 2 | Stable `placement` strings matching dashboard `extras.placement` verbatim | Diff `contentCardSurfaces[].placement` against `notes.md` |
-| 3 | Anchor events (reused, named in `launcher.presets`), not per-meeting one-offs | Read `launcher.presets`; every dashboard trigger event appears there |
-| 4 | Self-contained assets — everything under the pack's `assets/`, nothing customer-specific in `web-template/src` or `public/` | `grep -ri "<customer>" web-template/src web-template/public` returns nothing |
+| 3 | One canonical dashboard trigger emitted by both the app action and fallback preset | Compare the app bridge call, flavor/anchor mapping, preset payload or sequence, dashboard object, and `notes.md` |
+| 4 | Self-contained private app — assets and screenshot UI live under the ignored pack's `assets/` and `app-source/`, with nothing customer-specific tracked | Inspect the pack and confirm tracked routes/imports/source do not name the private app or pack |
 | 5 | Self-describing pack notes (`notes.md` with every id, per `lumo-demo-pack-authoring`) | A teammate could wire a fresh workspace from the file alone |
 | 6 | No generated-file edits, ever | `npm run validate:demo-runtime` passes right after a fresh `--apply-only` |
 | 7 | Secrets only in ignored files (`secrets.properties`, env vars) | `npm run security:scan` passes; no key value in `demo-pack.json` or notes |
@@ -373,6 +397,9 @@ A pack is durable when every row passes. Re-check after ANY later edit.
 
 ## When NOT to use this skill
 
+- Story boundary is not approved, discovery is incomplete, screenshots lack a
+  journey, or an existing Canvas needs a product proof designed around it →
+  `braze-solution-demo-campaign` first.
 - Single-mechanic question ("what does `emptyBehavior` do", "which env var
   holds the REST key") → the owning sibling: `lumo-demo-pack-authoring`,
   `lumo-config-and-flags`, `braze-integration-reference`.

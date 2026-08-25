@@ -33,14 +33,19 @@ the persistent authority alive while the Control Room and emulator are in use;
 `start` returns after launch, while `status` and `stop` inspect or end that
 authority. Do not reinterpret optional iOS setup as an Android failure.
 
-Open the Control Room URL printed by the launcher. Use `Lumo` as the base pack.
-Treat that launcher process as the sole state, credential, orchestration, and
-SDK-command authority. Use the Control Room for setup, authoring, telemetry,
-and diagnostics; use its paired Presenter Remote only for the active persona
-and approved pinned story controls. Keep Control Room Story Controls collapsed
-as the fallback. Do not create a browser extension unless three rehearsals show
-repeated window-focus or placement friction; any later wrapper stays thin and
-adds no authority.
+Open the Control Room URL printed by the launcher. Use `Lumo` only to verify the
+shared setup; never use its styling or story as the base for a new product
+concept. Treat the launcher process as the sole state, credential,
+orchestration, and SDK-command authority.
+
+The Control Room starts in Guided mode at `00 First Demo`. Use its `Pack`,
+`App`, and `Story` checks, one recommended next action, Activity Feed proof,
+and `Help & Troubleshooting` cards before opening Expert mode. Expert mode owns
+template engineering, raw REST, hashes, logs, REST responses, and development
+overrides. Use Presenter Remote only for the active persona and approved story
+controls. Keep Control Room Story Controls collapsed as the fallback. Do not
+create a browser extension unless three rehearsals show repeated window-focus
+or placement friction; any later wrapper stays thin and adds no authority.
 
 ## Demo Packs
 
@@ -73,9 +78,26 @@ Use the narrowest committed project skill that matches the task:
 - `lumo-debugging-playbook` plus `lumo-diagnostics-and-tooling` for a
   previously working setup that regressed.
 - `lumo-demo-pack-authoring` for pack lifecycle and schema work.
-- `braze-demo-app-builder` or `lumo-new-demo-campaign` for a new demo story.
+- `braze-solution-demo-campaign` first for “what should I build?”, incomplete
+  discovery, screenshots without a journey, Canvas-first mapping, surface/event
+  selection, or scope pressure.
+- `lumo-new-demo-campaign` only after the target belief, hero journey, typed
+  signal/surface contract, and non-goals are approved.
+- `braze-demo-app-builder` for focused implementation inside that approved
+  boundary.
 - `lumo-secrets-and-sanitization` and `lumo-change-control-and-qa` before any
   handoff, commit, or publish operation.
+
+For a new product concept, run `node tools/lumo.mjs pack new <id>` only after
+story approval. It is neutral. Use `pack duplicate` only for an intentional
+close variant because it preserves the source style, story, events, placements,
+assets, and app surface. Store the approved private blueprint at
+`.demo-packs/<id>/DEMO.md`, private UI under the pack's `app-source/`, and the
+dashboard/operator handoff in generated `notes.md`. A structural validation
+PASS with handoff warnings is not demo readiness.
+
+The user-facing workflow and starter prompts are in
+`docs/build-your-first-demo.md`.
 
 Committed docs and code remain the source of truth. If a skill conflicts with
 them, follow the committed contract and update the skill in the same change.
@@ -95,8 +117,10 @@ Then run:
 /braze-demo-builder:demo-build
 ```
 
-When building a new demo story, create or update packs under `.demo-packs/`
-unless the user explicitly asks to prepare a sanitized public pack.
+The optional command implements an approved story. Route unapproved story
+selection to `braze-solution-demo-campaign` first. New private packs belong
+under `.demo-packs/`; only explicitly sanitized public packs belong under
+`demo-packs/`.
 
 ## Push And Secrets
 

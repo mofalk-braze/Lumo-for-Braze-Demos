@@ -51,7 +51,8 @@ Field-level detail of what each generated artifact contains:
       ▼
 Control Room (tools/demo-launcher.mjs, http://127.0.0.1:4177)
   the ONLY presenter/operator surface: apply, build, launch, SDK
-  commands, host-side Braze REST, Activity Feed, Diagnostics
+  commands, host-side Braze REST, Guided First Demo, Activity Feed,
+  and Expert Diagnostics
 ```
 
 Jargon, defined once: a **demo pack** is a directory with `demo-pack.json`
@@ -127,6 +128,12 @@ packs, drives builds/launches, receives device telemetry at
 `/api/device-events`, and is the only component allowed to hold a Braze REST
 key and make REST calls (with a validated, blocklisted request surface —
 DELETE and broadcast blocked, recipients required for triggers).
+
+Guided and Expert are two presentations of that same authority. Guided opens at
+`00 First Demo` and derives Pack/App/Story, one next action, and approved story
+controls from the server's public state. Expert reveals authoring and raw
+diagnostics. Generic built-ins cannot satisfy Story readiness, and REST/push
+requirements come only from the selected pack-owned or staged story controls.
 
 **Why:** REST keys must never reach a device, a WebView, or a committed file,
 so REST execution has to live on the host. Concentrating orchestration in one

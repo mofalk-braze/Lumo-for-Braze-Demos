@@ -1,7 +1,7 @@
 {
   "name": "braze-demo-builder",
-  "version": "0.2.0",
-  "description": "Guided Braze demo app build workflow for the pack-driven Lumo Android, iOS, and web demo runtime.",
+  "version": "0.3.0",
+  "description": "Guided implementation for approved Braze demo app stories in the pack-driven Lumo Android, iOS, and web runtime.",
   "author": {
     "name": "Braze"
   },
@@ -18,7 +18,7 @@
   "interface": {
     "displayName": "Braze Demo Builder",
     "shortDescription": "Build pack-driven Braze demo app stories with guided Lumo setup.",
-    "longDescription": "Guides Codex through credible Braze demo app builds across demo packs, the web render surface, the Control Room, and native Android/iOS SDK shells. Keeps setup repeatable by requiring intake questions, Content Card placement recommendations, platform parity checks, and final Lumo handoff notes.",
+    "longDescription": "Guides Codex through credible implementation of an approved Braze demo app story across demo packs, the web render surface, the Control Room, and native Android/iOS SDK shells. Routes incomplete story shaping to the source-distributed solution campaign, then keeps builds repeatable with placement contracts, platform parity checks, and final Lumo handoff notes.",
     "developerName": "Braze",
     "category": "Developer Tools",
     "capabilities": [

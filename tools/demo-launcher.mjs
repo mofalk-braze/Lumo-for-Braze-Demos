@@ -2104,6 +2104,53 @@ export function presenterControlPresets(pack, state) {
     .slice(0, 7)
 }
 
+const controlRoomRestStoryTypes = new Set([
+  'rest_event',
+  'rest_attribute',
+  'rest_purchase',
+  'campaign_trigger',
+  'canvas_trigger',
+  'profile_export',
+  'braze_rest_request',
+])
+
+const controlRoomPushStoryTypes = new Set(['push_permission', 'push_readiness'])
+
+function isPackOwnedStoryControl(control) {
+  return Boolean(
+    control &&
+    control.type !== 'change_user' &&
+    !control.hidden &&
+    (control.staged || ['pack_library', 'pack_story', 'staged'].includes(control.origin)),
+  )
+}
+
+/**
+ * Resolve the controls that define the Control Room story. Generic built-ins are
+ * intentionally excluded even when pinned: they remain authoring/fallback tools,
+ * not evidence that a demo story has been configured.
+ */
+export function controlRoomStoryControls(controls = [], { limit = 7 } = {}) {
+  const configured = Array.from(controls || []).filter(isPackOwnedStoryControl)
+  const pinned = configured.filter((control) => control.pinned)
+  return (pinned.length ? pinned : configured).slice(0, limit)
+}
+
+/** Derive channel requirements from the selected story controls, never the template library. */
+export function controlRoomStoryRequirements(controls = []) {
+  const storyControls = controlRoomStoryControls(controls, { limit: Number.MAX_SAFE_INTEGER })
+  return {
+    configured: storyControls.length > 0,
+    controlIds: storyControls.map((control) => control.id),
+    needsRest: storyControls.some(
+      (control) => control.transport === 'braze_rest' || controlRoomRestStoryTypes.has(control.type),
+    ),
+    needsPush: storyControls.some(
+      (control) => Boolean(control.requiresPushToken) || controlRoomPushStoryTypes.has(control.type),
+    ),
+  }
+}
+
 function operatorControls(pack, state, baseBlockers) {
   return presenterControlPresets(pack, state)
     .map((preset) => {
@@ -5632,6 +5679,10 @@ function publicState() {
   const { pack, secrets } = activePackAndSecrets(state)
   const runtime = runtimeForPack(pack)
   const controlState = controlStateForPack(state, pack.id)
+  const presets = packPresets(pack, state)
+    .map((preset) => withPresetMeta(preset, state))
+    .map((preset) => withControlUiState(preset, controlState))
+  const storyControls = controlRoomStoryControls(presets)
   const ownedLiveWebRunning = Boolean(liveWebProcess && liveWebProcess.exitCode === null)
   const nativeOverrideWithoutServer = Boolean(state.deviceRuntime?.platform === 'android' && state.deviceRuntime?.sourceOverride && !ownedLiveWebRunning)
   const recordedLiveWeb = state.development?.liveWeb || {}
@@ -5683,7 +5734,11 @@ function publicState() {
       platform: state.activePlatform || 'android',
       pack: publicPack(pack),
       profile: packProfile(pack, secrets, state),
-      presets: packPresets(pack, state).map((preset) => withPresetMeta(preset, state)).map((preset) => withControlUiState(preset, controlState)),
+      presets,
+      story: {
+        controls: storyControls,
+        requirements: controlRoomStoryRequirements(storyControls),
+      },
       controlState,
       runtime: {
         manifest: runtime,

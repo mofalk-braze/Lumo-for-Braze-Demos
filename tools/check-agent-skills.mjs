@@ -12,6 +12,7 @@ const failures = []
 const requiredSkills = [
   'braze-demo-app-builder',
   'braze-integration-reference',
+  'braze-solution-demo-campaign',
   'lumo-architecture-contract',
   'lumo-build-and-env',
   'lumo-change-control-and-qa',
@@ -35,6 +36,10 @@ const requiredSupportFiles = [
   'braze-demo-app-builder/references/qa-checklist.md',
   'braze-demo-app-builder/references/runtime-architecture.md',
   'braze-integration-reference/references/bridge-actions.md',
+  'braze-solution-demo-campaign/agents/openai.yaml',
+  'braze-solution-demo-campaign/assets/DEMO.md',
+  'braze-solution-demo-campaign/references/solcon-operating-model.md',
+  'braze-solution-demo-campaign/scripts/check-demo-scope.mjs',
   'lumo-debugging-playbook/references/error-messages.md',
   'lumo-demo-pack-authoring/references/pack-schema.md',
   'lumo-diagnostics-and-tooling/scripts/check-runtime-drift.mjs',
@@ -50,6 +55,18 @@ const contractTokens = new Map([
   [
     'lumo-build-and-env',
     ['Apple Silicon', 'Braze_Demo_API_36', 'RESET_APP_DATA=1', 'npm run lumo:cockpit'],
+  ],
+  [
+    'braze-solution-demo-campaign',
+    [
+      'target belief',
+      'hero journey',
+      'customer fact',
+      'Braze fact',
+      'assets/DEMO.md',
+      'scripts/check-demo-scope.mjs',
+      'lumo-new-demo-campaign',
+    ],
   ],
   [
     'lumo-push-readiness-campaign',
@@ -167,6 +184,24 @@ for (const supportFile of requiredSupportFiles) {
   }
 }
 
+const demoScopeScript = path.join(
+  projectSkillsDir,
+  'braze-solution-demo-campaign/scripts/check-demo-scope.mjs',
+)
+const demoBlueprint = path.join(projectSkillsDir, 'braze-solution-demo-campaign/assets/DEMO.md')
+if (fs.existsSync(demoScopeScript) && fs.existsSync(demoBlueprint)) {
+  const result = spawnSync(process.execPath, [demoScopeScript, demoBlueprint, '--json'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
+  if (result.status !== 0) {
+    failures.push(
+      `solution campaign DEMO.md contract is invalid: ${(result.stderr || result.stdout || 'unknown error').trim()}`,
+    )
+  }
+}
+
 const unsafeContentPatterns = [
   { label: 'absolute macOS home path', pattern: /\/Users\/[^/\s]+\// },
   { label: 'absolute Linux home path', pattern: /\/home\/[^/\s]+\// },
@@ -195,6 +230,7 @@ if (trackedSkillArtifacts.status === 0) {
 }
 
 checkIgnore('.claude/skills/braze-demo-app-builder/SKILL.md', false)
+checkIgnore('.claude/skills/braze-solution-demo-campaign/SKILL.md', false)
 checkIgnore('.claude/settings.local.json', true)
 checkIgnore('.claude/launch.json', true)
 checkIgnore('.claude/skills.zip', true)
@@ -235,6 +271,9 @@ for (const [label, text] of [
 ]) {
   if (!text.includes('.claude/skills/braze-demo-app-builder/SKILL.md')) {
     failures.push(`${label} must route to the canonical project builder skill`)
+  }
+  if (!text.includes('.claude/skills/braze-solution-demo-campaign/SKILL.md')) {
+    failures.push(`${label} must route unapproved story work to the canonical solution campaign skill`)
   }
   for (const token of ['Content Card', 'Banner', 'Android', 'iOS', '.demo-packs/']) {
     if (!text.includes(token)) failures.push(`${label} is missing shared builder contract token: ${token}`)

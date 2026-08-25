@@ -45,9 +45,19 @@ Classify the work before editing:
 
 State the classification and the minimal credible implementation surface.
 
+Before continuing, confirm the target belief, hero journey, exact
+signal/surface contract, and non-goals are approved. If they are not, read
+`.claude/skills/braze-solution-demo-campaign/SKILL.md`, shape the blueprint,
+and wait for approval. This command implements the approved story; it does not
+duplicate the solution-campaign workflow.
+
 ## 3. Ask Required Setup Questions
 
-If any required input is missing, stop before implementation and ask a setup question block. In Codex, use the native user-question mechanism when it is available. In Claude or environments without that mechanism, ask the questions directly and wait for the answers.
+Use the approved blueprint when present and ask only for missing inputs that
+change implementation reliability. In Codex, use the native user-question
+mechanism when it is available. In Claude or environments without that
+mechanism, ask directly. Do not make a novice choose features from a blank
+checklist; unresolved story selection belongs in the solution campaign.
 
 Required inputs:
 
@@ -79,8 +89,15 @@ Use real SDK Content Cards in shell builds. Browser fixtures are layout-only.
 ## 5. Implementation Rules
 
 - Demo packs are source of truth; generated runtime files are not hand-edited.
+- Use `node tools/lumo.mjs pack new` for a new concept. It starts neutral with
+  no assumed story or Braze channel. Use duplicate only for an explicitly
+  requested close variant because it preserves source style and story.
 - Product UI stays product-focused. Presenter/operator controls belong in the Control Room.
 - New Claude-created, imported, customer, or prospect packs belong in ignored `.demo-packs/` unless the user explicitly asks for a sanitized public pack under `demo-packs/`.
+- Put private screenshot-built code under the pack's
+  `app-source/web-template/src/screens/local-pack/`, exposed by `pack-app.tsx`;
+  never hardcode a private route, import, screen, pack id, or asset in tracked
+  `web-template` source.
 - Native shells own `changeUser`, events, purchases, push, IAM display, Content Cards, clicks, and impressions.
 - REST API keys stay host-only and must not be written into committed files or generated web/native assets.
 - Firebase service account JSON stays outside Git. It may be uploaded manually into a teammate's own Braze workspace for Android push, but must not be committed or generated into app assets.
@@ -88,6 +105,10 @@ Use real SDK Content Cards in shell builds. Browser fixtures are layout-only.
 - Source URL overrides are advanced diagnostics and should remain visible when active.
 - Declare Banners through `content.bannerSurfaces`, mount `NativeBannerSlot` on
   the mapped screen, and treat browser output as layout preview only.
+- Make the app action, flavor-to-anchor mapping, typed properties, fallback
+  preset, dashboard trigger, and `notes.md` agree on one canonical event. Use
+  `sdk_event_sequence` when a fallback must mirror both flavor and anchor
+  events.
 
 ## 6. Validation And Handoff
 
@@ -115,6 +136,8 @@ Final response must include:
 - logo/app icon decisions
 - pack location (`demo-packs/` or `.demo-packs/`)
 - remaining manual Braze dashboard setup
+- unresolved `notes.md` placeholders or mapping-drift warnings; a structural
+  pack PASS is not demo-ready while these remain
 - any required SolCon operator notes
 - generated pack `notes.md` with Content Card, Banner, IAM, push, proof, and
   fallback mappings

@@ -29,8 +29,9 @@ claude --plugin-dir ./plugins/braze-demo-builder
 
 | Task looks like | Go to |
 |---|---|
-| Build or change a demo story, product screen, pack content, Content Card or Banner placement, Control Room preset, launch link, or bridge feature | `/braze-demo-builder:demo-build` (in a plugin session) or the `braze-demo-app-builder` skill |
-| Full customer-brief-to-rehearsed-demo | `lumo-new-demo-campaign` (it delegates the story-building step back to the builder layer) |
+| "Now what should I build", incomplete discovery, screenshot folder without a journey, existing Canvas needing an app proof, surface/event selection, or scope pressure | `braze-solution-demo-campaign` |
+| Build or change an approved product screen, pack content, Content Card or Banner placement, Control Room preset, launch link, or bridge feature | `/braze-demo-builder:demo-build` (in a plugin session) or the `braze-demo-app-builder` skill |
+| Approved blueprint to durable, rehearsed device demo | `lumo-new-demo-campaign` (it delegates the story-building step back to the builder layer) |
 | Set up a fresh machine, bootstrap, AVD, Xcode | `lumo-build-and-env` |
 | Run a demo, use the Control Room, launch shells, send REST | `lumo-run-and-operate` |
 | Pack schema, creating/promoting packs, durable packs | `lumo-demo-pack-authoring` |
@@ -46,11 +47,11 @@ claude --plugin-dir ./plugins/braze-demo-builder
 ## Quick manual edit vs. builder workflow
 
 A trivial fix (typo in pack copy, one field value) is fine by hand — in the
-pack, never in generated files, then re-apply with `npm run lumo:apply`.
-For anything story-shaped, prefer the builder workflow: `demo-build.md`
-enforces intake questions, a Content Card advisory pass, Android/iOS parity
-checks, and the validation commands. Skipping it is how half-configured demos
-happen.
+pack, never in generated files, then re-apply with `npm run lumo:apply`. For an
+unapproved or ambiguous story, shape and approve the blueprint with
+`braze-solution-demo-campaign`. For approved implementation, prefer the builder
+workflow: `demo-build.md` enforces implementation intake, a Content Card
+advisory pass, Android/iOS parity checks, and validation.
 
 ## Where knowledge goes
 
@@ -81,9 +82,11 @@ happen.
 
 - Actually building a story/screen/pack: invoke `braze-demo-app-builder` (or
   the plugin command) — do not reconstruct its workflow from here.
+- Choosing the target belief, hero journey, event/surface contract, or scope →
+  `braze-solution-demo-campaign`.
 - Operating, debugging, configuring, or committing: go straight to the named
   lumo-* skill in the routing table.
-- End-to-end campaigns: `lumo-new-demo-campaign` or
+- Approved end-to-end campaigns: `lumo-new-demo-campaign` or
   `lumo-push-readiness-campaign` inline their own commands.
 
 ## Open questions / candidates

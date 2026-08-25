@@ -378,7 +378,7 @@ function validateBridgeSyncContract() {
   }
   requirePattern('Control Room stage button label', controlRoom, /label: 'Stage'/)
   requirePattern('Control Room present button label', controlRoom, /label: 'Present'/)
-  requirePattern('Control Room save config button label', controlRoom, /label: 'Save config'/)
+  requirePattern('Control Room save configuration button label', controlRoom, /label: 'Save configuration'/)
   requirePattern('Control Room cockpit REST stage button', controlRoom, /id: 'cockpitRestStage'/)
   requirePattern('Control Room custom REST shared payload helper', controlRoom, /function customRestPayload\(prefix = 'customRest'\)/)
   requirePattern('Control Room custom REST execution', controlRoom, /actionType: 'braze_rest_request'/)

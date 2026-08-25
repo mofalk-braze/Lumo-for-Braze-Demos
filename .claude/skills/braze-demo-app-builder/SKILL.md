@@ -1,6 +1,6 @@
 ---
 name: braze-demo-app-builder
-description: Build credible Braze demo app features in the pack-driven Android/iOS/Web runtime. Use when creating or updating demo packs, product screens from screenshots, Control Room presets, Braze event stories, Content Cards, Banners, IAM triggers, push previews, launch links, or native SDK-backed demo flows.
+description: Build an approved Braze demo app feature in the pack-driven Android/iOS/Web runtime. Use for product screens from screenshots, pack content, Control Room presets, Braze event stories, Content Cards, Banners, IAM triggers, push previews, launch links, or native SDK-backed demo flows after the target belief and story boundary are clear. For "now what should I build", incomplete discovery, Canvas-first mapping, or unbounded feature selection, use braze-solution-demo-campaign first.
 metadata:
   short-description: Build credible Braze demo app features
 ---
@@ -19,6 +19,12 @@ Before editing, inspect:
 - relevant `web-template/src` screens/components
 - Control Room presets in `tools/demo-launcher.mjs` and pack `launcher.presets`
 - native bridge files only if the story needs Android/iOS SDK behavior
+- the approved local `.demo-packs/<id>/DEMO.md`, when present, for target
+  belief, hero journey, exact signal/surface contract, and non-goals
+
+If those story decisions are not approved, stop and route to
+`braze-solution-demo-campaign`. This skill implements a bounded story; it does
+not choose one from incomplete evidence.
 
 Classify the request before choosing files:
 
@@ -37,6 +43,14 @@ Classify the request before choosing files:
 - New agent-created, imported, customer, or prospect packs belong in ignored
   `.demo-packs/`; only explicitly sanitized public packs belong in
   `demo-packs/`.
+- Use `node tools/lumo.mjs pack new` for a new product concept. It is neutral
+  and makes no channel or story assumptions. Use `pack duplicate` only for an
+  explicitly requested close variant because it preserves the source style,
+  story, events, placements, assets, and app surface.
+- Screenshot-built or otherwise private product code belongs under the pack's
+  ignored `app-source/web-template/src/screens/local-pack/`, exposed only by
+  `pack-app.tsx`. Do not add customer/private routes, imports, ids, or screens
+  to tracked `web-template/src`.
 - The web app renders product UI. Do not add normal presenter controls to product screens.
 - Control Room owns setup, orchestration, triggers, staged controls, validation, and activity logs.
 - Android and iOS own real Braze SDK behavior: push, IAM display, Content Cards, custom events, purchases, and `changeUser`.
@@ -59,14 +73,20 @@ Classify the request before choosing files:
 ## Default Workflow
 
 1. Ground in the repo first. Do not ask where files live if inspection can answer it.
-2. Decide the minimum credible feature surface: product UI, pack data, Control Room preset, native bridge, or a combination.
+2. Decide the minimum credible feature surface: product UI, pack data, Control Room preset, native bridge, or a combination. Route unresolved story selection to `braze-solution-demo-campaign` instead of returning a blank feature checklist.
 3. Preserve existing runtime patterns and generated-file boundaries. Do not hand-edit generated active config files.
 4. Build real product flows from screenshots or story goals. Avoid landing pages, fake dashboards, or demo-only buttons in the app.
-5. Use stable Braze anchors and app-specific flavor events. Put specificity in event properties.
+5. Use stable Braze anchors and app-specific flavor events. Put specificity in
+   event properties. Make the app action, flavor-to-anchor mapping, fallback
+   preset, dashboard trigger, and `notes.md` agree on one canonical event. If
+   an app action emits both flavor and anchor, use `sdk_event_sequence` when
+   the fallback must mirror both, or make the preset emit the dashboard event.
 6. If the demo claim depends on mobile SDK behavior, wire the native SDK path instead of faking it in web UI.
 7. Validate with the checks in the QA reference and report exactly what passed or could not be run.
 8. Complete the generated pack `notes.md` with Content Card, Banner, IAM, push,
    dashboard-object, proof, and fallback mappings before handoff.
+   Treat unresolved handoff warnings or `<...>` placeholders as unfinished
+   demo work even when structural pack validation passes.
 
 ## Common Prompt Interpretations
 

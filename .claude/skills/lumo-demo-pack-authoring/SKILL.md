@@ -32,8 +32,7 @@ Discovery rules (verified in `tools/demo-pack-utils.mjs`):
 
 - `listDemoPacks()` scans `demo-packs/` first, then `.demo-packs/`. Any
   subdirectory containing a `demo-pack.json` is a pack. Directory names do not
-  need to match the pack id (local packs use human names like `Wolt`; the id
-  inside stays kebab-case).
+  need to match the pack id; the id inside always stays kebab-case.
 - Lookup by id (`getDemoPack`) tries `demo-packs/<id>/` and `.demo-packs/<id>/`
   as literal directory names first, then scans both roots matching either the
   JSON `id` or the directory name. On a collision the committed root wins.
@@ -49,37 +48,29 @@ Minimum viable `demo-pack.json` (load-time validation in
 
 ```jsonc
 {
-  "id": "acme-travel",            // kebab-case only: ^[a-z0-9]+(?:-[a-z0-9]+)*$
-  "name": "Acme Travel",
+  "id": "sample-travel",          // kebab-case only: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+  "name": "Sample Travel",
   "description": "…",             // optional at load, REQUIRED by validate:demo-runtime
   "brand": {
     "appName": "…", "displayName": "…", "logoText": "AT",
-    "colors": { "brand": "#0F766E", "brandDark": "…", "brandLight": "…",
-                "accent": "…", "ink": "…", "muted": "…", "line": "…", "surface": "…" },
+    "colors": { "brand": "#475569", "brandDark": "#1E293B", "brandLight": "#E2E8F0",
+                "accent": "#64748B", "ink": "#0F172A", "muted": "#64748B",
+                "line": "#CBD5E1", "surface": "#F8FAFC" },
     "tabs": [ { "id": "home", "label": "Home", "icon": "Home" } ],   // lucide-react icon names; first tab = default route
-    "flavorEvents": [
-      { "name": "trip_booked", "label": "Trip booked",
-        "anchor": "conversion_completed", "emitAnchor": true,
-        "sample": { "value": 129 } }
-    ],
-    "demoUser": { "externalId": "acme-demo-user", "firstName": "Acme",
-                  "attributes": { "lifecycle_stage": "starter" } }
+    "flavorEvents": [],
+    "demoUser": { "externalId": "sample-travel-demo-user",
+                  "firstName": "Demo", "attributes": {} }
   },
   "content": {
     "hero": { "title": "…", "subtitle": "…", "cta": "…" },
-    "categories": ["…"],
-    "rails": [ { "id": "…", "title": "…", "items": [ { "id": "…", "title": "…" } ] } ],
-    "contentCardRail": { "title": "Personalized updates", "placement": "home_feed" },
-    "contentCardSurfaces": [
-      { "id": "home-feed", "placement": "home_feed", "surface": "carousel",
-        "screen": "home", "title": "Personalized updates", "variant": "carousel",
-        "emptyBehavior": "hide", "maxCards": 4 },
-      { "id": "inbox", "placement": "inbox", "surface": "inbox", "screen": "inbox",
-        "title": "Inbox", "variant": "inbox", "emptyBehavior": "empty-state" }
-    ]
+    "categories": [],
+    "rails": [],
+    "contentCardRail": { "title": "Unmapped Content Cards", "placement": "unmapped" },
+    "contentCardSurfaces": [],
+    "bannerSurfaces": []
   },
-  "android": { "defaultExternalId": "acme-demo-user", "defaultProfileName": "Acme" },
-  "launcher": { "presets": [ /* pack-specific story controls; see reference */ ] }
+  "android": { "defaultExternalId": "sample-travel-demo-user", "defaultProfileName": "Sample Travel" },
+  "launcher": { "presets": [] }
 }
 ```
 
@@ -97,13 +88,13 @@ Hard rules you will hit first (all verified in `validatePack` /
   `surface` ∈ inbox/feed/carousel/hero/account/status; `variant` ∈
   hero/carousel/feed/inbox; `emptyBehavior` ∈ hide/empty-state; `maxCards`, if
   present, a positive integer.
-- **Keep `contentCardRail` even when you use `contentCardSurfaces`**: the web
-  runtime (`web-template/src/brand/content.ts`) reads
-  `contentCardRail.placement` unconditionally at module load; omitting it
-  crashes the app even though no validator flags it.
-- Prefer `contentCardSurfaces` over the legacy `contentCardRail`-only setup:
-  default pattern is one inbox surface (`emptyBehavior: "empty-state"`) plus
-  one contextual slot that hides when empty (`demo-packs/README.md`).
+- `contentCardRail` is a required, validated legacy fallback shape. The neutral
+  starter keeps an explicit `unmapped` placeholder; do not treat it as an
+  approved channel or dashboard placement.
+- Prefer explicit `contentCardSurfaces` for new work. An explicitly empty array
+  suppresses the legacy fallback, so a neutral pack has no Content Card
+  surface. Add only approved placements: an inbox surface uses
+  `emptyBehavior: "empty-state"`; a contextual slot normally uses `hide`.
 
 Launcher preset `type` values you can use in `launcher.presets` (verified in
 `tools/demo-launcher.mjs`):
@@ -126,10 +117,16 @@ Prefer the supported authoring surface to manual directory copying:
 
 ```sh
 node tools/lumo.mjs pack new sample-travel --name "Sample Travel"
-node tools/lumo.mjs pack duplicate lumo-default sample-travel --name "Sample Travel"
 node tools/lumo.mjs pack validate sample-travel
 node tools/lumo.mjs pack validate --all
 node tools/lumo.mjs pack open sample-travel --notes
+```
+
+Only for an intentional close variant of an existing app and story:
+
+```sh
+node tools/lumo.mjs pack duplicate <source-id> sample-travel-variant \
+  --name "Sample Travel Variant"
 ```
 
 The command grammar is `lumo pack new|duplicate|validate|open`; invoke it from
@@ -137,12 +134,15 @@ source as `node tools/lumo.mjs pack ...`. Add `--json` for an agent-readable
 result, or `--print` with `open` when the agent needs the path without launching
 a host app.
 
-`new` and `duplicate` always write to ignored `.demo-packs/`. Duplicate copies
-portable assets and app-source, changes the stable pack/user identity, excludes
-credential-like files, and regenerates `notes.md` instead of copying old
-dashboard mappings. The Control Room's **Pack Manager** exposes the same safe
-operations and shows authoring validation, notes presence, `configHash`, and
-`runtimeHash`.
+`new` and `duplicate` always write to ignored `.demo-packs/`. `new` is the
+default for a new product or customer story: it starts with neutral styling,
+one Home tab, empty channel surfaces, and no assumed events or presets.
+`duplicate` is only for a close variant because it intentionally preserves the
+source style, story, events, placements, assets, and app-source. It changes the
+stable pack/user identity, excludes credential-like files, and regenerates
+`notes.md` instead of copying old dashboard mappings. The Control Room's **Pack
+Manager** exposes the same safe operations and shows authoring validation,
+notes presence, `configHash`, and `runtimeHash`.
 
 Every generated `notes.md` contains explicit dashboard handoff tables for:
 
@@ -174,20 +174,22 @@ rendered-source agreement, not configHash alone.
 Terms: "apply" = generate runtime files from a pack; "Control Room" = the
 launcher web UI at `http://127.0.0.1:4177`.
 
-1. Create a clean starter or duplicate the committed reference pack. Both go
-   to `.demo-packs/` and generate a dashboard handoff:
+1. Create a neutral starter for every new concept. Duplicate only when the
+   user explicitly wants a close variant of an existing story. Both go to
+   `.demo-packs/` and generate a dashboard handoff:
 
    ```sh
    node tools/lumo.mjs pack new sample-travel --name "Sample Travel"
-   # Or preserve the Lumo structure without copying credentials:
-   node tools/lumo.mjs pack duplicate lumo-default sample-travel --name "Sample Travel"
+   # Only for an intentional close variant that preserves source style/story:
+   node tools/lumo.mjs pack duplicate <source-id> sample-travel-variant \
+     --name "Sample Travel Variant"
    ```
 
    The `id` inside is the durable identity. Open the generated sources with
    `node tools/lumo.mjs pack open sample-travel`.
 
 2. Edit `.demo-packs/sample-travel/demo-pack.json`:
-   - Set a fresh kebab-case `id` (e.g. `acme-travel`) — duplicate ids fail
+   - Keep the fresh kebab-case `id` created by the CLI — duplicate ids fail
      validation. Pick it once, keep it forever (doctrine below).
    - Rewrite `name`, `description`, `brand`, `content` for the story. Keep
      `flavorEvents[].anchor` pointing at the fixed anchor events
@@ -204,7 +206,7 @@ launcher web UI at `http://127.0.0.1:4177`.
 
 4. Complete `.demo-packs/sample-travel/notes.md`, then create
    `.demo-packs/sample-travel/secrets.properties` with real values locally,
-   real values locally, never committed. Keys (names only — values come from
+   never committed. Keys (names only — values come from
    the presenter's own Braze workspace):
 
    ```properties
@@ -219,7 +221,7 @@ launcher web UI at `http://127.0.0.1:4177`.
 
    REST API keys never go in this file — export
    `BRAZE_REST_API_KEY_<PACK_ID>` (uppercase, dashes→underscores, e.g.
-   `BRAZE_REST_API_KEY_ACME_TRAVEL`) or enter it per-session in the Control
+   `BRAZE_REST_API_KEY_SAMPLE_TRAVEL`) or enter it per-session in the Control
    Room. Details: `lumo-secrets-and-sanitization`.
 
 5. Validate + apply loop (repeat after every edit):
@@ -235,6 +237,10 @@ launcher web UI at `http://127.0.0.1:4177`.
    - `validate:demo-runtime` must end in success; failures name the mismatch
      (duplicate id, kebab-case, generated-file hash disagreement, missing
      built dist).
+   - `lumo pack validate` can structurally pass while warning that `notes.md`
+     still contains `<...>` placeholders or has drifted from declared Card,
+     Banner, or IAM mappings. Warnings mean the handoff is unfinished; a
+     structural PASS alone is not demo readiness.
    - If the web app itself must be checked, build it:
      `cd web-template && npm run build`.
 
@@ -250,9 +256,9 @@ because breaking it silently breaks a live dependency.
 |---|---|
 | Pick the kebab-case `id` once; never rename it | `configHash` input; asset URL base `/demo-assets/<id>/`; `android-shell/.active-demo-pack` marker; REST key env var name `BRAZE_REST_API_KEY_<PACK_ID>`; any launch links or notes referencing the id |
 | Treat every `placement` string as API contract | Cards route by exact string match on the Braze dashboard `extras.placement` value (`contentCardSurfaceByPlacement`). A typo or rename means cards silently route nowhere — the demo shows an empty rail with no error |
-| Trigger campaigns on anchor events, not one-off names | Anchors are fixed across all packs; flavor events with `emitAnchor: true` also fire the anchor, so dashboard triggers built once keep working in every pack |
+| Keep app, preset, anchor, dashboard, and notes on one trigger contract | Anchors are portable only when the real app action and any fallback preset both emit the event the dashboard actually uses; property names and types must match too |
 | Keep all brand assets inside the pack's own `assets/` | Asset sync is per-pack full replacement; cross-pack references break the moment the other pack changes or is absent |
-| Prefer `contentCardSurfaces`; keep validated `contentCardRail` as the legacy home fallback | Surfaces are the supported routing contract for new packs; the shared Home screen still owns a declared legacy fallback |
+| Prefer explicit `contentCardSurfaces`; keep `contentCardRail` as the validated legacy shape only | New packs set surfaces to `[]`, which suppresses the unmapped fallback; add only exact approved placements and mount points |
 | Complete the generated `notes.md` dashboard handoff | Pack Manager and CLI create/regenerate the template for Content Cards, Banners, IAM, push, presenter sequence, local setup, proof, and fallback; `lumo pack validate` warns when notes are absent |
 | Diff `demo-pack.json` after Control Room sessions | The Control Room "promote" action legitimately writes staged presets back into the pack file |
 
@@ -320,12 +326,13 @@ box, in order:
 ## When NOT to use this skill
 
 - Designing the demo STORY — which screens, event narrative, Content Card
-  placement strategy, screenshot-to-app cloning → `braze-demo-app-builder`
-  skill / `plugins/braze-demo-builder` plugin (the plugin builds, the skills
-  operate). Routing between them: `lumo-plugin-workflow`.
+  placement strategy, or what to build from incomplete discovery/screenshots →
+  `braze-solution-demo-campaign`; after approval, focused screenshot-to-app
+  implementation → `braze-demo-app-builder`. Routing between build layers:
+  `lumo-plugin-workflow`.
 - Applying, launching devices, presenting, Control Room operation →
   `lumo-run-and-operate`.
-- Full customer-brief-to-rehearsed-demo campaign → `lumo-new-demo-campaign`.
+- Approved blueprint-to-rehearsed-demo campaign → `lumo-new-demo-campaign`.
 - Secrets handling beyond key names, REST key resolution, handoff →
   `lumo-secrets-and-sanitization`.
 - Every config axis across the repo (env vars, launcher flags,

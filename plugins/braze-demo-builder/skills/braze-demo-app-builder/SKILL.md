@@ -1,6 +1,6 @@
 ---
 name: braze-demo-app-builder
-description: Build or update credible Braze demo app features in the pack-driven SolCon Android/iOS/Web runtime. Use when creating or changing demo packs, screenshot-built product screens, Control Room presets, Braze event stories, Content Card surfaces and placements, Banner placements, IAM triggers, push previews, launch links, native SDK-backed flows, or SolCon demo setup handoffs.
+description: Compatibility entry point for implementing an approved Braze demo app feature in the pack-driven SolCon Android/iOS/Web runtime. Use for screenshot-built product screens, pack content, Control Room presets, Braze event stories, Content Card or Banner placements, IAM triggers, push previews, launch links, or native SDK-backed flows after the target belief and story boundary are clear. Route incomplete discovery, Canvas-first mapping, or "now what should I build" work to the canonical braze-solution-demo-campaign project skill first.
 ---
 
 # Braze Demo App Builder
@@ -24,6 +24,12 @@ linked references before editing. This plugin skill is a compatibility entry
 point for namespaced command sessions; committed docs and the project skill win
 if duplicated guidance drifts.
 
+If the target belief, hero journey, signal/surface contract, and non-goals are
+not approved, read
+`.claude/skills/braze-solution-demo-campaign/SKILL.md` and shape the blueprint
+before implementation. Do not use this compatibility layer as a second story
+planning workflow.
+
 ## Classify The Work
 
 Choose the smallest credible surface before editing:
@@ -38,6 +44,13 @@ Choose the smallest credible surface before editing:
 
 - Demo packs are the source of truth for public brand/content/demo metadata. Applying a pack generates web runtime config, runtime manifests, synced assets, Android seed metadata, and iOS runtime defaults.
 - `demo-packs/` is for sanitized public packs. New Claude-created, imported, customer, or prospect packs default to ignored `.demo-packs/` unless the user explicitly asks to prepare a sanitized public pack.
+- Use `node tools/lumo.mjs pack new` for a new concept; it is neutral and makes
+  no channel or story assumptions. Use duplicate only for an explicitly
+  requested close variant because it preserves source style and story.
+- Private screenshot-built source belongs under the pack's ignored
+  `app-source/web-template/src/screens/local-pack/`, exposed by `pack-app.tsx`.
+  Do not add a private route, import, screen, asset, or pack id to tracked
+  `web-template` source.
 - Do not hand-edit `web-template/src/brand/activeDemoConfig.generated.ts`, `web-template/public/demo-runtime.json`, synced demo assets, Android seed metadata, or iOS runtime defaults.
 - The web app renders product UI only. Do not add presenter/demo controls to product screens.
 - The Braze Demo Control Room owns setup, orchestration, triggers, staged controls, validation, build/run actions, diagnostics, and activity logs.
@@ -50,7 +63,10 @@ Choose the smallest credible surface before editing:
 
 ## Guided Intake
 
-Before implementation, ask when any required setup input is missing. In Codex, use the native user-question tool when available. In Claude or tools without that mechanism, ask directly and wait.
+Before implementation, use the approved blueprint when available and ask only
+for missing details that change reliability. Route unresolved story selection
+to `.claude/skills/braze-solution-demo-campaign/SKILL.md` rather than returning
+a blank feature checklist.
 
 Required intake for new or materially changed demo stories:
 
@@ -91,6 +107,11 @@ When a request includes Content Cards, do an advisory placement pass before codi
 - Do not fake native IAMs in web UI when claiming mobile IAM behavior.
 - Do not use REST events to claim on-device IAM triggering. Use SDK custom events for mobile IAM triggers.
 - Add reusable app-specific controls as pack `launcher.presets` when the Control Room needs to present them.
+- Keep the app action, flavor-to-anchor mapping, property types, fallback
+  preset, dashboard trigger, and generated `notes.md` on one canonical event
+  contract. Use `sdk_event_sequence` when the fallback must mirror both flavor
+  and anchor events; never leave an anchor-triggered object with a flavor-only
+  fallback.
 - For launch-link stories, parse links in native code, resolve identity first, navigate the web product surface, then log the SDK event exactly once.
 
 ## Finish Criteria
@@ -118,4 +139,9 @@ xcodegen generate
 xcodebuild -project BrazeDemoShell.xcodeproj -scheme BrazeDemoShell -sdk iphonesimulator -derivedDataPath ./DerivedData CODE_SIGNING_ALLOWED=NO build
 ```
 
-Report changed subsystems, validation results, skipped checks, platform parity notes, Content Card and Banner placements, logo/icon decisions, pack location (`demo-packs/` or `.demo-packs/`), generated `notes.md`, and any manual Braze dashboard setup still required.
+Report changed subsystems, validation results, skipped checks, platform parity
+notes, Content Card and Banner placements, the canonical app/preset/dashboard
+trigger, logo/icon decisions, pack location (`demo-packs/` or `.demo-packs/`),
+generated `notes.md`, and any manual Braze dashboard setup still required.
+Treat unresolved handoff warnings or `<...>` placeholders as unfinished demo
+work even when structural pack validation passes.

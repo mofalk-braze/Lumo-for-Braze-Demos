@@ -1,6 +1,15 @@
 ---
 name: lumo-debugging-playbook
-description: Symptom-to-fix triage playbook for the Lumo Braze Demo Shells repo — things that WORKED BEFORE on this machine and are now broken (regressions), not first-time bring-up. Use when someone says "broken", "not working", "error", "debug", "push stopped arriving", "push was working and now isn't", "no token" (previously present), "no FCM token" (previously present), "blank screen", "white screen", "emulator won't start", "emulator won't boot", "AVD error", "build failed", "gradle failed", "xcodebuild failed", "cards not showing", "Content Cards empty", "IAM not showing", "in-app message not showing", "stale", "old branding on device", "hash mismatch", "pack apply failed", "Demo pack not found", "Control Room shows an error", or "why is this failing". Covers Android push/FCM token regressions, Zscaler/TLS trust, emulator/AVD problems, iOS WKWebView blank screen, pack apply errors, Android/web/iOS build breaks, stale runtime drift mid-demo, Content Cards/IAM not rendering, and Control Room quirks. If push has NEVER worked on this machine (fresh bring-up, new teammate, first-time setup), use `lumo-push-readiness-campaign` instead.
+description: >-
+  Symptom-to-fix regression triage for the Lumo Braze Demo Shells repo. Use
+  when something that worked before is now broken: Android push/FCM, Zscaler
+  trust, emulator/AVD startup, Android/web/iOS builds, blank WebViews, pack
+  apply or runtime-hash drift, Content Cards, IAM, Control Room, or stale
+  branding. Typical triggers include "debug", "push stopped arriving", "no
+  token", "blank screen", "emulator won't boot", "build failed", "cards not
+  showing", "IAM not showing", "hash mismatch", or "why is this failing".
+  For first-time machine or push bring-up, use lumo-build-and-env or
+  lumo-push-readiness-campaign instead.
 ---
 
 # Lumo Debugging Playbook
@@ -55,7 +64,8 @@ Run this loop for every incident. Do not skip to a fix you remember.
 Deep interpretation of these instruments (doctor, validate, Control Room panels)
 belongs to `lumo-diagnostics-and-tooling`.
 
-In Control Room Diagnostics, begin with the guided cards: Android launch,
+In Guided Control Room, open **05 Help & Troubleshooting** and begin with the
+cards for Android launch,
 selected-pack credentials, runtime identity, rendered source, Content Cards,
 Banners, IAM, trust/clock, push delivery, and active persona. Each separates
 placement or trigger evidence from actual message-delivery proof and offers
@@ -241,7 +251,7 @@ web filters with strict string equality — `cardsForPlacement` in
 | Android launch job ends **Failed** at step `Waiting for Android trust telemetry`, error `Native Android trust diagnostics did not report before launch readiness timeout.` | The launcher waits up to 15s (`BRAZE_DEMO_TRUST_DIAGNOSTICS_TIMEOUT_MS`, default 15000) for on-device trust telemetry, then writes a **synthetic** `trust_diagnostics` error entry (`Android HTTPS trust diagnostics timed out`). The emulator and app were already installed and launched by then — the app may be perfectly fine, its telemetry just never arrived (often the lost-callback row above) | Check the app directly (drawer). If trust actually passes there, fix the callback path (row above); the synthetic entry clears when real telemetry lands. Run the **Verify Android HTTPS trust** preset to force a fresh report |
 | Activity looks duplicated | Device and bridge telemetry repeated the same exact/correlated evidence inside one session | Expected duplicates merge into one row with a count. If separate rows remain, compare correlation IDs and payloads before treating them as the same action |
 | Need a clean rehearsal feed | Old sessions make the story hard to read | Filter to **Current session**, or use **Clear**; Clear archives first and creates a new session boundary |
-| Need to share diagnostics | Raw state/logs may contain keys, tokens, identifiers, or private pack metadata | Use Diagnostics → **Download redacted bundle** (`GET /api/diagnostics/bundle`), never send raw `.demo-launcher/state.json` |
+| Need to share diagnostics | Raw state/logs may contain keys, tokens, identifiers, or private pack metadata | Use Help & Troubleshooting → **Download redacted bundle** (`GET /api/diagnostics/bundle`), never send raw `.demo-launcher/state.json` |
 
 ## When NOT to use this skill
 

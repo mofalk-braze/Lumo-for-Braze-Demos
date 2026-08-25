@@ -69,16 +69,31 @@ clock guard remains owned. Use `status` to inspect it and `stop` to end it.
 Open the Control Room URL printed by the launcher, select `Lumo`, then use Apply
 or Launch.
 
+Setup proves the shared runtime. It does not choose or build a customer demo.
+Continue with `docs/build-your-first-demo.md` for the evidence-to-story-to-app
+workflow.
+
 ## Claude Setup
 
 The project skills are already available when Claude Code starts in the repo.
-Ask for the outcome directly; use the plugin flag only for the optional
-namespaced command.
+For an incomplete brief, screenshots without a journey, or an existing Canvas
+that needs an app proof, start with the solution front door:
 
 ```text
-Use braze-demo-app-builder to build or update this demo story, keep the pack as
-the source of truth, and finish with an operator handoff.
+Use the project skill braze-solution-demo-campaign. Recommend one target belief
+and one small journey from my evidence. Define the exact typed SDK signal,
+Braze decision, message placement, proof, reset, fallback, and do-not-build
+scope. Do not create a pack, copy Lumo, or mutate Braze until I approve the
+DEMO.md blueprint.
 ```
+
+After approval, `lumo-new-demo-campaign` creates the neutral pack and owns the
+implementation-to-rehearsal path. `braze-demo-app-builder` implements focused
+approved screens and event stories. Copyable prompts for screenshot-first,
+Canvas-first, dashboard build, troubleshooting, and rehearsal work are in
+`docs/build-your-first-demo.md`.
+
+Use the plugin flag only for the optional namespaced implementation command.
 
 Optional plugin command:
 
@@ -102,16 +117,25 @@ Use Control Room → **Pack Manager**, or the equivalent source CLI:
 
 ```sh
 node tools/lumo.mjs pack new sample-pack --name "Sample Pack"
-node tools/lumo.mjs pack duplicate lumo-default sample-pack --name "Sample Pack"
 node tools/lumo.mjs pack validate sample-pack
 node tools/lumo.mjs pack validate --all
 node tools/lumo.mjs pack open sample-pack --notes
 ```
 
-Every new or duplicated pack is created under ignored `.demo-packs/`.
-Duplicate carries portable content/assets forward but omits credentials and
-regenerates `notes.md`. Complete its Content Card, Banner, IAM, push,
-dashboard-object, delivery-proof, and fallback mappings before handoff.
+Use `new` for every new product concept. It starts with neutral styling, one
+Home tab, and no assumed event, story control, Content Card, Banner, IAM, or
+push contract. Never copy the Lumo pack and strip it down.
+
+Use `duplicate <source-id> <new-id>` only when the human explicitly wants a
+close variant. It preserves the source app, styling, story, events, placements,
+assets, and private surface while omitting credentials and regenerating
+`notes.md`.
+
+Both paths write to ignored `.demo-packs/`. Complete the generated story,
+Content Card, Banner, IAM, push, dashboard-object, delivery-proof, reset, and
+fallback mappings. `lumo pack validate` may structurally pass while reporting
+unresolved handoff placeholders or mapping drift; resolve those warnings before
+rehearsal or sharing.
 
 ## What Comes From Git
 
@@ -119,7 +143,7 @@ dashboard-object, delivery-proof, and fallback mappings before handoff.
   documentation.
 - The canonical `.claude/skills/` runbook bundle for setup, Android push,
   operation, diagnostics, troubleshooting, packs, secrets, QA, architecture,
-  and guided demo building.
+  solution-demo shaping, and guided demo building.
 - The optional `plugins/braze-demo-builder/` compatibility command.
 - `android-shell/app/google-services.json` for the shared Firebase Android app
   package `com.braze.demoshell`.
@@ -161,6 +185,25 @@ Studio, accepting OS/tool licenses, placing the corporate CA when required,
 receiving the Firebase service account outside Git, and entering local Braze
 SDK credentials. The agent should explain the exact reason for each pause and
 resume verification immediately afterward.
+
+## Guided Control Room
+
+The Control Room opens at `00 First Demo` in Guided mode:
+
+- `Pack` confirms the active app concept.
+- `App` combines SDK, native runtime, trust, identity, and only the push proof
+  required by the selected story.
+- `Story` accepts pack-owned or staged controls; generic templates do not make
+  a walkthrough ready.
+- When Story is missing, one button copies the solution-campaign starter prompt
+  before any SDK, REST, push, or device setup. Once configured, it names the
+  safest runtime action and recent Activity Feed rows provide the visible proof.
+- `Help & Troubleshooting` shows guided cards and lets the SolCon download a
+  redacted bundle for an agent.
+
+Expert mode restores template and payload authoring, raw REST requests, hashes,
+logs, REST responses, and development overrides. A native SDK-only story does
+not require a REST API key merely because REST templates exist.
 
 ## Android Push In Your Own Braze Workspace
 
